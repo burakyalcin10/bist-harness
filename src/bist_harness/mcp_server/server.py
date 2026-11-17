@@ -2,11 +2,12 @@
 
 MCP server exposing the deterministic analysis tools (project brief, section 22).
 
-Sprint 1 implements two tools for the thin end-to-end slice. Every tool
+Tools read the active market-data snapshot and never download. Every tool
 * returns a summary, never a raw series,
 * rounds percentages and prices to two decimals,
 * reports bad input as ``{"error": {"code", "message"}}`` instead of raising,
-* carries a ``result_id`` that is identical for identical input and data.
+* names the ``snapshot_id`` it read and carries a ``result_id`` that is identical for
+  identical input and data.
 
 Run over stdio:  uv run python -m bist_harness.mcp_server.server
 """
@@ -20,13 +21,13 @@ from datetime import date, timedelta
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
 
-from bist_harness.data.market import DATA_SOURCE, load_stock_data
+from bist_harness.data import snapshot
+from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
 from bist_harness.tools.reversal import bollinger_lower_touch_summary
 from bist_harness.tools.schemas import REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
 from bist_harness.universe import is_in_universe, normalize_ticker
 
-HISTORY_START = "2020-01-01"
 FORWARD_DAYS = (1, 3, 5, 10)
 COVERAGE_SLACK_DAYS = 7
 IMPLEMENTED_EVENTS = {"BOLLINGER_LOWER_TOUCH"}
@@ -45,9 +46,13 @@ server = MCPServer(
 )
 
 
-def load_history(ticker: str) -> pd.DataFrame:
-    """Full cached daily history of one stock (one snapshot per ticker)."""
-    return load_stock_data(ticker, HISTORY_START)
+def load_history(symbol: str) -> pd.DataFrame:
+    """Full daily history of one stock or index from the active snapshot."""
+    return snapshot.load_history(symbol)
+
+
+def current_snapshot_id() -> str:
+    return snapshot.active_snapshot_id()
 
 
 def _error(code: str, message: str) -> dict:
@@ -82,10 +87,19 @@ def _coverage(history: pd.DataFrame, start: str, end: str) -> dict:
     return {"data_first_date": first, "data_last_date": last, "coverage_warning": warning}
 
 
-def _load_window(ticker: str, start: str, end: str) -> tuple[str, pd.DataFrame, dict] | dict:
-    """Validate the request; return (ticker, history up to ``end``, coverage) or an error."""
-    if not is_in_universe(ticker):
-        return _error("UNKNOWN_TICKER", f"{ticker!r} is not one of the 30 study-universe stocks.")
+def _load_window(
+    symbol: str, start: str, end: str, *, index: bool = False
+) -> tuple[str, pd.DataFrame, dict] | dict:
+    """Validate the request; return (symbol, history up to ``end``, metadata) or an error.
+
+    The metadata (data coverage, snapshot id, data source) goes into every tool output.
+    """
+    if index:
+        if normalize_ticker(symbol) not in snapshot.INDEX_SYMBOLS:
+            known = ", ".join(snapshot.INDEX_SYMBOLS)
+            return _error("UNKNOWN_INDEX", f"{symbol!r} is not available; indices: {known}.")
+    elif not is_in_universe(symbol):
+        return _error("UNKNOWN_TICKER", f"{symbol!r} is not one of the 30 study-universe stocks.")
     try:
         start_date, end_date = date.fromisoformat(start), date.fromisoformat(end)
     except ValueError:
@@ -94,42 +108,52 @@ def _load_window(ticker: str, start: str, end: str) -> tuple[str, pd.DataFrame, 
         return _error("INVALID_DATE_RANGE", "start must be earlier than end.")
     if end_date > date.today():
         return _error("FUTURE_DATE", "end is in the future; tools only report history.")
-    name = normalize_ticker(ticker)
+    name = normalize_ticker(symbol)
     try:
         history = load_history(name)
+        snapshot_id = current_snapshot_id()
     except DataUnavailableError as exc:
         return _error("DATA_UNAVAILABLE", str(exc))
-    coverage = _coverage(history, start, end)
+    meta = {
+        **_coverage(history, start, end),
+        "snapshot_id": snapshot_id,
+        "data_source": DATA_SOURCE,
+    }
     history = history.loc[: pd.Timestamp(end)]
     if history.loc[pd.Timestamp(start) :].empty:
         return _error("DATA_UNAVAILABLE", f"No market data for {name} between {start} and {end}.")
-    return name, history, coverage
+    return name, history, meta
 
 
-@server.tool(description=TOOL_SCHEMAS["get_stock_history"]["description"])
-def get_stock_history(ticker: str, start: str, end: str) -> dict:
-    loaded = _load_window(ticker, start, end)
+def _history_summary(tool: str, key: str, symbol: str, start: str, end: str) -> dict:
+    loaded = _load_window(symbol, start, end, index=key == "index")
     if isinstance(loaded, dict):
         return loaded
-    name, history, coverage = loaded
+    name, history, meta = loaded
     close = history.loc[pd.Timestamp(start) :, "Close"]
     first, last = float(close.iloc[0]), float(close.iloc[-1])
+    args = {key: name, "start": start, "end": end}
     output = {
-        "ticker": name,
-        "start": start,
-        "end": end,
+        **args,
         "rows": int(len(close)),
         "first_date": str(close.index[0].date()),
         "last_date": str(close.index[-1].date()),
         "first_close": round(first, 2),
         "last_close": round(last, 2),
         "period_return_pct": round((last / first - 1) * 100, 2),
-        **coverage,
-        "data_source": DATA_SOURCE,
+        **meta,
     }
-    return _with_result_id(
-        "get_stock_history", {"ticker": name, "start": start, "end": end}, output
-    )
+    return _with_result_id(tool, args, output)
+
+
+@server.tool(description=TOOL_SCHEMAS["get_stock_history"]["description"])
+def get_stock_history(ticker: str, start: str, end: str) -> dict:
+    return _history_summary("get_stock_history", "ticker", ticker, start, end)
+
+
+@server.tool(description=TOOL_SCHEMAS["get_index_history"]["description"])
+def get_index_history(index: str, start: str, end: str) -> dict:
+    return _history_summary("get_index_history", "index", index, start, end)
 
 
 @server.tool(description=TOOL_SCHEMAS["detect_reversal_events"]["description"])
@@ -143,7 +167,7 @@ def detect_reversal_events(
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
         return loaded
-    name, history, coverage = loaded
+    name, history, meta = loaded
     if event_type not in REVERSAL_EVENT_TYPES:
         return _error("INVALID_ARGUMENT", f"event_type must be one of {REVERSAL_EVENT_TYPES}.")
     if forward_days not in FORWARD_DAYS:
@@ -162,9 +186,8 @@ def detect_reversal_events(
     output = {
         **args,
         **summary,
-        **coverage,
         "definition": BOLLINGER_LOWER_TOUCH_DEFINITION,
-        "data_source": DATA_SOURCE,
+        **meta,
     }
     return _with_result_id("detect_reversal_events", args, output)
 

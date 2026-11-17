@@ -10,3 +10,4 @@ models/
 *.gguf
 *.safetensors
 .superpowers/
+data/snapshots/

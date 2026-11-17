@@ -1,0 +1,85 @@
+group,ticker,role
+Banking,AKBNK,universe
+Banking,GARAN,reference
+Banking,ISCTR,reference
+Banking,YKBNK,reference
+Banking,HALKB,reference
+Banking,VAKBN,reference
+Defense / Vehicles,ASELS,universe
+Defense / Vehicles,OTKAR,reference
+Defense / Vehicles,KATMR,reference
+Defense / Vehicles,TTRAK,reference
+Energy / Petrochemicals,TUPRS,universe
+Energy / Petrochemicals,PETKM,universe
+Energy / Petrochemicals,AYGAZ,reference
+Energy / Petrochemicals,AKSA,reference
+Holding,KCHOL,universe
+Holding,SAHOL,reference
+Holding,DOHOL,reference
+Holding,ALARK,reference
+Holding,AGHOL,reference
+Food & Beverage,CCOLA,universe
+Food & Beverage,AEFES,reference
+Food & Beverage,ULKER,reference
+Food & Beverage,TATGD,reference
+Retail,BIMAS,universe
+Retail,MGROS,universe
+Retail,MAVI,universe
+Retail,SOKM,reference
+Retail,VAKKO,reference
+Airlines / Transport,THYAO,universe
+Airlines / Transport,PGSUS,universe
+Airlines / Transport,TAVHL,reference
+Airlines / Transport,CLEBI,reference
+Steel,EREGL,universe
+Steel,KRDMD,universe
+Steel,ISDMR,reference
+Steel,BRSAN,reference
+Telecom,TCELL,universe
+Telecom,TTKOM,universe
+Chemicals / Fertilizer,SASA,universe
+Chemicals / Fertilizer,GUBRF,universe
+Chemicals / Fertilizer,ALKIM,reference
+Chemicals / Fertilizer,HEKTS,reference
+Chemicals / Fertilizer,BAGFS,reference
+Mining,TRALT,universe
+Mining,TRMET,reference
+Mining,TRENJ,reference
+Automotive,FROTO,universe
+Automotive,TOASO,universe
+Automotive,DOAS,reference
+Construction,ENKAI,universe
+Construction,TKFEN,reference
+Construction,ORGE,reference
+Construction,ANELE,reference
+Healthcare / Pharma,MPARK,universe
+Healthcare / Pharma,ECILC,universe
+Healthcare / Pharma,LKMNH,reference
+Healthcare / Pharma,DEVA,reference
+Healthcare / Pharma,SELEC,reference
+Real Estate,EKGYO,universe
+Real Estate,ISGYO,reference
+Real Estate,TRGYO,reference
+Real Estate,SNGYO,reference
+Real Estate,HLGYO,reference
+Insurance,TURSG,universe
+Insurance,ANSGR,reference
+Insurance,AKGRT,reference
+Insurance,AGESA,reference
+Insurance,RAYSG,reference
+Electric Utilities,ENJSA,universe
+Electric Utilities,AKSEN,universe
+Electric Utilities,ZOREN,reference
+Electric Utilities,ODAS,reference
+Cement,OYAKC,universe
+Cement,CIMSA,reference
+Cement,AKCNS,reference
+Cement,NUHCM,reference
+Cement,BTCIM,reference
+Brokerage,ISMEN,universe
+Brokerage,GEDIK,reference
+Brokerage,INFO,reference
+Brokerage,OSMEN,reference
+Durables,ARCLK,universe
+Durables,VESTL,reference
+Durables,VESBE,reference

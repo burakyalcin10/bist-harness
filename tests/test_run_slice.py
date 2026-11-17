@@ -8,6 +8,8 @@ from bist_harness.llm.client import ChatResult, ToolCall
 from bist_harness.mcp_server import server as srv
 from bist_harness.slice.run_slice import run_slice
 
+from .conftest import IMPLEMENTED_TOOLS
+
 
 def _history() -> pd.DataFrame:
     rng = np.random.default_rng(4)
@@ -84,10 +86,7 @@ def test_model_sees_only_implemented_tools_and_then_the_tool_result():
     run_slice(QUESTION, client, server=srv.server)
 
     first, second = client.requests
-    assert {t["function"]["name"] for t in first["tools"]} == {
-        "get_stock_history",
-        "detect_reversal_events",
-    }
+    assert {t["function"]["name"] for t in first["tools"]} == IMPLEMENTED_TOOLS
     assert [m["role"] for m in first["messages"]] == ["system", "user"]
     assert [m["role"] for m in second["messages"]] == ["system", "user", "assistant", "tool"]
     assert second["messages"][2]["tool_calls"][0]["function"]["name"] == "detect_reversal_events"

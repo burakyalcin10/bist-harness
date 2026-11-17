@@ -11,7 +11,7 @@ from mcp import Client, StdioServerParameters
 from bist_harness.mcp_server import server as srv
 from bist_harness.tools.schemas import TOOL_SCHEMAS
 
-IMPLEMENTED = {"get_stock_history", "detect_reversal_events"}
+from .conftest import IMPLEMENTED_TOOLS as IMPLEMENTED
 
 
 def _history(days: int = 1200, seed: int = 4) -> pd.DataFrame:
@@ -153,3 +153,39 @@ def test_server_starts_as_a_subprocess_over_stdio():
             return {t.name for t in (await client.list_tools()).tools}
 
     assert asyncio.run(scenario()) == IMPLEMENTED
+
+
+def test_every_output_names_the_snapshot_and_the_result_id_depends_on_it(monkeypatch):
+    a = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
+    events = srv.detect_reversal_events("ASELS", "2021-01-01", "2021-12-31")
+    assert a["snapshot_id"] == events["snapshot_id"] == "test-snapshot"
+    monkeypatch.setattr(srv, "current_snapshot_id", lambda: "another-snapshot")
+    b = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
+    assert b["snapshot_id"] == "another-snapshot"
+    assert a["result_id"] != b["result_id"]
+
+
+def test_index_history_has_the_stock_history_fields_under_an_index_key():
+    stock = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
+    index = srv.get_index_history("xu100", "2021-01-01", "2021-12-31")
+    assert index["index"] == "XU100"
+    assert set(index) - {"index"} == set(stock) - {"ticker"}
+    assert index["period_return_pct"] == stock["period_return_pct"]
+
+
+def test_index_outside_the_snapshot_list_is_unknown():
+    out = srv.get_index_history("XELKT", "2021-01-01", "2021-12-31")
+    assert out["error"]["code"] == "UNKNOWN_INDEX"
+    out = srv.get_stock_history("XU100", "2021-01-01", "2021-12-31")
+    assert out["error"]["code"] == "UNKNOWN_TICKER"
+
+
+def test_missing_snapshot_is_reported_with_the_build_command(monkeypatch, tmp_path):
+    from bist_harness.data import snapshot
+
+    monkeypatch.setattr(
+        srv, "load_history", lambda symbol: snapshot.load_history(symbol, root=tmp_path)
+    )
+    out = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
+    assert out["error"]["code"] == "DATA_UNAVAILABLE"
+    assert "snapshot build" in out["error"]["message"]
