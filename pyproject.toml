@@ -35,6 +35,11 @@ extend-exclude = ["reference"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# Prompt text and test fixtures are kept on one line so they stay byte-identical.
+"src/bist_harness/bakeoff/prompt.py" = ["E501"]
+"tests/*" = ["E501"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",

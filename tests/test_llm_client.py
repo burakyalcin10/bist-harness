@@ -1,0 +1,139 @@
+"""OllamaClient: deterministic request options, tool-call parsing and failure modes."""
+
+import json
+
+import httpx
+import pytest
+
+from bist_harness.errors import LLMUnavailableError
+from bist_harness.llm.client import OllamaClient, ToolCall, parse_tool_calls
+
+
+def _client(handler) -> OllamaClient:
+    return OllamaClient("http://llm.test", "m", transport=httpx.MockTransport(handler))
+
+
+def _reply(message: dict, **extra) -> httpx.Response:
+    body = {"model": "m", "message": {"role": "assistant", **message}, "done": True, **extra}
+    return httpx.Response(200, json=body)
+
+
+def test_chat_sends_deterministic_options_and_no_streaming():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return _reply({"content": "ok"})
+
+    _client(handler).chat([{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+
+    body = seen["body"]
+    assert seen["url"] == "http://llm.test/api/chat"
+    assert body["model"] == "m"
+    assert body["stream"] is False
+    assert body["think"] is False
+    assert body["options"]["temperature"] == 0.0
+    assert body["options"]["seed"] == 42
+    assert body["tools"] == [{"type": "function"}]
+    assert "format" not in body  # only sent when a response format is requested
+
+
+def test_response_format_and_context_size_are_forwarded():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return _reply({"content": "{}"})
+
+    schema = {"type": "object", "properties": {}}
+    _client(handler).chat([], response_format=schema, num_ctx=8192)
+    assert seen["body"]["format"] == schema
+    assert seen["body"]["options"]["num_ctx"] == 8192
+
+
+def test_native_tool_calls_are_parsed():
+    def handler(request: httpx.Request) -> httpx.Response:
+        call = {"function": {"name": "get_stock_history", "arguments": {"ticker": "ASELS"}}}
+        return _reply({"content": "", "tool_calls": [call]})
+
+    result = _client(handler).chat([])
+    assert result.tool_calls == (ToolCall("get_stock_history", {"ticker": "ASELS"}),)
+    assert result.content == ""
+
+
+def test_tool_call_arguments_given_as_json_string_are_decoded():
+    message = {
+        "content": "",
+        "tool_calls": [{"function": {"name": "t", "arguments": '{"a": 1}'}}],
+    }
+    assert parse_tool_calls(message) == (ToolCall("t", {"a": 1}),)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '<tool_call>\n{"name": "run_backtest", "arguments": {"strategy": "A_TECHNICAL"}}\n</tool_call>',
+        'Sure.\n```json\n{"name": "run_backtest", "arguments": {"strategy": "A_TECHNICAL"}}\n```',
+        '{"name": "run_backtest", "arguments": {"strategy": "A_TECHNICAL"}}',
+        '{"name": "run_backtest", "parameters": {"strategy": "A_TECHNICAL"}}',
+    ],
+)
+def test_tool_call_written_as_text_is_recovered(content):
+    assert parse_tool_calls({"content": content}) == (
+        ToolCall("run_backtest", {"strategy": "A_TECHNICAL"}),
+    )
+
+
+def test_plain_text_and_ordinary_json_are_not_tool_calls():
+    assert parse_tool_calls({"content": "The system is educational."}) == ()
+    assert parse_tool_calls({"content": '{"answer": 42}'}) == ()
+
+
+def test_token_counts_and_speed_are_converted_from_nanoseconds():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _reply(
+            {"content": "x"},
+            prompt_eval_count=120,
+            eval_count=100,
+            eval_duration=2_000_000_000,
+            total_duration=3_500_000_000,
+        )
+
+    r = _client(handler).chat([])
+    assert (r.prompt_tokens, r.completion_tokens) == (120, 100)
+    assert r.total_duration_s == pytest.approx(3.5)
+    assert r.eval_tokens_per_s == pytest.approx(50.0)
+
+
+def test_missing_metrics_do_not_crash():
+    r = _client(lambda request: _reply({"content": "x"})).chat([])
+    assert (r.prompt_tokens, r.completion_tokens, r.eval_tokens_per_s) == (0, 0, None)
+
+
+def test_connection_error_raises_llm_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(LLMUnavailableError, match="cannot reach"):
+        _client(handler).chat([])
+
+
+def test_http_error_raises_llm_unavailable_with_status_and_no_address():
+    client = OllamaClient(
+        "http://secret-host.test",
+        "m",
+        transport=httpx.MockTransport(lambda request: httpx.Response(403, text="forbidden")),
+    )
+    with pytest.raises(LLMUnavailableError) as excinfo:
+        client.chat([])
+    assert "403" in str(excinfo.value)
+    assert "secret-host" not in str(excinfo.value)  # endpoint address never leaks into logs
+
+
+def test_list_models_returns_tag_names():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(200, json={"models": [{"name": "a:1b"}, {"name": "b:2b"}]})
+
+    assert _client(handler).list_models() == ["a:1b", "b:2b"]
