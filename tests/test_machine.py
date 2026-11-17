@@ -284,7 +284,7 @@ def test_right_path_runs_the_route_and_records_every_call():
     assert [c.result_id for c in analysis.tool_calls] == [
         f"{n}-{i}" for i, (n, _) in enumerate(tools.calls, 1)
     ]
-    assert analysis.outcome == "COMPLETED" and analysis.gate_status == "PASS"
+    assert analysis.outcome == "INVESTIGATE" and analysis.gate_status == "PASS"
     assert analysis.state == "LOG_AND_CLOSE"
     assert machine.wrong_tool_calls(analysis) == 0
     assert machine.harness_interventions(analysis) == 0
@@ -325,7 +325,15 @@ def test_every_state_is_recorded_in_order():
     assert visited(analysis) == list(route)
     market = record_of(analysis, "LOAD_MARKET_DATA").detail
     assert market == {"attempts": 1, "rejected": 0, "text_replies": 0, "fallback": False}
-    assert record_of(analysis, "GENERATE_EXPLANATION").detail == {"placeholder": True}
+    # Task 7: the fake tools give no evidence, so the model is not asked and the answer is
+    # the (empty) committed evidence set under INVESTIGATE.
+    assert record_of(analysis, "GENERATE_EXPLANATION").detail == {
+        "action": "INVESTIGATE",
+        "eligible": ["INVESTIGATE"],
+        "attempts": 0,
+        "fallback": True,
+        "problems": [],
+    }
 
 
 class StoreWatchingTools(FakeTools):
@@ -351,7 +359,7 @@ def test_with_a_store_every_recorded_call_is_saved_at_once(conn):
     loaded = session.load(analysis.analysis_id, conn)
     assert loaded.tool_calls == analysis.tool_calls
     assert loaded.trail == analysis.trail
-    assert (loaded.outcome, loaded.gate_status) == ("COMPLETED", "PASS")
+    assert (loaded.outcome, loaded.gate_status) == ("INVESTIGATE", "PASS")
 
 
 # --- G5: proposed calls are checked: schema, permission, intent ----------------------
@@ -399,7 +407,7 @@ def test_a_tool_outside_the_state_is_rejected_recorded_and_counted(proposal):
     assert detail == {"attempts": 2, "rejected": 1, "text_replies": 0, "fallback": False}
     # The analysis goes on with the valid call.
     assert analysis.tool_calls[1].tool == "get_stock_history" and analysis.tool_calls[1].allowed
-    assert analysis.outcome == "COMPLETED"
+    assert analysis.outcome == "INVESTIGATE"
 
 
 @pytest.mark.parametrize(
@@ -602,7 +610,7 @@ def test_text_twice_then_the_harness_makes_the_canonical_call():
     assert detail == {"attempts": 2, "rejected": 0, "text_replies": 2, "fallback": True}
     assert machine.harness_interventions(analysis) == 2
     assert machine.wrong_tool_calls(analysis) == 0
-    assert analysis.outcome == "COMPLETED"  # the analysis goes on
+    assert analysis.outcome == "INVESTIGATE"  # the analysis goes on
 
 
 @pytest.mark.parametrize("max_attempts", [1, 3])
@@ -1093,4 +1101,4 @@ def test_the_default_gate_warns_without_blocking():
         call_tool=Warned(),
         today=TODAY,
     )
-    assert analysis.gate_status == "PASS_WITH_WARNINGS" and analysis.outcome == "COMPLETED"
+    assert analysis.gate_status == "PASS_WITH_WARNINGS" and analysis.outcome == "INVESTIGATE"

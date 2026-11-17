@@ -4,7 +4,9 @@ The stateful harness (decision K-005: "Agent thinks. Harness controls.").
 
 Code drives the state transitions. The model speaks in three places only: the intent at
 ``START``, one tool-call proposal in each tool state of the route (from that state's
-allowed tools alone), and the explanation (Task 7). Every proposed call is checked in
+allowed tools alone), and the explanation at ``GENERATE_EXPLANATION`` (schema-constrained
+JSON checked by ``harness.validator``; the run's outcome is the chosen action label). Every
+proposed call is checked in
 order (schema, permission of the state, agreement with the intent); a rejected call is
 recorded with ``allowed=False`` and the model gets a short error. After ``max_attempts``
 without a valid call the harness makes the canonical call derived from the intent itself
@@ -35,6 +37,7 @@ from bist_harness.harness.intent import (
     parse_intent,
 )
 from bist_harness.harness.routes import ALLOWED_TOOLS, GUARDED_ROUTE, ROUTES, STATES
+from bist_harness.harness.validator import generate_explanation
 from bist_harness.tools.schemas import STRATEGY_VARIANTS, to_ollama_tools, validate_tool_call
 from bist_harness.universe import load_universe, normalize_ticker
 
@@ -43,7 +46,7 @@ ToolCaller = Callable[[str, dict], dict]
 REFUSED_ADVICE = "REFUSED_ADVICE"
 ANALYSIS_UNSAFE = "ANALYSIS_UNSAFE"
 OUT_OF_SCOPE = "OUT_OF_SCOPE"
-COMPLETED = "COMPLETED"  # the route ran to the end; Task 7 replaces it with the action label
+COMPLETED = "COMPLETED"  # the route ran to the end but an explain hook returned no label
 MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"  # the model server failed mid-run
 
 # What a failing model server raises: the client's own error, or a transport error from a
@@ -93,16 +96,14 @@ UNSAFE_ANSWERS = {
 }
 
 
-# --- hooks: Task 7 replaces the explanation default ------------------------------------
+# --- hooks -----------------------------------------------------------------------------
 default_evidence = build_evidence  # BUILD_EVIDENCE: templated sentences E1..En
+default_explanation = generate_explanation  # GENERATE_EXPLANATION: label + checked text
 EvidenceFn = Callable[..., Any]  # (analysis, *, language) -> evidence
 GateFn = Callable[[session.Analysis, Any], Any]  # (analysis, evidence) -> result with .status
 ExplainFn = Callable[..., Any]  # (analysis, client, evidence, gate) -> None or result
-
-
-def placeholder_explanation(analysis: session.Analysis, client, evidence, gate) -> None:
-    """GENERATE_EXPLANATION arrives with Task 7; the state is recorded, no tool is called."""
-    return None
+# Optional attributes of an explain result that are recorded in the state trail.
+EXPLANATION_DETAIL = ("eligible", "attempts", "fallback", "problems")
 
 
 # --- counters for the evaluation (Task 9) --------------------------------------------
@@ -182,12 +183,14 @@ def run_analysis(
     conn: sqlite3.Connection | None = None,
     evidence_fn: EvidenceFn = default_evidence,
     gate_fn: GateFn = quality_gate,
-    explain_fn: ExplainFn = placeholder_explanation,
+    explain_fn: ExplainFn = default_explanation,
 ) -> session.Analysis:
     """Run one question through its route and return the recorded analysis.
 
     ``evidence_fn``, ``gate_fn`` and ``explain_fn`` are the BUILD_EVIDENCE, RISK_GATE and
-    GENERATE_EXPLANATION steps; Tasks 5, 6 and 7 plug in the real ones.
+    GENERATE_EXPLANATION steps (defaults: ``build_evidence``, ``quality_gate`` and
+    ``generate_explanation``). The explain step gets the final evidence of RISK_GATE; its
+    ``action`` becomes the outcome and its ``text`` the answer.
     """
     today = today or date.today().isoformat()
     analysis = session.new_analysis(question, model=getattr(client, "model", "unknown"))
@@ -221,6 +224,7 @@ def run_analysis(
     evidence: Any = ()
     gate: Any = None
     action: str | None = None
+    answer: str | None = None
     failure: dict | None = None  # set when the model server fails; no model turn after it
     for state in route[1:-1]:  # START is done; LOG_AND_CLOSE closes the run
         if state == "SELECT_UNIVERSE":
@@ -259,7 +263,13 @@ def run_analysis(
                 run.mark(state, "RAN", placeholder=True)
             else:
                 action = getattr(explanation, "action", None)
-                run.mark(state, "RAN", action=action)
+                answer = getattr(explanation, "text", None)
+                detail = {
+                    key: getattr(explanation, key)
+                    for key in EXPLANATION_DETAIL
+                    if hasattr(explanation, key)
+                }
+                run.mark(state, "RAN", action=action, **detail)
         elif state == "HUMAN_REVIEW":
             run.mark(state, "RAN", pending=True)  # the review command arrives with Task 8
         elif failure is not None:
@@ -275,7 +285,10 @@ def run_analysis(
         run.close(route, MODEL_UNAVAILABLE, MODEL_UNAVAILABLE_ANSWERS[language])
         return analysis
     blocked = gate is not None and gate.status in BLOCKING_STATUSES
-    run.close(route, ANALYSIS_UNSAFE if blocked else (action or COMPLETED))
+    if blocked:
+        run.close(route, ANALYSIS_UNSAFE)
+    else:
+        run.close(route, action or COMPLETED, answer)
     return analysis
 
 
