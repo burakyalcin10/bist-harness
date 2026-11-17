@@ -304,9 +304,29 @@ tracked); under inflation accounting each period is stated at its own price leve
 quarter's own value (a difference of two cumulative values) is approximate; statements
 before the 2023 year end are not inflation-adjusted (`COMPARATIVE_BEFORE_TMS29`).
 
-## 13. Layers not built yet
+## 13. News and event layer — `get_news_events`
+
+Produced by `data/kap.py` and `tools/news.py` from KAP material-event disclosures. Only
+metadata is stored: time, company, subject line, summary line, disclosure number and
+link. **This output is context.** It never replaces a number from a market or
+fundamental tool, and it has no sentiment label.
+
+| Name | Definition |
+| --- | --- |
+| `topic` | Requested topic filter (or null); per event, the tag assigned by keyword rules on the subject and summary lines: `earnings`, `dividend`, `capital_increase`, `buyback`, `contract`, `investment`, `financing`, `merger_acquisition`, `regulation_legal`, `credit_rating`, `management`, `other` |
+| `total` | Disclosures published from `start` to the end of the `end` day that match the filters |
+| `by_topic` | Count per topic among those |
+| `events` | The 12 latest matches, newest first |
+| `published_at` | Official KAP publication time of the disclosure |
+| `subject` | Subject line of the disclosure, followed by its summary line when it has one |
+| `url` | Link to the disclosure on KAP |
+| `context_only` | Always true: a reminder that these are contextual events, not verified figures |
+
+Known when: a disclosure is known from its `published_at` time. The feature table counts
+it for a trading day only if it was published before that day's close (18:00).
+
+## 14. Layers not built yet
 
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
-| News and events | Timestamped disclosure and news metadata | 3 |
 | Speech | Topics, claims and stance from approved public videos | 7 |

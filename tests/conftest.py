@@ -18,6 +18,7 @@ IMPLEMENTED_TOOLS = {
     "get_macro_context",
     "get_fundamental_metrics",
     "calculate_fundamental_change",
+    "get_news_events",
     "detect_reversal_events",
 }
 

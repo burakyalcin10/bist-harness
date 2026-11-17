@@ -25,6 +25,7 @@ from mcp.server.mcpserver import MCPServer
 from bist_harness.backtest.runner import run_variant
 from bist_harness.backtest.strategies import StrategyContext
 from bist_harness.data import fundamentals as fundamentals_data
+from bist_harness.data import kap as kap_data
 from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
@@ -34,6 +35,8 @@ from bist_harness.tools.disclosure import quarter_reactions, summarize_reactions
 from bist_harness.tools.fundamentals import fundamental_change, fundamental_metrics
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.macro import macro_context
+from bist_harness.tools.news import TOPICS as NEWS_TOPICS
+from bist_harness.tools.news import news_events
 from bist_harness.tools.schemas import (
     INDICATORS,
     REVERSAL_EVENT_TYPES,
@@ -457,6 +460,39 @@ def calculate_fundamental_change(ticker: str, as_of: str, periods: int = 4) -> d
     _add_reactions(result, name, calendar, close, as_of)
     args = {"ticker": name, "as_of": as_of, "periods": periods}
     return _with_result_id("calculate_fundamental_change", args, {**args, **result, **versions})
+
+
+def load_disclosures() -> pd.DataFrame:
+    """KAP disclosure metadata from the active snapshot."""
+    return kap_data.load_disclosures()
+
+
+NEWS_SOURCE = (
+    "KAP (public disclosure platform) material-event disclosures: metadata only, with "
+    "the official publication time. Context, not a substitute for numerical data."
+)
+
+
+@server.tool(description=TOOL_SCHEMAS["get_news_events"]["description"])
+def get_news_events(
+    start: str, end: str, ticker: str | None = None, topic: str | None = None
+) -> dict:
+    problem = _period_problem(start, end)
+    if problem:
+        return problem
+    if ticker is not None and not is_in_universe(ticker):
+        return _error("UNKNOWN_TICKER", f"{ticker!r} is not one of the 30 study-universe stocks.")
+    if topic is not None and topic not in NEWS_TOPICS:
+        return _error("INVALID_ARGUMENT", f"topic must be one of {list(NEWS_TOPICS)}.")
+    try:
+        disclosures = load_disclosures()
+        versions = _versions()
+    except DataUnavailableError as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    result = news_events(disclosures, start=start, end=end, ticker=ticker, topic=topic)
+    versions["data_source"] = NEWS_SOURCE
+    args = {"start": start, "end": end, "ticker": result["ticker"], "topic": topic}
+    return _with_result_id("get_news_events", args, {**result, **versions})
 
 
 def _period_problem(start: str, end: str) -> dict | None:
