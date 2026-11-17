@@ -568,6 +568,85 @@ def ground_intent(intent: Intent, question: str) -> Intent:
     return replace(intent, **values, grounded=changed)
 
 
+# --- grounding of the reversal event family and direction -------------------------------
+# Built from the event types ``detect_reversal_events`` supports (``REVERSAL_EVENT_TYPES``);
+# MACD has no event type there, so a MACD question grounds nothing. Patterns run on the
+# folded question (``fold_text``: lower-case, no Turkish diacritics, single spaces).
+_LOWER_BAND = re.compile(r" (?:alt ban[dt]|lower (?:bollinger )?band)")
+_UPPER_BAND = re.compile(r" (?:ust ban[dt]|upper (?:bollinger )?band)")
+_MIDDLE_BAND = re.compile(r" (?:orta ban[dt]|middle (?:bollinger )?band)")
+_OVERSOLD = re.compile(r" (?:asiri satim|oversold)")
+_OVERBOUGHT = re.compile(r" (?:asiri alim|overbought)")
+_SUPPORT = re.compile(r" (?:destek|support)")
+_RESISTANCE = re.compile(r" (?:direnc|resistance)")
+_BULLISH_WORDS = (
+    _LOWER_BAND,
+    _OVERSOLD,
+    _SUPPORT,
+    re.compile(r" (?:dip|dipten|dibe|dibinden|bottom|bottoms|bullish) "),
+)
+_BEARISH_WORDS = (
+    _UPPER_BAND,
+    _OVERBOUGHT,
+    _RESISTANCE,
+    re.compile(r" (?:tepe|tepeden|tepeye|top|tops|peak|peaks|bearish) "),
+)
+_FAMILY_WORDS = (
+    (re.compile(r" supertrend"), ("SUPERTREND_FLIP",)),
+    (re.compile(r" kama "), ("KAMA_TURN",)),
+    (re.compile(r" (?:ichimoku|bulut|cloud)"), ("ICHIMOKU_BREAKOUT",)),
+)
+
+
+def reversal_grounding(question: str) -> tuple[tuple[str, ...] | None, str | None]:
+    """The reversal event types and the direction the question names.
+
+    Returns ``(event types, direction)``: the event types (in order of preference; the
+    first is the canonical one) or ``None`` when the question names no event family, and
+    ``"BULLISH"``, ``"BEARISH"`` or ``None`` (none or both named). A direction no named
+    type can have (a one-sided family of the other side) is dropped, so the canonical call
+    always fits. "alt bant" / "lower band" gives the lower-band touch and BULLISH.
+    """
+    from bist_harness.tools.events import SINGLE_DIRECTION
+
+    folded = fold_text(question)
+    bullish = any(p.search(folded) for p in _BULLISH_WORDS)
+    bearish = any(p.search(folded) for p in _BEARISH_WORDS)
+    direction = None if bullish == bearish else "BULLISH" if bullish else "BEARISH"
+    types: list[str] = []
+    bands = [
+        (_LOWER_BAND, "BOLLINGER_LOWER_TOUCH"),
+        (_MIDDLE_BAND, "BOLLINGER_MIDDLE_TEST"),
+        (_UPPER_BAND, "BOLLINGER_UPPER_TOUCH"),
+    ]
+    types += [name for pattern, name in bands if pattern.search(folded)]
+    if not types and " bollinger" in folded:
+        types += [name for _, name in bands]
+    if " rsi " in folded:
+        if " 30 " in folded or _OVERSOLD.search(folded):
+            types.append("RSI_LOCAL_TROUGH")
+        elif " 70 " in folded or _OVERBOUGHT.search(folded):
+            types.append("RSI_LOCAL_PEAK")
+        else:
+            types += ["RSI_LOCAL_TROUGH", "RSI_LOCAL_PEAK"]
+    else:
+        if _OVERSOLD.search(folded):
+            types += ["RSI_LOCAL_TROUGH", "BOLLINGER_LOWER_TOUCH"]
+        if _OVERBOUGHT.search(folded):
+            types += ["RSI_LOCAL_PEAK", "BOLLINGER_UPPER_TOUCH"]
+    types += [name for pattern, names in _FAMILY_WORDS if pattern.search(folded) for name in names]
+    if _SUPPORT.search(folded) or _RESISTANCE.search(folded):
+        types.append("SUPPORT_RESISTANCE_TOUCH")
+    types = list(dict.fromkeys(types))
+    if direction and types:
+        fitting = [t for t in types if SINGLE_DIRECTION.get(t, direction) == direction]
+        if fitting:
+            types = fitting
+        else:
+            direction = None
+    return (tuple(types) or None), direction
+
+
 def _guess_language(question: str) -> str:
     return "tr" if re.search(r"[ıİşŞğĞüÜöÖçÇ]", question) or " mi " in fold_text(question) else "en"
 

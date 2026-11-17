@@ -7,7 +7,8 @@ Code drives the state transitions. The model speaks in three places only: the in
 allowed tools alone), and the explanation at ``GENERATE_EXPLANATION`` (schema-constrained
 JSON checked by ``harness.validator``; the run's outcome is the chosen action label). Every
 proposed call is checked in
-order (schema, permission of the state, agreement with the intent); a rejected call is
+order (schema, permission of the state, agreement with the intent: stock, sector, dates
+and the reversal event family and direction the question names); a rejected call is
 recorded with ``allowed=False`` and the model gets a short error. After ``max_attempts``
 without a valid call the harness makes the canonical call derived from the intent itself
 (``source="harness"``), which experiment C counts as a harness intervention. After the
@@ -38,10 +39,17 @@ from bist_harness.harness.intent import (
     check_intent,
     keyword_guard,
     parse_intent,
+    reversal_grounding,
 )
 from bist_harness.harness.routes import ALLOWED_TOOLS, GUARDED_ROUTE, ROUTES, STATES
 from bist_harness.harness.validator import generate_explanation
-from bist_harness.tools.schemas import STRATEGY_VARIANTS, to_ollama_tools, validate_tool_call
+from bist_harness.tools.events import SINGLE_DIRECTION
+from bist_harness.tools.schemas import (
+    REVERSAL_EVENT_TYPES,
+    STRATEGY_VARIANTS,
+    to_ollama_tools,
+    validate_tool_call,
+)
 from bist_harness.universe import normalize_ticker
 
 ToolCaller = Callable[[str, dict], dict]
@@ -341,8 +349,29 @@ def _ticker_problem(ticker: object, intent: Intent) -> str | None:
     return None
 
 
-def _intent_problem(arguments: dict, intent: Intent, analysis_id: str) -> str | None:
-    """Do the stock, sector and dates of a call match the question's intent?"""
+def _event_problem(arguments: dict, question: str) -> str | None:
+    """Do the reversal event type and direction of a call fit what the question names?
+
+    Only arguments that change what is analysed are checked; a question that names no
+    event family or direction leaves them free (``intent.reversal_grounding``).
+    """
+    event_type = arguments.get("event_type")
+    if not question or not isinstance(event_type, str):
+        return None
+    types, direction = reversal_grounding(question)
+    if types and event_type not in types:
+        return f"event_type must be {' or '.join(types)}"
+    if direction:
+        side = arguments.get("direction") or "BULLISH"  # the tool's default
+        if SINGLE_DIRECTION.get(event_type, side) != direction:
+            return f"direction must be {direction}"
+    return None
+
+
+def _intent_problem(
+    arguments: dict, intent: Intent, analysis_id: str, question: str = ""
+) -> str | None:
+    """Do the stock, sector, dates and event of a call match the question's intent?"""
     if "analysis_id" in arguments and arguments["analysis_id"] != analysis_id:
         return f"analysis_id must be {analysis_id}"
     for key in ("start", "end"):
@@ -361,11 +390,17 @@ def _intent_problem(arguments: dict, intent: Intent, analysis_id: str) -> str | 
         group = _intent_group(intent)
         if group and _sector_group(arguments["sector"]) != group:
             return f"sector must be {group}"
-    return None
+    return _event_problem(arguments, question)
 
 
 def check_call(
-    state: str, name: str, arguments: dict, intent: Intent, *, analysis_id: str
+    state: str,
+    name: str,
+    arguments: dict,
+    intent: Intent,
+    *,
+    analysis_id: str,
+    question: str = "",
 ) -> tuple[str, str] | None:
     """Check one proposed call in order: schema, permission of the state, intent.
 
@@ -378,7 +413,7 @@ def check_call(
     if name not in ALLOWED_TOOLS[state]:
         allowed = ", ".join(ALLOWED_TOOLS[state])
         return "TOOL_NOT_ALLOWED", f"{name} is not allowed in {state}; call one of: {allowed}."
-    problem = _intent_problem(arguments, intent, analysis_id)
+    problem = _intent_problem(arguments, intent, analysis_id, question)
     if problem is not None:
         return "INTENT_MISMATCH", f"{name}: {problem}, as the question asks."
     return None
@@ -388,6 +423,12 @@ def check_call(
 BENCHMARK_INDEX = "XU100"
 SECTOR_HORIZON_DAYS = 20
 REVERSAL_EVENT = "BOLLINGER_LOWER_TOUCH"
+# Canonical event when the question names a direction but no family: the first that fits.
+_EVENT_PREFERENCE = (
+    REVERSAL_EVENT,
+    "BOLLINGER_UPPER_TOUCH",
+    *(t for t in REVERSAL_EVENT_TYPES if t not in (REVERSAL_EVENT, "BOLLINGER_UPPER_TOUCH")),
+)
 REVERSAL_FORWARD_DAYS = 5
 WEEKDAY_PATTERN = "WEEKDAY_MEANS"
 # The variant whose feature layers match the scenario; A_TECHNICAL for the rest.
@@ -395,8 +436,25 @@ DEFAULT_STRATEGY = {"SECTOR_LAGGARD": "B_TECH_SECTOR", "FUNDAMENTAL_REACTION": "
 MALFORMED_TOOL = "(malformed)"  # tool name recorded for a call that could not be parsed
 
 
-def canonical_calls(state: str, intent: Intent) -> list[tuple[str, dict]]:
-    """The calls a tool state makes for this intent, every one valid under ``check_call``.
+def _grounded_event(question: str) -> dict:
+    """``event_type`` (and ``direction`` for a two-sided family) grounded in the question."""
+    types, direction = reversal_grounding(question) if question else (None, None)
+    if types:
+        event_type = types[0]
+    elif direction is None:
+        event_type = REVERSAL_EVENT
+    else:
+        event_type = next(
+            t for t in _EVENT_PREFERENCE if SINGLE_DIRECTION.get(t, direction) == direction
+        )
+    if direction and event_type not in SINGLE_DIRECTION:
+        return {"event_type": event_type, "direction": direction}
+    return {"event_type": event_type}
+
+
+def canonical_calls(state: str, intent: Intent, *, question: str = "") -> list[tuple[str, dict]]:
+    """The calls a tool state makes for this intent, every one valid under ``check_call``
+    (with the same ``question``: the reversal event follows what the question names).
 
     A state that needs a stock while the intent names none (a sector question) has no
     canonical call: ``[]``.
@@ -422,7 +480,7 @@ def canonical_calls(state: str, intent: Intent) -> list[tuple[str, dict]]:
         event = {
             "ticker": ticker,
             **period,
-            "event_type": REVERSAL_EVENT,
+            **_grounded_event(question),
             "forward_days": REVERSAL_FORWARD_DAYS,
         }
         return [("detect_reversal_events", event)]
@@ -506,7 +564,12 @@ def _model_state(
         for proposal in result.tool_calls:
             arguments = dict(proposal.arguments)
             problem = check_call(
-                state, proposal.name, arguments, intent, analysis_id=run.analysis.analysis_id
+                state,
+                proposal.name,
+                arguments,
+                intent,
+                analysis_id=run.analysis.analysis_id,
+                question=question,
             )
             if problem is not None:
                 code, message = problem
@@ -532,10 +595,10 @@ def _model_state(
     fallback = not executed
     topped_up: list[str] = []
     if fallback:  # no valid call in max_attempts: the harness calls what the intent implies
-        for name, arguments in canonical_calls(state, intent):
+        for name, arguments in canonical_calls(state, intent, question=question):
             run.execute(call_tool, state, name, arguments, "harness")
     else:  # the model's valid calls stay; the harness adds what the minimum still needs
-        for name, arguments in top_up_calls(run.analysis, state, intent):
+        for name, arguments in top_up_calls(run.analysis, state, intent, question=question):
             run.execute(call_tool, state, name, arguments, "harness")
             topped_up.append(name)
     extra = {"topped_up": topped_up} if topped_up else {}
@@ -558,7 +621,9 @@ def _same_call_key(arguments: dict) -> dict:
     )
 
 
-def top_up_calls(analysis: session.Analysis, state: str, intent: Intent) -> list[tuple[str, dict]]:
+def top_up_calls(
+    analysis: session.Analysis, state: str, intent: Intent, *, question: str = ""
+) -> list[tuple[str, dict]]:
     """Canonical calls of the state that the scenario's minimum evidence still needs.
 
     A call is added when its tool supplies a ``(tool, field)`` kind of a requirement of
@@ -580,7 +645,7 @@ def top_up_calls(analysis: session.Analysis, state: str, intent: Intent) -> list
         if c.allowed and isinstance(c.output, dict) and "error" not in c.output
     ]
     calls = []
-    for name, arguments in canonical_calls(state, intent):
+    for name, arguments in canonical_calls(state, intent, question=question):
         if name in needed and (name, _same_call_key(arguments)) not in ran:
             calls.append((name, arguments))
     return calls
