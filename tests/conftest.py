@@ -11,6 +11,7 @@ IMPLEMENTED_TOOLS = {
     "get_stock_history",
     "get_index_history",
     "calculate_indicators",
+    "find_support_resistance",
     "detect_reversal_events",
 }
 

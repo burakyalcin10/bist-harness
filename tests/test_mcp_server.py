@@ -231,3 +231,25 @@ def test_calculate_indicators_on_a_short_history_returns_none_values(monkeypatch
     monkeypatch.setattr(srv, "load_history", lambda symbol: offline_history.iloc[:15])
     out = srv.calculate_indicators("ASELS", "2020-01-01", "2020-03-31", [])
     assert out["sma_20"] is None and out["ichimoku_state"] is None and out["rsi"] is not None
+
+
+def test_support_resistance_tool_reports_levels_of_the_period(offline_history):
+    from bist_harness.tools.support_resistance import find_support_resistance
+
+    out = srv.find_support_resistance("ASELS", "2021-01-01", "2022-06-30")
+    window = offline_history.loc["2021-01-01":"2022-06-30"]
+    assert out["levels"] == find_support_resistance(window)
+    assert 0 < len(out["levels"]) <= 6
+    assert out["tolerance"] == 0.015
+    assert out["last_close"] == round(float(window["Close"].iloc[-1]), 2)
+    supports = [lv["level"] for lv in out["levels"] if lv["kind"] == "support"]
+    resistances = [lv["level"] for lv in out["levels"] if lv["kind"] == "resistance"]
+    assert out["nearest_support"] == (max(supports) if supports else None)
+    assert out["nearest_resistance"] == (min(resistances) if resistances else None)
+    assert out["method"] and out["snapshot_id"] and len(out["result_id"]) == 12
+
+
+def test_support_resistance_tolerance_must_be_a_small_positive_share():
+    for bad in (0, -0.1, 0.5):
+        out = srv.find_support_resistance("ASELS", "2021-01-01", "2022-06-30", bad)
+        assert out["error"]["code"] == "INVALID_ARGUMENT"

@@ -24,6 +24,7 @@ from mcp.server.mcpserver import MCPServer
 from bist_harness.data import snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
+from bist_harness.tools import support_resistance
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.reversal import bollinger_lower_touch_summary
 from bist_harness.tools.schemas import INDICATORS, REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
@@ -170,6 +171,40 @@ def calculate_indicators(ticker: str, start: str, end: str, indicators: list[str
     args = {"ticker": name, "start": start, "end": end, "indicators": groups}
     output = {**args, **indicator_state(add_all_indicators(history), groups), **meta}
     return _with_result_id("calculate_indicators", args, output)
+
+
+SUPPORT_RESISTANCE_METHOD = (
+    "Pivot highs and lows of an 11-day centred window, known 5 trading days after they "
+    "happen; pivots within the tolerance form one level. Strength = touches + 1.5 x "
+    "touches in the last 60 trading days + 1.2 x high-volume reactions + average move "
+    "away from the level in percent."
+)
+MAX_TOLERANCE = 0.10
+
+
+@server.tool(description=TOOL_SCHEMAS["find_support_resistance"]["description"])
+def find_support_resistance(ticker: str, start: str, end: str, tolerance: float = 0.015) -> dict:
+    loaded = _load_window(ticker, start, end)
+    if isinstance(loaded, dict):
+        return loaded
+    name, history, meta = loaded
+    if not 0 < tolerance <= MAX_TOLERANCE:
+        return _error("INVALID_ARGUMENT", f"tolerance must be above 0 and at most {MAX_TOLERANCE}.")
+    window = history.loc[pd.Timestamp(start) :]
+    levels = support_resistance.find_support_resistance(window, tolerance=tolerance)
+    supports = [lv["level"] for lv in levels if lv["kind"] == "support"]
+    resistances = [lv["level"] for lv in levels if lv["kind"] == "resistance"]
+    args = {"ticker": name, "start": start, "end": end, "tolerance": tolerance}
+    output = {
+        **args,
+        "last_close": round(float(window["Close"].iloc[-1]), 2),
+        "levels": levels,
+        "nearest_support": max(supports) if supports else None,
+        "nearest_resistance": min(resistances) if resistances else None,
+        "method": SUPPORT_RESISTANCE_METHOD,
+        **meta,
+    }
+    return _with_result_id("find_support_resistance", args, output)
 
 
 @server.tool(description=TOOL_SCHEMAS["detect_reversal_events"]["description"])
