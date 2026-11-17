@@ -137,3 +137,19 @@ def test_list_models_returns_tag_names():
         return httpx.Response(200, json={"models": [{"name": "a:1b"}, {"name": "b:2b"}]})
 
     assert _client(handler).list_models() == ["a:1b", "b:2b"]
+
+
+def test_http_library_logging_does_not_reveal_the_endpoint(caplog):
+    """httpx logs every request URL at INFO; that would leak a private server address."""
+    import logging
+
+    client = OllamaClient(
+        "http://secret-host.test",
+        "m",
+        transport=httpx.MockTransport(lambda request: _reply({"content": "x"})),
+    )
+    logging.getLogger("httpx").setLevel(logging.INFO)  # as a host application might do
+    with caplog.at_level(logging.INFO):
+        client.chat([])
+        client.list_models()
+    assert "secret-host" not in caplog.text

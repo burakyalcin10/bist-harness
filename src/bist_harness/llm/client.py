@@ -8,6 +8,7 @@ question against the same data gives the same tool calls.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -17,6 +18,24 @@ from bist_harness.errors import LLMUnavailableError
 
 _TOOL_CALL_TAG = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+class _NoRequestUrls(logging.Filter):
+    """Drop httpx's per-request log lines: they contain the full endpoint URL.
+
+    Other libraries (the MCP SDK among them) switch logging to INFO, at which point
+    httpx would print the private server address on every call. A filter on the logger
+    holds whatever level the host application picks.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("HTTP Request:")
+
+
+for _name in ("httpx", "httpcore"):
+    _logger = logging.getLogger(_name)
+    if not any(isinstance(f, _NoRequestUrls) for f in _logger.filters):
+        _logger.addFilter(_NoRequestUrls())
 
 
 @dataclass(frozen=True)

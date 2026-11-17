@@ -83,18 +83,37 @@ Görev 11, makine açıldığı anda öne alınır; diğer görevler ona bağlı
 ```python
 INDEX_SYMBOLS = {"XU100": "XU100.IS", "XU030": "XU030.IS", "XBANK": "XBANK.IS", "XUSIN": "XUSIN.IS"}
 
+
 @dataclass(frozen=True)
-class SeriesInfo:      # one manifest entry
-    symbol: str; rows: int; first_date: str; last_date: str; sha256: str
+class SeriesInfo:  # one manifest entry
+    symbol: str
+    rows: int
+    first_date: str
+    last_date: str
+    sha256: str
+
 
 @dataclass(frozen=True)
 class Manifest:
-    snapshot_id: str; created_at: str; source: str; start: str; series: tuple[SeriesInfo, ...]
+    snapshot_id: str
+    created_at: str
+    source: str
+    start: str
+    series: tuple[SeriesInfo, ...]
 
-def build_snapshot(symbols: Iterable[str], *, start: str = "2020-01-01", snapshot_id: str | None = None,
-                   root: Path | None = None, downloader: Downloader | None = None) -> Manifest: ...
-def active_snapshot_id(root: Path | None = None) -> str: ...        # raises DataUnavailableError if none
-def load_history(symbol: str, *, snapshot_id: str | None = None, root: Path | None = None) -> pd.DataFrame: ...
+
+def build_snapshot(
+    symbols: Iterable[str],
+    *,
+    start: str = "2020-01-01",
+    snapshot_id: str | None = None,
+    root: Path | None = None,
+    downloader: Downloader | None = None,
+) -> Manifest: ...
+def active_snapshot_id(root: Path | None = None) -> str: ...  # raises DataUnavailableError if none
+def load_history(
+    symbol: str, *, snapshot_id: str | None = None, root: Path | None = None
+) -> pd.DataFrame: ...
 def load_manifest(snapshot_id: str | None = None, root: Path | None = None) -> Manifest: ...
 ```
 
@@ -145,15 +164,21 @@ def load_manifest(snapshot_id: str | None = None, root: Path | None = None) -> M
 ```python
 @dataclass(frozen=True)
 class PeerGroup:
-    name: str; universe: tuple[str, ...]; reference: tuple[str, ...]
+    name: str
+    universe: tuple[str, ...]
+    reference: tuple[str, ...]
+
     @property
     def members(self) -> tuple[str, ...]: ...
 
-MIN_PEERS = 3   # members including the target
+
+MIN_PEERS = 3  # members including the target
+
+
 def load_peer_groups(path: Path | None = None) -> dict[str, PeerGroup]: ...
-def peer_group_of(ticker: str) -> PeerGroup: ...                 # KeyError for non-universe tickers
-def resolve_sector(name: str) -> PeerGroup: ...                  # accepts group name or a universe sector label
-def all_symbols() -> list[str]: ...                              # universe + reference, unique
+def peer_group_of(ticker: str) -> PeerGroup: ...  # KeyError for non-universe tickers
+def resolve_sector(name: str) -> PeerGroup: ...  # accepts group name or a universe sector label
+def all_symbols() -> list[str]: ...  # universe + reference, unique
 ```
 
 - `resolve_sector`, evren dosyasındaki sektör etiketlerini de kabul eder (ör. `Basic Metals / Steel` → `Steel`), böylece model her iki adı da kullanabilir.
@@ -174,10 +199,20 @@ def all_symbols() -> list[str]: ...                              # universe + re
 ```python
 @dataclass(frozen=True)
 class Finding:
-    code: str; severity: Literal["hard", "soft"]; message: str; count: int = 1
+    code: str
+    severity: Literal["hard", "soft"]
+    message: str
+    count: int = 1
 
-def check_price_series(df: pd.DataFrame, *, as_of: str, expected_days: pd.DatetimeIndex | None = None,
-                       min_rows: int = 60, stale_after_days: int = 5) -> list[Finding]: ...
+
+def check_price_series(
+    df: pd.DataFrame,
+    *,
+    as_of: str,
+    expected_days: pd.DatetimeIndex | None = None,
+    min_rows: int = 60,
+    stale_after_days: int = 5,
+) -> list[Finding]: ...
 ```
 
 | Kod | Önem | Koşul |
@@ -331,7 +366,7 @@ def rank_sector_relative_strength(closes: dict[str, pd.Series], group: PeerGroup
 
 **Files:** Create `src/bist_harness/tools/calendar_patterns.py`, `tests/test_calendar_patterns.py`. Modify sunucu ve testi.
 
-**Önce doğrulanacak bulgu:** Hocanın Senaryo 2 betiğinde `detect_pattern`, örüntüyü Perşembe–Cuma getirisinin pozitif olmasıyla da tanımlıyor olabilir; öyleyse ölçülen "örüntü sonrası getiri" tanım gereği pozitiftir. Step 1'de betik okunur; bulgu doğruysa `docs/decision-log.md` içine yazılır ve bizim tanımımız koşulu yalnız önceki günlere dayandırır.
+**Doğrulanmış bulgu (karar K-014):** Hocanın Senaryo 2 betiğinde `detect_pattern`, örüntüyü Pzt, Sal, Çar `< 0` ve Per, Cum `> 0` olarak tanımlıyor; `pattern_summary` aynı haftaların Perşembe–Cuma getirisini "örüntü sonrası getiri" olarak raporluyor. Bu getiri tanım gereği pozitiftir. Bizim tanımımız koşulu yalnız önceki günlere dayandırır; betiğin sıklık sayısı (`Pattern occurrences`) ayrıca `instructor_full_pattern_count` alanında raporlanır ve betiğin `pattern_summary` çıktısıyla karşılaştırılarak test edilir.
 
 **Örüntüler:**
 
@@ -345,7 +380,7 @@ def rank_sector_relative_strength(closes: dict[str, pd.Series], group: PeerGroup
 
 **Çıktı alanları:** `occurrences`, `conditional_mean_return_pct`, `conditional_median_return_pct`, `positive_rate_pct`, `unconditional_mean_return_pct` (aynı ufuk), `mean_after_cost_pct` (maliyet 0.001 bir kez düşülür), `train` ve `test` alt özetleri (0.70 zaman sıralı ayrım), `p_value` (permütasyon, 2.000 karıştırma, `seed=42`), `patterns_in_family` (5) ve `p_value_bonferroni`, `incomplete_weeks_skipped`, `sample_warning`, `interpretation_flags` (`NOT_SIGNIFICANT`, `UNSTABLE_OUT_OF_SAMPLE`, `NEGATIVE_AFTER_COST`).
 
-- [ ] **Step 1:** Betikteki `weekday_statistics`, `build_weekly_pattern_table`, `detect_pattern`, `pattern_summary`, `train_test_split_by_time` okunur; bulgu doğrulanır.
+- [ ] **Step 1:** Betikteki `weekday_statistics`, `build_weekly_pattern_table` ve `train_test_split_by_time` okunur (`detect_pattern` ve `pattern_summary` 17 Kasım'da okundu).
 - [ ] **Step 2: Kalan testler** — `WEEKDAY_MEANS` betiğin `weekday_statistics` çıktısına eşit; `train_test_split_by_time` ile aynı ayrım noktası; rastgele yürüyüş getirilerinde beş örüntünün hiçbiri Bonferroni sonrası anlamlı çıkmaz (üç tohum); Pazartesi negatifse Cuma'ya bilerek +%1 eklenmiş sentetik seride `MON_WEAK_FRI_STRONG` anlamlı çıkar; koşul yalnız geçmiş günleri kullanır (Cuma getirileri değiştirildiğinde `occurrences` değişmez); tatil nedeniyle dört günlük hafta haftalık örüntülerde sayılmaz ve `incomplete_weeks_skipped` artar; aynı girdiyle iki çağrının `p_value` değeri aynı.
 - [ ] **Step 3:** FAIL → uygulama → PASS. MCP aracı ve testi.
 - [ ] **Step 4:** Commit: `feat: weekday and multi-day pattern tests with significance diagnostics`.
