@@ -20,6 +20,14 @@ uv sync                 # creates .venv with Python 3.12 and all dependencies
 uv run pytest -q        # offline test suite
 ```
 
+The test suite never reads the real data folder: every test sees a temp `BIST_DATA_DIR`, a
+temp analysis store and fixed data-version ids. The few checks of the real data are marked
+`real_data` and run only on request:
+
+```powershell
+$env:BIST_REAL_DATA = "1"; uv run pytest -q -m real_data
+```
+
 ## Model endpoint
 
 The harness talks to an Ollama-compatible endpoint that you control. Nothing is sent

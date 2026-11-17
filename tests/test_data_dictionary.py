@@ -53,6 +53,13 @@ def histories(monkeypatch):
         return frames[symbol]
 
     monkeypatch.setattr(srv, "load_history", load)
+
+    # Unadjusted closes for the valuation fields, without the real prices_raw layer.
+    def raw(ticker):
+        close = load(ticker)["Close"]
+        return pd.DataFrame({"close": close, "splits": 0.0, "raw_close": close})
+
+    monkeypatch.setattr(srv, "load_raw", raw)
     from .test_macro import _series
 
     macro = _series()

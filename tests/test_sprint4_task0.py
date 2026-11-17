@@ -123,6 +123,7 @@ def test_the_half_day_table_lists_the_legal_half_days():
     assert set(table["close"]) == {"12:30"}
 
 
+@pytest.mark.real_data
 def test_every_half_day_is_a_trading_day_followed_by_a_closure():
     try:
         calendar = snapshot.load_history("XU100").index

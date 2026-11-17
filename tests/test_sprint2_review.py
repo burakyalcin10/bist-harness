@@ -226,7 +226,7 @@ def test_every_tool_output_names_the_adjustments_and_the_result_id_depends_on_th
     histories, monkeypatch
 ):
     first = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
-    assert first["adjustments_id"] == snap.adjustments_id()
+    assert first["adjustments_id"] == srv.current_adjustments_id()
     sector = srv.rank_sector_relative_strength("Banking", 20, "2022-06-30")
     assert sector["adjustments_id"] == first["adjustments_id"]
     monkeypatch.setattr(srv, "current_adjustments_id", lambda: "deadbeef")

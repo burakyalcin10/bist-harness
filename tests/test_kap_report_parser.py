@@ -163,12 +163,12 @@ def test_a_page_without_statements_is_reported():
         kp.parse_report("<html>bildirim bulunamadı</html>")
 
 
-PAGES = kap_reports.report_folder() / "pages"
-
-
-@pytest.mark.skipif(not (PAGES / "1393446.html.gz").is_file(), reason="KAP pages not downloaded")
+@pytest.mark.real_data
 def test_real_pages_give_the_figures_seen_on_kap():
-    tuprs = kp.parse_report(kap_reports.read_page(PAGES, 1393446))  # TUPRS 2024 annual
+    pages = kap_reports.report_folder() / "pages"
+    if not (pages / "1393446.html.gz").is_file():
+        pytest.skip("KAP pages not downloaded")
+    tuprs = kp.parse_report(kap_reports.read_page(pages, 1393446))  # TUPRS 2024 annual
     assert tuprs.unit == 1000 and tuprs.consolidated is True
     assert tuprs.value("ifrs-full_Revenue", start=date(2024, 1, 1), end=date(2024, 12, 31)) == (
         810_385_588_000.0
@@ -176,9 +176,9 @@ def test_real_pages_give_the_figures_seen_on_kap():
     assert tuprs.value("ifrs-full_Revenue", start=date(2023, 1, 1), end=date(2023, 12, 31)) == (
         991_202_993_000.0
     )
-    akbnk = kp.parse_report(kap_reports.read_page(PAGES, 1350568))  # AKBNK 2024Q3, consolidated
+    akbnk = kp.parse_report(kap_reports.read_page(pages, 1350568))  # AKBNK 2024Q3, consolidated
     assert akbnk.value("ifrs-full_Assets", end=date(2024, 9, 30)) == 2_404_289_929_000.0
-    thyao = kp.parse_report(kap_reports.read_page(PAGES, 1353359))  # THYAO 2024Q3, million TL
+    thyao = kp.parse_report(kap_reports.read_page(pages, 1353359))  # THYAO 2024Q3, million TL
     assert thyao.value("ifrs-full_Revenue", start=date(2024, 1, 1), end=date(2024, 9, 30)) == (
         551_928_000_000.0
     )

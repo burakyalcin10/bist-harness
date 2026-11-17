@@ -27,6 +27,7 @@ build-backend = "uv_build"
 testpaths = ["tests"]
 markers = [
     "live: needs network or a running LLM endpoint (run with BIST_LIVE=1)",
+    "real_data: reads the real data folder; skipped unless BIST_REAL_DATA=1 (BIST_REAL_DATA=1 uv run pytest -m real_data)",
 ]
 
 [tool.ruff]
