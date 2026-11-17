@@ -109,7 +109,7 @@ def test_variant_b_has_no_more_signals_than_a_and_adds_the_sector_benchmark():
         (("A_TECHNICAL", ["ASELS", "XYZ"], *PERIOD), "UNKNOWN_TICKER"),
         (("BEST_STRATEGY", ["ASELS"], *PERIOD), "INVALID_ARGUMENT"),
         (("A_TECHNICAL", "ASELS", *PERIOD), "INVALID_ARGUMENT"),
-        (("C_TECH_SECTOR_FUND", ["ASELS"], *PERIOD), "NOT_IMPLEMENTED"),
+        (("C_TECH_SECTOR_FUND", ["ASELS"], *PERIOD), "INVALID_DATE_RANGE"),
         (("A_TECHNICAL", ["ASELS"], "2023-12-29", "2021-01-01"), "INVALID_DATE_RANGE"),
         (("A_TECHNICAL", ["ASELS"], "2021-01-01", "2999-01-01"), "FUTURE_DATE"),
         (("A_TECHNICAL", ["ASELS"], "01.01.2021", "2023-12-29"), "INVALID_DATE"),
@@ -149,3 +149,80 @@ def test_no_number_in_the_output_is_nan(histories):
 
     out = srv.run_backtest("B_TECH_SECTOR", ["TCELL", "ASELS"], "2021-01-01", "2021-06-30")
     json.dumps(out, allow_nan=False)
+
+
+LATE = ("2024-06-01", "2026-06-30")
+
+
+@pytest.fixture
+def layers(monkeypatch):
+    """Histories that reach 2026 and the fundamental, macro and news layers."""
+    from .test_feature_table import _disclosures
+    from .test_fundamentals_tools import _calendar, _statements
+    from .test_macro import _series
+
+    frames: dict[str, pd.DataFrame] = {}
+
+    def load(symbol):
+        if symbol not in frames:
+            frames[symbol] = ohlcv(1750, seed=sum(map(ord, symbol)))
+        return frames[symbol]
+
+    macro = _series()
+    monkeypatch.setattr(srv, "load_history", load)
+    monkeypatch.setattr(srv, "load_statements", lambda: _statements())
+    monkeypatch.setattr(srv, "load_disclosure_calendar", lambda: _calendar())
+    monkeypatch.setattr(srv, "load_macro", lambda name: macro[name])
+    monkeypatch.setattr(srv, "load_disclosures", lambda: _disclosures())
+    return load
+
+
+@pytest.mark.parametrize(
+    "variant", ["C_TECH_SECTOR_FUND", "D_FULL_STRUCTURED", "E_FULL_CONTEXTUAL"]
+)
+def test_variants_with_fundamentals_run_from_2025_on_and_say_so(variant, layers):
+    out = srv.run_backtest(variant, ["TUPRS"], *LATE)
+    assert "error" not in out
+    assert out["effective_start"] == "2025-01-01"
+    assert any(w.startswith("NOT_AVAILABLE_BEFORE_2025") for w in out["warnings"])
+    assert all(t["signal_date"] >= "2025-01-01" for t in out["trade_sample"])
+    assert out["strategy"] == variant and "benchmark_sector_peers_return_pct" in out
+
+
+def test_each_later_variant_has_no_more_signals(layers):
+    counts = [
+        srv.run_backtest(v, ["TUPRS"], "2025-01-01", "2026-06-30")["signals"]
+        for v in ("B_TECH_SECTOR", "C_TECH_SECTOR_FUND", "D_FULL_STRUCTURED", "E_FULL_CONTEXTUAL")
+    ]
+    assert counts == sorted(counts, reverse=True) and counts[0] > 0
+
+
+def test_variants_a_and_b_keep_the_requested_start(layers):
+    out = srv.run_backtest("A_TECHNICAL", ["TUPRS"], *LATE)
+    assert out["effective_start"] == LATE[0]
+    assert not any(w.startswith("NOT_AVAILABLE") for w in out["warnings"])
+
+
+@pytest.mark.parametrize(
+    "variant,hook",
+    [
+        ("C_TECH_SECTOR_FUND", "load_statements"),
+        ("D_FULL_STRUCTURED", "load_macro"),
+        ("E_FULL_CONTEXTUAL", "load_disclosures"),
+    ],
+)
+def test_a_variant_whose_layer_was_not_built_is_an_error(variant, hook, layers, monkeypatch):
+    from bist_harness.errors import DataUnavailableError
+
+    def missing(*args):
+        raise DataUnavailableError(f"{hook}: layer not built. Run the build command first.")
+
+    monkeypatch.setattr(srv, hook, missing)
+    out = srv.run_backtest(variant, ["TUPRS"], "2025-01-01", "2026-06-30")
+    assert out["error"]["code"] == "DATA_UNAVAILABLE"
+
+
+def test_variant_c_does_not_change_when_rows_after_the_end_are_removed(layers, monkeypatch):
+    full = srv.run_backtest("C_TECH_SECTOR_FUND", ["TUPRS"], "2025-01-01", "2026-03-31")
+    monkeypatch.setattr(srv, "load_history", lambda symbol: layers(symbol).loc[:"2026-03-31"])
+    assert srv.run_backtest("C_TECH_SECTOR_FUND", ["TUPRS"], "2025-01-01", "2026-03-31") == full

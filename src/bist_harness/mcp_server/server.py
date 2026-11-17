@@ -22,14 +22,16 @@ from datetime import date, timedelta
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
 
+from bist_harness.backtest.periods import TEST as TEST_PERIOD
 from bist_harness.backtest.runner import run_variant
-from bist_harness.backtest.strategies import StrategyContext
+from bist_harness.backtest.strategies import FEATURE_FILTERS, StrategyContext
 from bist_harness.data import fundamentals as fundamentals_data
 from bist_harness.data import kap as kap_data
 from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
+from bist_harness.features.table import build_feature_table
 from bist_harness.tools import calendar_patterns, events, support_resistance
 from bist_harness.tools.disclosure import quarter_reactions, summarize_reactions
 from bist_harness.tools.fundamentals import fundamental_change, fundamental_metrics
@@ -51,7 +53,6 @@ FORWARD_DAYS = (1, 3, 5, 10)
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SECTOR_HORIZONS = (5, 10, 20, 60)
 BENCHMARK = "XU100"
-BACKTEST_READY = ("A_TECHNICAL", "B_TECH_SECTOR")  # C to E need the Sprint 3 data layers
 COVERAGE_SLACK_DAYS = 7
 
 server = MCPServer(
@@ -543,6 +544,33 @@ def get_macro_context(start: str, end: str) -> dict:
     return _with_result_id("get_macro_context", args, output)
 
 
+def _feature_layers(strategy: str) -> dict:
+    """Load the layers a variant needs for its feature table, or return an error object."""
+    try:
+        layers: dict = {
+            "statements": load_statements(),
+            "calendar": load_disclosure_calendar(),
+            "disclosures": None,
+        }
+    except (DataUnavailableError, ValueError) as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    macro: dict[str, pd.DataFrame] = {}
+    for name in macro_data.SERIES:
+        try:
+            macro[name] = load_macro(name)
+        except DataUnavailableError as exc:
+            if name == "policy_rate" and "macro" in FEATURE_FILTERS[strategy]:
+                return _error("DATA_UNAVAILABLE", str(exc))
+    layers["macro"] = macro
+    layers["cpi_index"] = macro_data.cpi_index(macro["cpi"]) if "cpi" in macro else None
+    if "news" in FEATURE_FILTERS[strategy]:
+        try:
+            layers["disclosures"] = load_disclosures()
+        except DataUnavailableError as exc:
+            return _error("DATA_UNAVAILABLE", str(exc))
+    return layers
+
+
 @server.tool(description=TOOL_SCHEMAS["run_backtest"]["description"])
 def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> dict:
     problem = _period_problem(start, end)
@@ -555,8 +583,13 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
     unknown = [t for t in universe if not is_in_universe(t)]
     if unknown:
         return _error("UNKNOWN_TICKER", f"{unknown} are not among the 30 study-universe stocks.")
-    if strategy not in BACKTEST_READY:
-        return _error("NOT_IMPLEMENTED", f"{strategy} is not available yet.")
+    needs_features = strategy in FEATURE_FILTERS
+    effective_start = start
+    if needs_features and end < TEST_PERIOD[0]:
+        return _error(
+            "INVALID_DATE_RANGE",
+            f"{strategy} uses fundamentals and is defined from {TEST_PERIOD[0]} on.",
+        )
     tickers = [normalize_ticker(t) for t in universe] or list(load_universe()["ticker"])
     tickers = list(dict.fromkeys(tickers))
 
@@ -586,10 +619,31 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
     if not in_period or benchmark.loc[pd.Timestamp(start) :].empty:
         return _error("DATA_UNAVAILABLE", f"No market data between {start} and {end}.")
 
+    features = None
+    if needs_features:
+        if start < TEST_PERIOD[0]:
+            effective_start = TEST_PERIOD[0]
+            warnings.append(
+                f"NOT_AVAILABLE_BEFORE_2025: {strategy} uses fundamentals; signals before "
+                f"{TEST_PERIOD[0]} were not traded."
+            )
+        layers = _feature_layers(strategy)
+        if "error" in layers:
+            return layers
+        features = {
+            t: build_feature_table(
+                t, histories[t], peer_closes=peer_closes, benchmark=benchmark, **layers
+            )
+            for t in in_period
+        }
     context = StrategyContext(
-        histories={t: histories[t] for t in in_period}, peer_closes=peer_closes, benchmark=benchmark
+        histories={t: histories[t] for t in in_period},
+        peer_closes=peer_closes,
+        benchmark=benchmark,
+        features=features,
     )
-    result = run_variant(strategy, context, start=start, end=end)
+    result = run_variant(strategy, context, start=effective_start, end=end)
+    result["effective_start"] = effective_start
     args = {"strategy": strategy, "universe": tickers, "start": start, "end": end}
     output = {**args, **result, "benchmark": BENCHMARK, "warnings": warnings, **versions}
     return _with_result_id("run_backtest", args, output)

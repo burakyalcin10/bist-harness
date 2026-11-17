@@ -12,7 +12,12 @@ from bist_harness.backtest.engine import (
     summarize_backtest,
 )
 from bist_harness.backtest.periods import market_regime
-from bist_harness.backtest.strategies import RULES, StrategyContext, signals
+from bist_harness.backtest.strategies import (
+    RULES,
+    StrategyContext,
+    information_dates,
+    signals,
+)
 from bist_harness.data.peers import peer_group_of
 
 EXECUTION = (
@@ -40,9 +45,17 @@ def run_variant(variant: str, context: StrategyContext, *, start: str, end: str)
     first, last = pd.Timestamp(start), pd.Timestamp(end)
     calendar = context.benchmark.loc[first:last].index
     runs = []
+    info = information_dates(variant, context)
     for ticker, signal in signals(variant, context).items():
         history = context.histories[ticker]
-        runs.append(run_trades(history, signal & (history.index >= first), ticker=ticker))
+        runs.append(
+            run_trades(
+                history,
+                signal & (history.index >= first),
+                ticker=ticker,
+                info_dates=None if info is None else info[ticker],
+            )
+        )
 
     trades = [trade for run in runs for trade in run.trades]
     closes = {t: h["Close"] for t, h in context.histories.items()}

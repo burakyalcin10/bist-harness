@@ -103,10 +103,10 @@ def test_signals_up_to_day_t_do_not_change_when_later_data_is_removed(variant):
         pd.testing.assert_series_equal(cut[ticker], full[ticker].iloc[:450], check_names=False)
 
 
-def test_variants_that_need_later_layers_are_not_available_yet():
-    with pytest.raises(NotImplementedError):
+def test_unknown_variant_and_missing_feature_table_are_refused():
+    with pytest.raises(ValueError, match="feature table"):
         strategies.signals("C_TECH_SECTOR_FUND", _context())
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown"):
         strategies.signals("Z_UNKNOWN", _context())
 
 

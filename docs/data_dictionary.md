@@ -208,6 +208,7 @@ produced the signal.
 | `strategy` | Variant: `A_TECHNICAL` … `E_FULL_CONTEXTUAL` | — |
 | `universe` | Stocks the variant was run on | — |
 | `rule`, `execution` | Entry rule of the variant and the timing rules, in words | — |
+| `effective_start` | First day from which signals were traded: the requested `start`, or 2025-01-01 for variants C to E, which need fundamentals | date |
 | `holding_days` | Trading days from the signal to the exit close (10) | days |
 | `cost_per_side_pct` | Commission plus slippage, charged on entry and on exit (0.15) | % |
 | `signals` | Signal days in the period, over all stocks | count |
@@ -325,7 +326,30 @@ fundamental tool, and it has no sentiment label.
 Known when: a disclosure is known from its `published_at` time. The feature table counts
 it for a trading day only if it was published before that day's close (18:00).
 
-## 14. Layers not built yet
+## 14. Feature table — `features.table.build_feature_table`
+
+One row per stock and trading day; not a tool output, but the input of strategy variants
+C to E and of the fine-tuning examples. Every column holds what was known at that day's
+close.
+
+| Column | Definition | Joined by |
+| --- | --- | --- |
+| `rsi_state`, `supertrend_state`, `kama_slope`, `ichimoku_state`, `volume_regime` | Market-state labels of section 5 | The day's close |
+| `entry_event` | An RSI local trough or a lower-Bollinger reversal on that day (rule A) | The day's close |
+| `bullish_events_60d`, `bearish_events_60d` | Reversal events of all nine families in the last 60 trading days | The day's close |
+| `lag_score_5d_pct`, `lag_score_10d_pct`, `lag_score_20d_pct`, `lag_score_60d_pct` | Stock return minus peer-group median over the window | The day's close |
+| `sector_strong_20d` | Peer-group median 20-day return above the XU100 20-day return | The day's close |
+| `fundamental_period`, `fundamental_trend` | Latest public reporting period and its trend | `fundamental_known_from` |
+| `fundamental_known_from` | First usable day of that period | — |
+| `usdtry_change_20d_pct` | USD/TRY change over 20 observations | The day's close |
+| `policy_rate` | TCMB one-week repo rate in effect | Decision date |
+| `policy_rate_raised_60d` | The rate was raised in the 60 calendar days up to that day | Decision date |
+| `cpi_annual_pct` | Latest published annual CPI change | `cpi_published` |
+| `kap_events_5d` | KAP disclosures of the stock in the 5 calendar days up to that day | First close after publication |
+| `kap_regulation_legal_5d` | One of them is tagged `regulation_legal` | First close after publication |
+| `info_date` | The day whose close completes the row; no column is dated after it | — |
+
+## 15. Layers not built yet
 
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
