@@ -20,7 +20,18 @@ ACTIONS: tuple[str, ...] = (
     "ANALYSIS_UNSAFE",
 )
 
-INDICATORS = ["SMA", "EMA", "KAMA", "RSI", "MACD", "BOLLINGER", "ATR", "SUPERTREND", "ICHIMOKU"]
+INDICATORS = [
+    "SMA",
+    "EMA",
+    "KAMA",
+    "RSI",
+    "MACD",
+    "BOLLINGER",
+    "ATR",
+    "SUPERTREND",
+    "ICHIMOKU",
+    "VOLUME",
+]
 
 REVERSAL_EVENT_TYPES = [
     "BOLLINGER_LOWER_TOUCH",
@@ -103,7 +114,7 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "indicators": {
                     "type": "array",
                     "items": {"type": "string", "enum": INDICATORS},
-                    "description": "Indicators to compute.",
+                    "description": "Indicators to compute; an empty list means all.",
                 },
             },
             ["ticker", "start", "end", "indicators"],

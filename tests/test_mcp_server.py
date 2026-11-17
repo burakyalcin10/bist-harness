@@ -189,3 +189,45 @@ def test_missing_snapshot_is_reported_with_the_build_command(monkeypatch, tmp_pa
     out = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
     assert out["error"]["code"] == "DATA_UNAVAILABLE"
     assert "snapshot build" in out["error"]["message"]
+
+
+def test_calculate_indicators_reports_the_last_day_on_or_before_end(offline_history):
+    from bist_harness.tools.indicators import add_all_indicators, indicator_state
+
+    out = srv.calculate_indicators("ASELS", "2021-01-01", "2022-06-30", ["RSI", "SUPERTREND"])
+    window = add_all_indicators(offline_history.loc[:"2022-06-30"])
+    expected = indicator_state(window, ["RSI", "SUPERTREND"])
+    for key, value in expected.items():
+        assert out[key] == value
+    assert out["as_of"] == "2022-06-30"
+    assert out["indicators"] == ["RSI", "SUPERTREND"]
+    assert "sma_20" not in out and out["snapshot_id"] and len(out["result_id"]) == 12
+
+
+def test_calculate_indicators_with_an_empty_list_returns_every_group():
+    out = srv.calculate_indicators("ASELS", "2021-01-01", "2022-06-30", [])
+    for key in (
+        "sma_20",
+        "ema_20",
+        "kama",
+        "rsi",
+        "macd",
+        "bb_upper",
+        "atr",
+        "supertrend_state",
+        "ichimoku_state",
+        "volume_regime",
+    ):
+        assert key in out
+    assert len(out["indicators"]) == 10
+
+
+def test_calculate_indicators_rejects_an_unknown_indicator():
+    out = srv.calculate_indicators("ASELS", "2021-01-01", "2022-06-30", ["RSI", "MOON"])
+    assert out["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_calculate_indicators_on_a_short_history_returns_none_values(monkeypatch, offline_history):
+    monkeypatch.setattr(srv, "load_history", lambda symbol: offline_history.iloc[:15])
+    out = srv.calculate_indicators("ASELS", "2020-01-01", "2020-03-31", [])
+    assert out["sma_20"] is None and out["ichimoku_state"] is None and out["rsi"] is not None

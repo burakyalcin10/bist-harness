@@ -7,7 +7,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_SNAPSHOT_ID = "test-snapshot"
 # Tools the MCP server exposes so far; grows as tools are implemented.
-IMPLEMENTED_TOOLS = {"get_stock_history", "get_index_history", "detect_reversal_events"}
+IMPLEMENTED_TOOLS = {
+    "get_stock_history",
+    "get_index_history",
+    "calculate_indicators",
+    "detect_reversal_events",
+}
 
 
 @pytest.fixture(autouse=True)

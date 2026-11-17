@@ -24,8 +24,9 @@ from mcp.server.mcpserver import MCPServer
 from bist_harness.data import snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
+from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.reversal import bollinger_lower_touch_summary
-from bist_harness.tools.schemas import REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
+from bist_harness.tools.schemas import INDICATORS, REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
 from bist_harness.universe import is_in_universe, normalize_ticker
 
 FORWARD_DAYS = (1, 3, 5, 10)
@@ -154,6 +155,21 @@ def get_stock_history(ticker: str, start: str, end: str) -> dict:
 @server.tool(description=TOOL_SCHEMAS["get_index_history"]["description"])
 def get_index_history(index: str, start: str, end: str) -> dict:
     return _history_summary("get_index_history", "index", index, start, end)
+
+
+@server.tool(description=TOOL_SCHEMAS["calculate_indicators"]["description"])
+def calculate_indicators(ticker: str, start: str, end: str, indicators: list[str]) -> dict:
+    loaded = _load_window(ticker, start, end)
+    if isinstance(loaded, dict):
+        return loaded
+    name, history, meta = loaded
+    unknown = [i for i in indicators if i not in INDICATORS]
+    if unknown:
+        return _error("INVALID_ARGUMENT", f"indicators must be chosen from {INDICATORS}.")
+    groups = list(indicators) or list(INDICATORS)
+    args = {"ticker": name, "start": start, "end": end, "indicators": groups}
+    output = {**args, **indicator_state(add_all_indicators(history), groups), **meta}
+    return _with_result_id("calculate_indicators", args, output)
 
 
 @server.tool(description=TOOL_SCHEMAS["detect_reversal_events"]["description"])
