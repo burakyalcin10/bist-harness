@@ -115,3 +115,42 @@ def test_default_snapshot_id_is_a_timestamp(tmp_path):
     manifest = snap.build_snapshot(["ASELS"], root=tmp_path, downloader=Downloader(_frames()))
     assert len(manifest.snapshot_id) == 13 and manifest.snapshot_id[8] == "-"
     assert manifest.source and manifest.start == "2020-01-01"
+
+
+def _write_adjustments(tmp_path, rows: str):
+    path = tmp_path / "adjustments.csv"
+    path.write_text("ticker,effective_date,factor,reason\n" + rows, encoding="utf-8")
+    return path
+
+
+def test_documented_split_adjustment_is_applied_to_rows_before_its_date(tmp_path):
+    frames = _frames()
+    raw = frames["ASELS.IS"]
+    cut = raw.index[20]
+    path = _write_adjustments(tmp_path, f"ASELS,{cut.date()},11,test split\n")
+    snap.build_snapshot(["ASELS"], snapshot_id="s1", root=tmp_path, downloader=Downloader(frames))
+
+    adjusted = snap.load_history("ASELS", root=tmp_path, adjustments_path=path)
+    before, after = adjusted.loc[: cut - pd.Timedelta(days=1)], adjusted.loc[cut:]
+    assert len(before) == 20
+    for column in ["Open", "High", "Low", "Close"]:
+        assert before[column].to_numpy() == pytest.approx(raw[column].iloc[:20].to_numpy() / 11)
+        assert after[column].to_numpy() == pytest.approx(raw[column].iloc[20:].to_numpy())
+    assert before["Volume"].to_numpy() == pytest.approx(raw["Volume"].iloc[:20].to_numpy() * 11)
+
+    untouched = snap.load_history("ASELS", root=tmp_path, adjustments_path=path, adjust=False)
+    assert untouched["Close"].to_numpy() == pytest.approx(raw["Close"].to_numpy())
+
+
+def test_adjustments_of_other_tickers_do_not_touch_a_series(tmp_path):
+    frames = _frames()
+    path = _write_adjustments(tmp_path, "THYAO,2020-02-03,2,other stock\n")
+    snap.build_snapshot(["ASELS"], snapshot_id="s1", root=tmp_path, downloader=Downloader(frames))
+    df = snap.load_history("ASELS", root=tmp_path, adjustments_path=path)
+    assert df["Close"].to_numpy() == pytest.approx(frames["ASELS.IS"]["Close"].to_numpy())
+
+
+def test_shipped_adjustments_remove_the_ccola_split_jump():
+    table = snap.load_adjustments()
+    row = table[table["ticker"] == "CCOLA"].iloc[0]
+    assert (row["effective_date"], float(row["factor"])) == ("2024-08-01", 11.0)

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bist_harness.config import Settings
+from bist_harness.config import REPO_ROOT, Settings
 from bist_harness.data.market import DATA_SOURCE, OHLCV, Downloader, _yfinance_download
 from bist_harness.errors import DataUnavailableError
 from bist_harness.universe import normalize_ticker
@@ -32,6 +32,8 @@ INDEX_SYMBOLS = {
     "XUSIN": "XUSIN.IS",
 }
 BUILD_HINT = "Run `uv run python -m bist_harness.data.snapshot build` first."
+ADJUSTMENTS_PATH = REPO_ROOT / "data" / "reference" / "price_adjustments.csv"
+PRICE_COLUMNS = ["Open", "High", "Low", "Close"]
 
 
 @dataclass(frozen=True)
@@ -151,16 +153,49 @@ def load_manifest(snapshot_id: str | None = None, root: Path | None = None) -> M
     return Manifest(**raw)
 
 
+def load_adjustments(path: Path | None = None) -> pd.DataFrame:
+    """Documented corporate-action corrections: ticker, effective_date, factor, reason."""
+    return pd.read_csv(path or ADJUSTMENTS_PATH, dtype=str, keep_default_na=False)
+
+
+def _apply_adjustments(df: pd.DataFrame, name: str, path: Path | None) -> pd.DataFrame:
+    """Divide prices before each effective date by the factor (and scale volume up).
+
+    The stored snapshot stays exactly as the source delivered it; the correction is
+    applied on read, from a reviewed file, so it is visible and reversible.
+    """
+    table = load_adjustments(path)
+    rows = table[table["ticker"] == name]
+    if rows.empty:
+        return df
+    df = df.copy()
+    for _, row in rows.iterrows():
+        earlier = df.index < pd.Timestamp(row["effective_date"])
+        factor = float(row["factor"])
+        df.loc[earlier, PRICE_COLUMNS] = df.loc[earlier, PRICE_COLUMNS] / factor
+        df.loc[earlier, "Volume"] = df.loc[earlier, "Volume"] * factor
+    return df
+
+
 def load_history(
-    symbol: str, *, snapshot_id: str | None = None, root: Path | None = None
+    symbol: str,
+    *,
+    snapshot_id: str | None = None,
+    root: Path | None = None,
+    adjust: bool = True,
+    adjustments_path: Path | None = None,
 ) -> pd.DataFrame:
-    """Daily OHLCV of one stock or index from a snapshot (the active one by default)."""
+    """Daily OHLCV of one stock or index from a snapshot (the active one by default).
+
+    ``adjust=False`` returns the series exactly as stored.
+    """
     snapshot_id = snapshot_id or active_snapshot_id(root)
     name = normalize_ticker(symbol)
     path = _root(root) / snapshot_id / f"{name}.parquet"
     if not path.is_file():
         raise DataUnavailableError(f"Snapshot {snapshot_id} has no data for {name}. {BUILD_HINT}")
-    return pd.read_parquet(path)
+    df = pd.read_parquet(path)
+    return _apply_adjustments(df, name, adjustments_path) if adjust else df
 
 
 def default_symbols() -> list[str]:
