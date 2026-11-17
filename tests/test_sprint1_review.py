@@ -434,3 +434,43 @@ def test_download_with_only_missing_prices_raises_data_unavailable(tmp_path):
     )
     with pytest.raises(DataUnavailableError):
         load_stock_data("ASELS", "2024-01-01", cache_dir=tmp_path, downloader=lambda *a: empty)
+
+
+# --- Found in the post-fix live run (qwen3.5:2b) --------------------------------------
+
+
+def test_coverage_warning_ignores_a_gap_of_a_few_non_trading_days(offline_history):
+    """A request from 2020-01-01 (a holiday) is fully covered by data starting 2020-01-02."""
+    out = srv.detect_reversal_events("ASELS", "2020-01-01", "2023-12-29")
+    assert out["coverage_warning"] is None
+    weekend_after = str((offline_history.index[-1] + pd.Timedelta(days=3)).date())
+    assert srv.get_stock_history("ASELS", "2024-01-01", weekend_after)["coverage_warning"] is None
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("from January 2, 2025, to October 30, 2026", ["2025-01-02", "2026-10-30"]),
+        ("on 2 January 2025", ["2025-01-02"]),
+        ("Jan 2, 2025 and Oct. 30th, 2026", ["2025-01-02", "2026-10-30"]),
+        ("2 Ocak 2025 ile 30 Ekim 2026 arasında", ["2025-01-02", "2026-10-30"]),
+        ("13 KASIM 2026'ya kadar", ["2026-11-13"]),
+        ("5 günlük 2025 verisi", []),  # "günlük" is not a month
+    ],
+)
+def test_dates_written_with_month_names_are_read_as_dates(text, expected):
+    from bist_harness.eval.number_check import dates_in
+
+    assert dates_in(text) == expected
+
+
+def test_faithful_answer_with_dates_in_words_is_not_flagged():
+    outputs = [{"first_date": "2025-01-02", "last_date": "2026-10-30", "rows": 458}]
+    answer = "The data covers 458 trading days from January 2, 2025, to October 30, 2026."
+    assert find_unsupported_numbers(answer, outputs) == []
+    assert find_unsupported_dates(answer, outputs) == []
+
+
+def test_invented_date_in_words_is_flagged():
+    outputs = [{"first_date": "2025-01-02"}]
+    assert find_unsupported_dates("The peak came on March 8, 2024.", outputs) == ["2024-03-08"]

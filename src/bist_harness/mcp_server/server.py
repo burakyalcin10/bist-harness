@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
@@ -28,6 +28,7 @@ from bist_harness.universe import is_in_universe, normalize_ticker
 
 HISTORY_START = "2020-01-01"
 FORWARD_DAYS = (1, 3, 5, 10)
+COVERAGE_SLACK_DAYS = 7
 IMPLEMENTED_EVENTS = {"BOLLINGER_LOWER_TOUCH"}
 BOLLINGER_LOWER_TOUCH_DEFINITION = (
     "Previous close at or below the lower Bollinger band (20-day mean minus 2 standard "
@@ -66,9 +67,14 @@ def _coverage(history: pd.DataFrame, start: str, end: str) -> dict:
     The snapshot is only refreshed on purpose, so a request can ask for days it does not
     hold. The output must show that instead of silently answering for a shorter period.
     """
-    first, last = str(history.index[0].date()), str(history.index[-1].date())
+    first_day, last_day = history.index[0].date(), history.index[-1].date()
+    first, last = str(first_day), str(last_day)
+    # A few days without bars at either edge are weekends or holidays, not missing data.
+    slack = timedelta(days=COVERAGE_SLACK_DAYS)
+    starts_early = date.fromisoformat(start) < first_day - slack
+    ends_late = date.fromisoformat(end) > last_day + slack
     warning = None
-    if start < first or end > last:
+    if starts_early or ends_late:
         warning = (
             f"Requested period {start} to {end} extends beyond the available data "
             f"({first} to {last}); results cover the available part only."

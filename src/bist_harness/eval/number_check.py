@@ -28,6 +28,30 @@ _DMY_DATE = re.compile(r"\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b")
 _INDEX_NAME = re.compile(r"\bBIST\s?\d+\b|\bXU\d+\b", re.IGNORECASE)
 _EVIDENCE_ID = re.compile(r"\bE\d+\b")
 _RESULT_ID = re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{12}\b")
+_MONTHS = {
+    name: number
+    for number, names in enumerate(
+        [
+            ("january", "jan", "ocak"),
+            ("february", "feb", "şubat"),
+            ("march", "mar", "mart"),
+            ("april", "apr", "nisan"),
+            ("may", "mayis"),
+            ("june", "jun", "haziran"),
+            ("july", "jul", "temmuz"),
+            ("august", "aug", "ağustos"),
+            ("september", "sep", "sept", "eylül"),
+            ("october", "oct", "ekim"),
+            ("november", "nov", "kasim"),
+            ("december", "dec", "aralik"),
+        ],
+        start=1,
+    )
+    for name in names
+}
+_WORD = r"[A-Za-zÇĞİÖŞÜçğıöşü]+"
+_DAY_MONTH_YEAR = re.compile(rf"\b(\d{{1,2}})\s+({_WORD})\.?\s+(\d{{4}})\b")
+_MONTH_DAY_YEAR = re.compile(rf"\b({_WORD})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b")
 _FRACTIONS = {"½": "0.5", "¼": "0.25", "¾": "0.75", "⅓": "0.33", "⅔": "0.67"}
 _MINUS = "-−–‑"  # hyphen-minus, minus sign, en dash, non-breaking hyphen
 
@@ -47,7 +71,33 @@ _EN_GROUPED = re.compile(r"^[1-9]\d{0,2}(,\d{3})+(\.\d+)?$")
 _TR_GROUPED = re.compile(r"^[1-9]\d{0,2}(\.\d{3})+(,\d+)?$")
 
 
+def _month(word: str) -> int | None:
+    """Month number for an English or Turkish month name (any case), else ``None``."""
+    key = word.lower().replace("̇", "").replace("ı", "i")
+    return _MONTHS.get(key)
+
+
+def _word_dates(text: str) -> list[tuple[int, int, str]]:
+    """Dates written with a month name: (start, end, ISO date) for each one found."""
+    found = []
+    for match in _DAY_MONTH_YEAR.finditer(text):
+        month = _month(match[2])
+        if month and 1 <= int(match[1]) <= 31:
+            found.append(
+                (match.start(), match.end(), f"{match[3]}-{month:02d}-{int(match[1]):02d}")
+            )
+    for match in _MONTH_DAY_YEAR.finditer(text):
+        month = _month(match[1])
+        if month and 1 <= int(match[2]) <= 31:
+            found.append(
+                (match.start(), match.end(), f"{match[3]}-{month:02d}-{int(match[2]):02d}")
+            )
+    return sorted(found)
+
+
 def _strip_non_quantities(text: str) -> str:
+    for start, end, _ in _word_dates(text):
+        text = text[:start] + " " * (end - start) + text[end:]
     for pattern in (_ISO_DATE, _DMY_DATE, _INDEX_NAME, _EVIDENCE_ID, _RESULT_ID):
         text = pattern.sub(" ", text)
     for char, value in _FRACTIONS.items():
@@ -130,9 +180,14 @@ def find_unsupported_numbers(
     return unsupported
 
 
-def _dates(text: str) -> list[str]:
-    """Dates written in ``text`` as ISO strings, in order (ISO and dd.mm.yyyy forms)."""
+def dates_in(text: str) -> list[str]:
+    """Dates written in ``text`` as ISO strings, in order.
+
+    Reads ISO dates, dd.mm.yyyy, and dates with an English or Turkish month name
+    ("January 2, 2025", "2 Ocak 2025").
+    """
     found = [(m.start(), m[0]) for m in _ISO_DATE.finditer(text)]
+    found += [(start, iso) for start, _, iso in _word_dates(text)]
     found += [
         (m.start(), f"{m[3]}-{int(m[2]):02d}-{int(m[1]):02d}") for m in _DMY_DATE.finditer(text)
     ]
@@ -141,10 +196,10 @@ def _dates(text: str) -> list[str]:
 
 def find_unsupported_dates(answer: str, tool_outputs: list[dict], question: str = "") -> list[str]:
     """Return the dates in ``answer`` that appear neither in a tool output nor in the question."""
-    known = set(_dates(json.dumps(tool_outputs, ensure_ascii=False, default=str)))
-    known.update(_dates(question))
+    known = set(dates_in(json.dumps(tool_outputs, ensure_ascii=False, default=str)))
+    known.update(dates_in(question))
     unsupported: list[str] = []
-    for value in _dates(answer):
+    for value in dates_in(answer):
         if value not in known and value not in unsupported:
             unsupported.append(value)
     return unsupported
