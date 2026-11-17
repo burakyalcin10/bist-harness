@@ -86,7 +86,8 @@ class Intent:
     language: str  # "tr" | "en"
     defaulted_period: bool = False  # True when start/end came from the scenario default
     # Fields the model filled that the question does not name, as
-    # {field: [model value, value kept]} (see ``ground_intent``). An audit record for the
+    # {field: [model value, value kept]} (see ``ground_intent``), plus "sector_unworded"
+    # when a sector was kept only as the group of a named stock. An audit record for the
     # evaluation (how often the model invents a field); left out of comparisons.
     grounded: dict[str, list[str | None]] = field(default_factory=dict, compare=False)
 
@@ -323,35 +324,16 @@ def _apply_default_period(intent: Intent, today: str) -> Intent:
 # Upper-case ticker-like tokens of the raw question ("PGSUS'un" gives PGSUS).
 _UPPER_TOKEN = re.compile(r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])[A-ZÇĞİÖŞÜ]{4,6}(?![A-Za-z0-9çğıöşü])")
 _UPPER_FOLD = str.maketrans("ÇĞİÖŞÜ", "CGIOSU")
-# Upper-case abbreviations that are not tickers: never read as an out-of-universe stock.
-_NOT_TICKERS = frozenset(
-    {
-        "BIST",
-        "BORSA",
-        "MACD",
-        "EBIT",
-        "EBITDA",
-        "FAVOK",
-        "BBVA",
-        "TUFE",
-        "TCMB",
-        "BDDK",
-        "VIOP",
-        "IMKB",
-        "OECD",
-        "FOMC",
-        "NYSE",
-        "NASDAQ",
-        "USDTRY",
-        "EURTRY",
-        "OHLC",
-        "CAGR",
-        "VWAP",
-    }
+# A code written with a Turkish suffix after an apostrophe, in any case: "thyao'nun".
+_SUFFIXED_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])([A-Za-zÇĞİÖŞÜçğıöşü]{4,6})['’](?=[a-zçğıöşü])"
 )
+# Stock codes that are also ordinary words ("mavi" is blue, "deva" a cure): they name the
+# stock only when written upper-case.
+_WORD_CODES = frozenset({"ALKIM", "DEVA", "GEDIK", "INFO", "MAVI", "ULKER"})
 
 # Word starts (folded) by which a question names a peer group, Turkish and English. The
-# group's own name parts count as well (see ``_names_sector``).
+# group's own name parts count as well (see ``_sector_grounding``).
 SECTOR_WORDS: dict[str, tuple[str, ...]] = {
     "Banking": ("bank", "lender"),
     "Defense / Vehicles": ("savunma", "defense", "defence"),
@@ -400,6 +382,17 @@ _DAY_MONTH_YEAR = re.compile(rf"\b(\d{{1,2}}) ({_MONTH}) (\d{{4}})\b")
 _MONTH_DAY_YEAR = re.compile(rf"\b({_MONTH}) (\d{{1,2}}) (\d{{4}})\b")
 _MONTH_YEAR = re.compile(rf"\b({_MONTH}) (\d{{4}})\b")
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
+# A range whose bounds share one year writes it once, at the end; a dash folds to a space.
+# The first bound takes the year of the second: "3 mart ile 15 mayis 2025", "between march
+# 3 and may 15 2025", "ocak mart 2025" (Ocak-Mart 2025), "30 eylul 31 aralik 2024".
+_DAY_OR_MONTH = rf"(?:\d{{1,2}} (?:{_MONTH})|(?:{_MONTH})(?: \d{{1,2}})?)"
+_SHARED_YEAR = re.compile(
+    rf"\b({_DAY_OR_MONTH})(?= (?:(?:ile|ve|and|to) )?{_DAY_OR_MONTH} (\d{{4}})\b)"
+)
+# A bare first day takes the month and year as well: "1 15 mart 2025" (1-15 Mart 2025),
+# "march 1 15 2025" (March 1-15, 2025).
+_SHARED_MONTH_DM = re.compile(rf"\b(\d{{1,2}})(?= \d{{1,2}} ({_MONTH}) (\d{{4}})\b)")
+_SHARED_MONTH_MD = re.compile(rf"\b({_MONTH}) (\d{{1,2}})(?= \d{{1,2}} (\d{{4}})\b)")
 # A year the question names alone ("2023 yılı", "during 2024", "first half of 2025")
 # grounds the bounds of its quarters and halves.
 _YEAR_BOUNDS = ("01-01", "03-31", "04-01", "06-30", "07-01", "09-30", "10-01", "12-31")
@@ -424,6 +417,9 @@ def named_dates(question: str) -> set[str]:
 
     text = _DMY.sub(dmy, _YMD.sub(ymd, question))
     folded = fold_text(text)
+    folded = _SHARED_YEAR.sub(r"\1 \2", folded)
+    folded = _SHARED_MONTH_DM.sub(r"\1 \2 \3", folded)
+    folded = _SHARED_MONTH_MD.sub(r"\1 \2 \3 \1", folded)
 
     def day_month_year(match: re.Match) -> str:
         found.add(_iso(match[3], _MONTHS[match[2]], match[1]))
@@ -459,42 +455,44 @@ def _names_company(folded: str, ticker: str) -> bool:
     return any(f" {fold_text(name).strip()} " in folded for name in names)
 
 
-def _names_ticker(folded: str, ticker: str) -> bool:
-    """The question names the stock: its code (any case, Turkish suffix allowed) or one of
-    its company names."""
-    return f" {fold_text(ticker).strip()} " in folded or _names_company(folded, ticker)
+def _upper_tokens(question: str) -> list[str]:
+    return [m[0].translate(_UPPER_FOLD) for m in _UPPER_TOKEN.finditer(question)]
+
+
+def _written_codes(question: str) -> set[str]:
+    """The stock codes a question writes: upper-case ("THYAO", "THYAO'nun") or, in any
+    case, with a suffix after an apostrophe ("thyao'nun"). A code that is also an ordinary
+    word counts upper-case only ("Mavi bir gökyüzü" does not name MAVI)."""
+    codes = set(_upper_tokens(question))
+    for match in _SUFFIXED_TOKEN.finditer(question):
+        code = fold_text(match[1]).strip().upper()
+        if code not in _WORD_CODES:
+            codes.add(code)
+    return codes
+
+
+def _names_ticker(codes: set[str], folded: str, ticker: str) -> bool:
+    """The question names the stock: it writes its code (``_written_codes``) or one of its
+    company names (any case). One rule, to keep the model's ticker and to replace it."""
+    return ticker.translate(_UPPER_FOLD) in codes or _names_company(folded, ticker)
 
 
 def _known_tickers() -> set[str]:
     return set(peers.all_symbols()) | set(load_universe()["ticker"]) | set(_company_names())
 
 
-def _upper_tokens(question: str) -> list[str]:
-    return [m[0].translate(_UPPER_FOLD) for m in _UPPER_TOKEN.finditer(question)]
+def _known_named(codes: set[str], folded: str) -> list[str]:
+    """The universe and peer-group stocks the question names, by code or company name."""
+    return [t for t in sorted(_known_tickers()) if _names_ticker(codes, folded, t)]
 
 
-def _known_named(question: str, folded: str) -> list[str]:
-    """Universe and peer-group stocks the question names, by code or company name.
+def _named_ticker(codes: set[str], folded: str) -> str | None:
+    """The one known stock the question names, when it names exactly one; else None.
 
-    Codes are read upper-case only here ("mavi" is also a Turkish word); names any case.
+    Only stocks the project knows count: an unknown upper-case word ("OPEC", "XBANK",
+    "AAPL") is never taken for a ticker.
     """
-    known = _known_tickers()
-    named = [t for t in _upper_tokens(question) if t in known]
-    named += [t for t in sorted(_company_names()) if _names_company(folded, t)]
-    return list(dict.fromkeys(named))
-
-
-def _named_ticker(question: str, folded: str) -> str | None:
-    """The one stock the question names, when it names exactly one.
-
-    Universe and peer-group stocks come first. Only when there is none does an unknown
-    upper-case code count ("AAPL", a misspelled "AKBMK"), so that ``check_intent`` still
-    reports it as UNKNOWN_TICKER.
-    """
-    named = _known_named(question, folded)
-    if not named:
-        tokens = _upper_tokens(question)
-        named = list(dict.fromkeys(t for t in tokens if t not in _NOT_TICKERS))
+    named = _known_named(codes, folded)
     return named[0] if len(named) == 1 else None
 
 
@@ -517,44 +515,54 @@ def _sector_stems(name: str) -> set[str]:
     return stems
 
 
-def _names_sector(question: str, folded: str, sector: str) -> bool:
-    """The sector resolves to a peer group and the question words it (a word of the sector
-    or of its group, or one of the group's Turkish/English words) or names a universe
-    stock of that group ("TCELL ile TTKOM" means Telecom)."""
+def _sector_grounding(codes: set[str], folded: str, sector: str) -> str | None:
+    """How the question grounds the sector, which must resolve to a peer group:
+    "worded" when it words it (a word of the sector or of its group, or one of the group's
+    Turkish/English words), "stock" when it only names a stock of that group ("TCELL ile
+    TTKOM" means Telecom), None otherwise."""
     group = peers.sector_group(sector)
     if group is None:
-        return False
+        return None
     words = _sector_stems(sector) | _sector_stems(group) | set(SECTOR_WORDS.get(group, ()))
     if any(f" {word}" in folded for word in words):
-        return True
-    return any(_group_of(t) == group for t in _known_named(question, folded))
+        return "worded"
+    if any(_group_of(t) == group for t in _known_named(codes, folded)):
+        return "stock"
+    return None
 
 
 def ground_intent(intent: Intent, question: str) -> Intent:
     """Keep only the ticker, sector and dates the question names.
 
     - ticker: kept when the question names it (code or company name); otherwise the one
-      stock the question names, else None.
-    - sector: kept when it resolves to a peer group and the question words it; else None.
+      known stock the question names, else None.
+    - sector: kept when it resolves to a peer group and the question words it or names a
+      stock of that group; else None.
     - start, end, as_of: kept when the question names that date; else None, so the default
       period is built from today.
 
-    Every changed field is recorded in ``Intent.grounded`` as [model value, kept value].
+    Every changed field is recorded in ``Intent.grounded`` as [model value, kept value]. A
+    sector kept only through a named stock's group is recorded as "sector_unworded"
+    [model value, model value]: kept, but not worded in the question.
     """
     folded = fold_text(question)
-    changed: dict[str, list[str | None]] = {}
+    codes = _written_codes(question)
     values: dict[str, str | None] = {}
-    if intent.ticker is not None and not _names_ticker(folded, intent.ticker):
-        values["ticker"] = _named_ticker(question, folded)
-    if intent.sector is not None and not _names_sector(question, folded, intent.sector):
-        values["sector"] = None
+    noted: dict[str, list[str | None]] = {}
+    if intent.ticker is not None and not _names_ticker(codes, folded, intent.ticker):
+        values["ticker"] = _named_ticker(codes, folded)
+    if intent.sector is not None:
+        how = _sector_grounding(codes, folded, intent.sector)
+        if how is None:
+            values["sector"] = None
+        elif how == "stock":
+            noted["sector_unworded"] = [intent.sector, intent.sector]
     dates = named_dates(question)
     for key in ("start", "end", "as_of"):
         value = getattr(intent, key)
         if value is not None and value not in dates:
             values[key] = None
-    for key, value in values.items():
-        changed[key] = [getattr(intent, key), value]
+    changed = {key: [getattr(intent, key), value] for key, value in values.items()} | noted
     if not changed:
         return intent
     return replace(intent, **values, grounded=changed)

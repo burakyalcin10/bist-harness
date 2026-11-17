@@ -377,6 +377,30 @@ def test_a_date_the_question_names_is_kept(question, dates):
     assert intent.grounded == {}
 
 
+# Fix round 1: a range whose bounds share one written year names both bounds; the first
+# bound takes the year (and, for a bare day, the month) of the second.
+@pytest.mark.parametrize(
+    ("question", "start", "end"),
+    [
+        ("How did THYAO trade between March 3 and May 15, 2025?", "2025-03-03", "2025-05-15"),
+        ("THYAO 3 Mart ile 15 Mayıs 2025 arasında nasıl hareket etti?", "2025-03-03", "2025-05-15"),
+        ("THYAO 3 Mart ve 15 Mayıs 2025 arasında nasıl hareket etti?", "2025-03-03", "2025-05-15"),
+        ("THYAO Ocak-Mart 2025 döneminde nasıl gitti?", "2025-01-01", "2025-03-31"),
+        ("THYAO Ocak–Mart 2025 döneminde nasıl gitti?", "2025-01-01", "2025-03-31"),
+        ("How did THYAO trade from January to March 2025?", "2025-01-01", "2025-03-31"),
+        ("THYAO 30 Eylül - 31 Aralık 2024 arasında ne yaptı?", "2024-09-30", "2024-12-31"),
+        ("THYAO 1-15 Mart 2025 arasında nasıl seyretti?", "2025-03-01", "2025-03-15"),
+        ("How did THYAO move over March 1–15, 2025?", "2025-03-01", "2025-03-15"),
+    ],
+)
+def test_a_range_sharing_one_year_keeps_both_bounds(question, start, end):
+    intent, problem = ask(question, start=start, end=end)
+    assert problem is None
+    assert (intent.start, intent.end) == (start, end)
+    assert not intent.defaulted_period
+    assert intent.grounded == {}
+
+
 def test_a_named_date_is_kept_and_an_invented_one_dropped():
     intent, _ = ask(
         "THYAO 2024-02-01 tarihinden bu yana nasıl gitti?", start="2024-02-01", end="2024-09-30"
@@ -397,8 +421,7 @@ def test_a_malformed_date_in_the_question_still_reaches_the_check():
         ("GARAN hissesi son çeyrekte nasıl gitti?", "GARAN", "GARAN"),  # a reference stock
         ("GARAN hissesi son çeyrekte nasıl gitti?", "AKBNK", "GARAN"),
         ("Summarize the daily moves of AAPL this year.", "AAPL", "AAPL"),
-        ("Summarize the daily moves of AAPL this year.", "THYAO", "AAPL"),
-        ("AKBMK son dönemde nasıl seyretti?", "AKBNK", "AKBMK"),  # misspelled
+        ("AKBMK son dönemde nasıl seyretti?", "AKBMK", "AKBMK"),  # misspelled
     ],
 )
 def test_an_out_of_universe_ticker_in_the_question_still_gives_unknown_ticker(
@@ -407,6 +430,59 @@ def test_an_out_of_universe_ticker_in_the_question_still_gives_unknown_ticker(
     intent, problem = ask(question, ticker=model_ticker)
     assert intent.ticker == ticker
     assert problem == "UNKNOWN_TICKER"
+
+
+# Fix round 1 (brief rule 1): a replacement ticker comes only from the stocks the project
+# knows (universe and peer groups, by code or company name). An unknown upper-case word of
+# the question is never taken for a ticker.
+@pytest.mark.parametrize(
+    "question",
+    ["Summarize the daily moves of AAPL this year.", "AKBMK son dönemde nasıl seyretti?"],
+)
+def test_an_unknown_code_never_replaces_an_ungrounded_model_ticker(question):
+    intent, problem = ask(question, ticker="THYAO")
+    assert intent.ticker is None
+    assert intent.grounded["ticker"] == ["THYAO", None]
+    assert problem == "MISSING_TICKER"  # still no analysis
+
+
+@pytest.mark.parametrize(
+    ("question", "scenario"),
+    [
+        ("OPEC kararı sonrası endeks ne yaptı?", "MACRO_CONTEXT"),
+        ("COVID döneminde BIST 100 nasıl bir seyir izledi?", "MACRO_CONTEXT"),
+        ("MSCI endeks değişikliği haberinin piyasaya etkisi neydi?", "NEWS_CONTEXT"),
+        ("XBANK endeksi faiz kararından sonra nasıl hareket etti?", "MACRO_CONTEXT"),
+        ("How did the market react to the FTSE rebalancing news?", "NEWS_CONTEXT"),
+    ],
+)
+def test_an_acronym_in_a_market_question_is_not_taken_for_a_ticker(question, scenario):
+    intent, problem = ask(question, scenario=scenario, ticker="TUPRS")
+    assert intent.ticker is None
+    assert intent.grounded == {"ticker": ["TUPRS", None]}
+    assert problem is None
+
+
+# Fix round 1: one rule for "the question names ticker X", used to keep the model's ticker
+# and to find a replacement. A code counts written upper-case (a Turkish suffix after an
+# apostrophe allowed) or lower-case with an apostrophe suffix ("thyao'nun"); a code that is
+# also an ordinary word ("mavi") counts upper-case only.
+@pytest.mark.parametrize(
+    ("question", "model_ticker", "ticker"),
+    [
+        ("Mavi bir gökyüzü altında THYAO nasıl?", "MAVI", "THYAO"),
+        ("thyao'nun son çeyrekteki grafiği nasıldı?", "AKBNK", "THYAO"),
+        ("thyao'nun son çeyrekteki grafiği nasıldı?", "THYAO", "THYAO"),
+        ("MAVI'nin son çeyrekteki grafiği nasıldı?", "MAVI", "MAVI"),
+        ("MAVI'nin son çeyrekteki grafiği nasıldı?", "THYAO", "MAVI"),
+        ("mavi'nin son çeyrekteki grafiği nasıldı?", "MAVI", None),
+        ("thyao son çeyrekte nasıl gitti?", "THYAO", None),
+    ],
+)
+def test_keeping_and_replacing_a_ticker_read_the_question_alike(question, model_ticker, ticker):
+    intent, _ = ask(question, ticker=model_ticker)
+    assert intent.ticker == ticker
+    assert ("ticker" in intent.grounded) == (ticker != model_ticker)
 
 
 def test_a_ticker_named_by_its_company_name_is_kept():
@@ -460,6 +536,21 @@ def test_a_sector_is_grounded_by_the_stocks_the_question_names(sector, kept):
     assert intent.sector == kept
 
 
+# Fix round 1: a sector kept only because it is the group of a stock the question names is
+# still a field the question does not word; it is recorded apart from dropped/replaced ones.
+@pytest.mark.parametrize(
+    ("question", "ticker"),
+    [
+        ("Between TCELL and TTKOM, which one lags its group?", None),
+        ("Did TCELL lag its group last quarter?", "TCELL"),
+    ],
+)
+def test_a_sector_kept_by_the_named_stocks_group_is_recorded_as_unworded(question, ticker):
+    intent, problem = ask(question, scenario="SECTOR_LAGGARD", ticker=ticker, sector="Telecom")
+    assert (intent.ticker, intent.sector, problem) == (ticker, "Telecom", None)
+    assert intent.grounded == {"sector_unworded": ["Telecom", "Telecom"]}
+
+
 def test_a_named_sector_is_kept_alongside_a_ticker():
     intent, problem = ask(
         "Did TUPRS trail its energy peers last quarter?",
@@ -468,6 +559,23 @@ def test_a_named_sector_is_kept_alongside_a_ticker():
         sector="Energy / Petrochemicals",
     )
     assert (intent.ticker, intent.sector, problem) == ("TUPRS", "Energy / Petrochemicals", None)
+    assert intent.grounded == {}  # worded: nothing to record
+
+
+def test_grounding_leaves_every_expected_intent_of_the_frozen_set_unchanged():
+    """The oracle: each of the 120 expected intents, read as a model answer, keeps every
+    field (a sector kept by a named stock's group is only noted as unworded)."""
+    from bist_harness.eval import questions as qs
+    from bist_harness.harness.intent import ground_intent
+
+    for q in qs.load_questions():
+        exp = q["expected"]
+        fields = {key: exp[key] for key in ("ticker", "sector", "start", "end", "as_of")}
+        for scenario in exp["scenarios"]:
+            intent = Intent(scenario=scenario, language=q["lang"], **fields)
+            grounded = ground_intent(intent, q["question"])
+            assert grounded == intent, q["id"]
+            assert set(grounded.grounded) <= {"sector_unworded"}, q["id"]
 
 
 def test_the_guard_path_keeps_its_shape_after_grounding():
