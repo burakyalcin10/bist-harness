@@ -7,6 +7,7 @@ from bist_harness.harness.intent import (
     INTENT_SCHEMA,
     SCENARIOS,
     Intent,
+    _guess_language,
     check_intent,
     keyword_guard,
     parse_intent,
@@ -276,6 +277,9 @@ def live_question(qid):
 
 
 def ask(question, **over):
+    """Parse ``question`` with a model that answers ``over``; by default it labels the
+    language the question is written in (the M3 language grounding is tested apart)."""
+    over = {"language": _guess_language(question), **over}
     client = FakeClient(payload(**over))
     intent = parse_intent(question, client, today=TODAY)
     return intent, check_intent(intent, today=TODAY)
@@ -635,3 +639,52 @@ def test_the_intent_says_which_bound_of_the_period_was_defaulted(
     assert (intent.start, intent.end) == period
     assert intent.defaulted_period is defaulted
     assert intent.defaulted_bound == bound
+
+
+# --- M3: the answer language comes from the question ----------------------------------------
+def test_the_language_detector_reads_every_question_of_the_frozen_set():
+    from bist_harness.eval import questions as qs
+    from bist_harness.harness.intent import detect_language
+
+    for q in qs.load_questions():
+        assert detect_language(q["question"]) == q["lang"], q["id"]
+        assert _guess_language(q["question"]) == q["lang"], q["id"]
+
+
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        ("THYAO son 3 ayda nasil gitti", "tr"),  # Turkish typed without its letters
+        ("ASELS hissesi icin destek seviyesi ne", "tr"),
+        ("How did THYAO trade last quarter", "en"),
+        ("THYAO 2025", None),  # nothing to tell by
+    ],
+)
+def test_the_detector_reads_turkish_without_its_letters(text, language):
+    from bist_harness.harness.intent import detect_language
+
+    assert detect_language(text) == language
+
+
+@pytest.mark.parametrize(
+    ("question", "model", "kept"),
+    [
+        ("THYAO son üç ayda nasıl gitti?", "en", "tr"),
+        ("How did THYAO trade from 2025-01-02 to 2025-06-30?", "tr", "en"),
+    ],
+)
+def test_the_language_is_grounded_in_the_question(question, model, kept):
+    intent, _ = ask(question, language=model)
+    assert intent.language == kept
+    assert intent.grounded["language"] == [model, kept]
+
+
+def test_a_question_without_language_cues_keeps_the_model_language():
+    intent, _ = ask("THYAO 2025", language="tr")
+    assert intent.language == "tr" and "language" not in intent.grounded
+
+
+def test_experiment_a_keeps_the_model_language():
+    client = FakeClient(payload(language="en"))
+    intent = parse_intent("THYAO son üç ayda nasıl gitti?", client, today=TODAY, guard=False)
+    assert intent.language == "en" and intent.grounded == {}

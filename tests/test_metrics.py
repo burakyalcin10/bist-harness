@@ -537,3 +537,11 @@ def test_per_record_raw_intent_and_invented_fields():
     assert metrics.raw_intent(rec)["scenario"] == "PRICE_SUMMARY"
     assert metrics.invented_fields(rec) == 2
     assert metrics.raw_intent(record(intent=None)) is None
+
+
+def test_a_corrected_language_label_is_counted_apart_from_invented_fields():
+    rec = record(intent=grounded_intent(language=["en", "tr"], start=["2024-01-01", None]))
+    assert metrics.invented_fields(rec) == 1
+    assert metrics.raw_intent(rec)["language"] == "en"
+    d = metrics.summarize([rec])["D"]
+    assert (d["invented_fields"], d["language_grounded"]) == (1, 1)

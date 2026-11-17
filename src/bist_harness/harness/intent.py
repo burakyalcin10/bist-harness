@@ -546,6 +546,8 @@ def ground_intent(intent: Intent, question: str) -> Intent:
       stock of that group; else None.
     - start, end, as_of: kept when the question names that date; else None, so the default
       period is built from today.
+    - language: the language of the question text (``detect_language``) when it tells one,
+      so a Turkish question gets a Turkish answer whatever the model labelled it.
 
     Every changed field is recorded in ``Intent.grounded`` as [model value, kept value]. A
     sector kept only through a named stock's group is recorded as "sector_unworded"
@@ -568,6 +570,9 @@ def ground_intent(intent: Intent, question: str) -> Intent:
         value = getattr(intent, key)
         if value is not None and value not in dates:
             values[key] = None
+    language = detect_language(question)
+    if language is not None and language != intent.language:
+        values["language"] = language
     changed = {key: [getattr(intent, key), value] for key, value in values.items()} | noted
     if not changed:
         return intent
@@ -653,8 +658,40 @@ def reversal_grounding(question: str) -> tuple[tuple[str, ...] | None, str | Non
     return (tuple(types) or None), direction
 
 
+# Words that tell the language of a question typed without Turkish letters; each is
+# checked on the folded question as a whole word. None of them is shared by the two
+# languages ("in" and "en" are: a folded Turkish suffix, "en düşük").
+_TR_WORDS = frozenset(
+    "mi mu misin midir mudur musun nasil icin ile neden hangi kac arasinda arasindaki "
+    "sonra once gore son var yok ve bir ne oldu olmus gibi daha hisse hissesi hisseleri "
+    "hissesinin yil yilinda donem doneminde sektor sektorunde sektorundeki gunde ayda "
+    "getiri getirisi fiyat fiyati".split()
+)
+_EN_WORDS = frozenset(
+    "the is was did how what of after and its to a does has have for which over during "
+    "from between were are do with since when on me my you it this about tell should will "
+    "buy sell".split()
+)
+
+
+def detect_language(question: str) -> str | None:
+    """``"tr"`` or ``"en"`` from the question text alone, ``None`` when nothing tells.
+
+    Turkish letters decide for Turkish; otherwise the more frequent of the Turkish and
+    English marker words decides (a tie, none included, tells nothing).
+    """
+    if re.search(r"[ıİşŞğĞüÜöÖçÇ]", question):
+        return "tr"
+    words = fold_text(question).split()
+    turkish = sum(1 for w in words if w in _TR_WORDS)
+    english = sum(1 for w in words if w in _EN_WORDS)
+    if turkish == english:
+        return None
+    return "tr" if turkish > english else "en"
+
+
 def _guess_language(question: str) -> str:
-    return "tr" if re.search(r"[ıİşŞğĞüÜöÖçÇ]", question) or " mi " in fold_text(question) else "en"
+    return detect_language(question) or "en"
 
 
 def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool = True) -> Intent:

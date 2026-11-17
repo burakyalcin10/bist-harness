@@ -1183,3 +1183,15 @@ def test_a_fallback_without_a_canonical_call_still_counts_as_an_intervention():
     assert [c for c in analysis.tool_calls if c.state == "CALCULATE_TECHNICALS"] == []
     # index history, the empty technicals fallback, the sector ranking and the backtest
     assert machine.harness_interventions(analysis) == 4
+
+
+# --- M3: a Turkish question gets a Turkish answer whatever the model labels it -------------
+def test_a_turkish_question_labelled_english_is_answered_in_turkish():
+    client = ScriptedClient(intent(scenario="ADVICE_REQUEST", language="en"))
+    analysis = machine.run_analysis(
+        "THYAO hissesini şimdi alayım mı?", client, call_tool=FakeTools(), today=TODAY
+    )
+    assert analysis.outcome == machine.REFUSED_ADVICE
+    assert analysis.answer == machine.REFUSAL_ANSWERS["tr"]
+    assert analysis.intent["language"] == "tr"
+    assert analysis.intent["grounded"]["language"] == ["en", "tr"]

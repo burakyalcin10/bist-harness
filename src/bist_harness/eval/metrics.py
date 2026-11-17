@@ -96,7 +96,8 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
   two ticker figures are equal (no grounding); B has no intent.
   ``invented_fields``: fields the model filled that the question does not name (grounded
   keys per record, summed); ``sector_unworded`` (records whose sector was kept only as a
-  named stock's group) is counted separately.
+  named stock's group) and ``language_grounded`` (records whose language label the
+  question text corrected) are counted separately.
 * **Latency.** Seconds of one run (``latency_s``): median, mean and maximum.
 
 The *scoring scenario* is the intent's scenario when the question accepts it, else the
@@ -378,9 +379,10 @@ def raw_intent(record: dict) -> dict | None:
 
 def invented_fields(record: dict) -> int:
     """Fields the model filled that the question does not name (grounded keys, without
-    ``sector_unworded``)."""
+    ``sector_unworded`` and ``language``: a wrong language label is not an invented field,
+    it is counted as ``language_grounded``)."""
     grounded = (record.get("intent") or {}).get("grounded") or {}
-    return sum(1 for key in grounded if key != SECTOR_UNWORDED)
+    return sum(1 for key in grounded if key not in (SECTOR_UNWORDED, "language"))
 
 
 def _intent_matches(records: list[dict], key: str, *, raw: bool = False) -> float | None:
@@ -455,6 +457,9 @@ def summarize_experiment(records: list[dict]) -> dict:
         "ticker_accuracy_grounded": _intent_matches(records, "ticker"),
         "ticker_accuracy_raw": _intent_matches(records, "ticker", raw=True),
         "invented_fields": sum(invented_fields(r) for r in records),
+        "language_grounded": sum(
+            1 for r in records if "language" in ((r.get("intent") or {}).get("grounded") or {})
+        ),
         "sector_unworded": sum(
             1 for r in records if SECTOR_UNWORDED in ((r.get("intent") or {}).get("grounded") or {})
         ),
