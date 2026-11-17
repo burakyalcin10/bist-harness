@@ -306,3 +306,16 @@ def test_resolve_from_the_store_sees_calls_saved_after_an_earlier_resolve(monkey
     second = session.resolve(analysis.analysis_id)
     assert [c.tool for c in second.tool_calls] == ["get_stock_history", "get_index_history"]
     assert analysis.analysis_id not in session._LIVE  # a store read is not cached
+
+
+# --- the run's reference date is recorded (Task 8) ----------------------------------
+def test_today_is_recorded_and_survives_save_and_load(tmp_path):
+    from bist_harness.storage import db
+
+    conn = db.connect(tmp_path / "today.sqlite")
+    analysis = session.new_analysis("q", model="m")
+    assert analysis.today is None
+    analysis.today = "2026-11-17"
+    session.save(analysis, conn)
+    assert session.load(analysis.analysis_id, conn).today == "2026-11-17"
+    conn.close()

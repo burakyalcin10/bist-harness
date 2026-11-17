@@ -1102,3 +1102,12 @@ def test_the_default_gate_warns_without_blocking():
         today=TODAY,
     )
     assert analysis.gate_status == "PASS_WITH_WARNINGS" and analysis.outcome == "INVESTIGATE"
+
+
+def test_run_analysis_records_its_today(conn):
+    client = ScriptedClient(intent(scenario="ADVICE_REQUEST"))
+    analysis = machine.run_analysis(
+        "Should I buy THYAO?", client, call_tool=FakeTools(), today=TODAY, conn=conn
+    )
+    assert analysis.today == TODAY
+    assert session.load(analysis.analysis_id, conn).today == TODAY

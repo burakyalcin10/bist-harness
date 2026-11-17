@@ -194,6 +194,7 @@ def run_analysis(
     """
     today = today or date.today().isoformat()
     analysis = session.new_analysis(question, model=getattr(client, "model", "unknown"))
+    analysis.today = today
     run = _Run(analysis, conn)
     try:
         intent = parse_intent(question, client, today=today)

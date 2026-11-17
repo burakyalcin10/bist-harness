@@ -67,6 +67,7 @@ class Analysis:
     answer: str | None = None  # the fixed answer of a refused or unsafe question
     gate_status: str | None = None
     trail: list[StateRecord] = field(default_factory=list)  # one record per state
+    today: str | None = None  # the run's reference date: default period, future-date check
 
 
 _LIVE: dict[str, Analysis] = {}
@@ -162,6 +163,7 @@ def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
         "temperature": analysis.temperature,
         "seed": analysis.seed,
         "answer": analysis.answer,
+        "today": analysis.today,
         "trail": [
             {"state": r.state, "status": r.status, "detail": r.detail} for r in analysis.trail
         ],
@@ -276,6 +278,7 @@ def _read(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
         outcome=row[9],
         answer=run.get("answer"),
         gate_status=row[8],
+        today=run.get("today"),
         trail=[StateRecord(r["state"], r["status"], r["detail"]) for r in run.get("trail", [])],
     )
     return analysis
