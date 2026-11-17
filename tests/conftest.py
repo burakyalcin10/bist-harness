@@ -15,6 +15,7 @@ IMPLEMENTED_TOOLS = {
     "rank_sector_relative_strength",
     "test_weekday_pattern",
     "run_backtest",
+    "get_macro_context",
     "detect_reversal_events",
 }
 

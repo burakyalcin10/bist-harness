@@ -230,11 +230,29 @@ produced the signal.
 | `flags` | `FEW_TRADES` (fewer than 5), `NEGATIVE_AFTER_COST` (mean trade return at or below 0), `UNDERPERFORMS_<BENCHMARK>` | — |
 | `trade_sample` | The 12 latest trades: `signal_date`, `entry_date`, `exit_date`, `entry_price`, `exit_price`, `return_pct` | — |
 
-## 11. Layers not built yet
+## 11. Macro layer — `get_macro_context`
+
+Produced by `data/macro.py` and `tools/macro.py`. Sources and publication rules are in
+`docs/data_sources.md`. A value counts from the day it became public.
+
+| Name | Definition | Unit | Known when |
+| --- | --- | --- | --- |
+| `usdtry_start`, `usdtry_end`, `eurtry_start`, `eurtry_end` | Exchange rate on the first and last day of the period with data | TRY | Close of that day |
+| `usdtry_change_pct`, `eurtry_change_pct` | End against start | % | Close of the last day |
+| `policy_rate_start`, `policy_rate_end` | TCMB one-week repo rate in effect on the first and last day | % a year | Decision date |
+| `policy_rate_change_pp` | End minus start | % points | Decision date |
+| `policy_rate_changes` | Decisions that changed the rate inside the period | count | Decision date |
+| `last_policy_decision_date` | Date of the decision in effect at the end | date | — |
+| `fed_target_lower_start`, `fed_target_upper_start`, `fed_target_lower_end`, `fed_target_upper_end` | Federal funds target range in effect on the first and last day | % a year | Decision date |
+| `fed_changes` | Changes of the target range inside the period | count | Decision date |
+| `cpi_period` | Month of the latest CPI figure **published** by the end of the period | YYYY-MM | — |
+| `cpi_annual_pct`, `cpi_monthly_pct` | That month's consumer-price change against a year and a month earlier | % | Release day |
+| `cpi_published` | Release day of that figure: the 3rd of the next month or the next working day | date | — |
+
+## 12. Layers not built yet
 
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
 | Fundamental | Statement items by publication date, quarterly and annual changes, ratios | 3 |
-| Macro | USD/TRY, CBRT policy rate, Fed funds target, CPI by publication date | 3 |
 | News and events | Timestamped disclosure and news metadata | 3 |
 | Speech | Topics, claims and stance from approved public videos | 7 |

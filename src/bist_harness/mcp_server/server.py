@@ -24,11 +24,13 @@ from mcp.server.mcpserver import MCPServer
 
 from bist_harness.backtest.runner import run_variant
 from bist_harness.backtest.strategies import StrategyContext
+from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
 from bist_harness.tools import calendar_patterns, events, support_resistance
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
+from bist_harness.tools.macro import macro_context
 from bist_harness.tools.schemas import (
     INDICATORS,
     REVERSAL_EVENT_TYPES,
@@ -343,6 +345,42 @@ def _period_problem(start: str, end: str) -> dict | None:
     if end_date > date.today():
         return _error("FUTURE_DATE", "end is in the future; tools only report history.")
     return None
+
+
+def load_macro(name: str) -> pd.DataFrame:
+    """One macro series from the active snapshot."""
+    return macro_data.load_macro(name)
+
+
+MACRO_SOURCES = (
+    "USD/TRY and EUR/TRY: Yahoo Finance daily closes. Policy rate: TCMB one-week repo "
+    "decision table. Fed target range: Federal Reserve open-market page. CPI: TCMB "
+    "consumer-price table (TÜİK figures), counted from its release day."
+)
+
+
+@server.tool(description=TOOL_SCHEMAS["get_macro_context"]["description"])
+def get_macro_context(start: str, end: str) -> dict:
+    problem = _period_problem(start, end)
+    if problem:
+        return problem
+    series: dict[str, pd.DataFrame] = {}
+    missing = None
+    for name in macro_data.SERIES:
+        try:
+            series[name] = load_macro(name)
+        except DataUnavailableError as exc:
+            missing = exc
+    if not series:
+        return _error("DATA_UNAVAILABLE", str(missing))
+    try:
+        versions = _versions()
+    except DataUnavailableError as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    args = {"start": start, "end": end}
+    output = {**macro_context(series, start=start, end=end), **versions}
+    output["data_source"] = MACRO_SOURCES
+    return _with_result_id("get_macro_context", args, output)
 
 
 @server.tool(description=TOOL_SCHEMAS["run_backtest"]["description"])

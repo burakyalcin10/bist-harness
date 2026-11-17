@@ -53,6 +53,10 @@ def histories(monkeypatch):
         return frames[symbol]
 
     monkeypatch.setattr(srv, "load_history", load)
+    from .test_macro import _series
+
+    macro = _series()
+    monkeypatch.setattr(srv, "load_macro", lambda name: macro[name])
 
 
 def test_every_indicator_column_is_in_the_dictionary():
@@ -74,6 +78,7 @@ def test_every_tool_output_field_is_in_the_dictionary(histories):
         srv.test_weekday_pattern("ASELS", "WEEKDAY_MEANS", *period),
         srv.test_weekday_pattern("ASELS", "THREE_DOWN_TWO_UP", *period),
         srv.run_backtest("B_TECH_SECTOR", ["AKBNK", "THYAO"], *period),
+        srv.get_macro_context("2026-09-01", "2026-11-03"),
         srv.get_stock_history("GARAN", *period),
     ]
     assert not any(np.isnan(v) for o in outputs for v in o.values() if isinstance(v, float))
