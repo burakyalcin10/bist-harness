@@ -1,0 +1,42 @@
+[project]
+name = "bist-harness"
+version = "0.1.0"
+description = "CSE-481 educational BIST 100 agentic financial analytics harness (not investment advice)"
+readme = "README.md"
+authors = [
+    { name = "Burak Yalçın", email = "154914248+burakyalcin10@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "matplotlib>=3.11.2",
+    "mcp>=2.3.0",
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
+    "pyarrow>=26.0.1",
+    "pydantic>=2.14.3",
+    "yfinance>=1.8.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: needs network or a running LLM endpoint (run with BIST_LIVE=1)",
+]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["reference"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
