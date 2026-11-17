@@ -231,7 +231,7 @@ produced the signal.
 | `by_period` | Trades, win rate and mean trade return for signals in the `discovery` and in the `test` period | — |
 | `by_regime` | The same for signals on days when XU100 closed above (`Uptrend`) or below (`Downtrend`) its 200-day average; `Undefined` before 200 closes exist | — |
 | `flags` | `FEW_TRADES` (fewer than 5), `NEGATIVE_AFTER_COST` (mean trade return at or below 0), `UNDERPERFORMS_<BENCHMARK>` | — |
-| `trade_sample` | The 12 latest trades: `signal_date`, `entry_date`, `exit_date`, `entry_price`, `exit_price`, `return_pct` | — |
+| `trade_sample` | The 12 latest trades: `signal_date`, `entry_date`, `exit_date`, `info_date` (date of the latest information the signal used; never after `signal_date`), `entry_price`, `exit_price`, `return_pct` | — |
 
 ## 11. Macro layer — `get_macro_context`
 

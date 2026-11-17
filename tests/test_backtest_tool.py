@@ -226,3 +226,36 @@ def test_variant_c_does_not_change_when_rows_after_the_end_are_removed(layers, m
     full = srv.run_backtest("C_TECH_SECTOR_FUND", ["TUPRS"], "2025-01-01", "2026-03-31")
     monkeypatch.setattr(srv, "load_history", lambda symbol: layers(symbol).loc[:"2026-03-31"])
     assert srv.run_backtest("C_TECH_SECTOR_FUND", ["TUPRS"], "2025-01-01", "2026-03-31") == full
+
+
+def test_every_sampled_trade_carries_its_information_date():
+    out = srv.run_backtest("A_TECHNICAL", ["ASELS", "THYAO"], *PERIOD)
+    assert out["trade_sample"]
+    for trade in out["trade_sample"]:
+        assert trade["info_date"] <= trade["signal_date"]
+
+
+def test_the_gate_reads_the_real_backtest_output_shape():
+    from bist_harness.harness import session
+    from bist_harness.harness.gate import quality_gate
+
+    out = srv.run_backtest("A_TECHNICAL", ["ASELS", "THYAO"], *PERIOD)
+    out["trade_sample"][0]["info_date"] = "9999-12-31"  # a trade that saw the future
+    analysis = session.Analysis(
+        analysis_id="AN-test00000001",
+        question="t",
+        created_at="2026-11-17T00:00:00+00:00",
+        model="fake",
+        snapshot_id="s",
+        adjustments_id="a",
+        intent={"scenario": "BACKTEST", "ticker": None, "language": "en"},
+    )
+    session.record_call(
+        analysis, state="RUN_BACKTEST", tool="run_backtest", arguments={}, output=out
+    )
+    ok = {"result_id": "q-1", "status": "PASS", "findings": [], "checked": []}
+    session.record_call(
+        analysis, state="RISK_GATE", tool="check_data_quality", arguments={}, output=ok
+    )
+    result = quality_gate(analysis, ())
+    assert result.status == "HARD_BLOCK" and any("9999-12-31" in r for r in result.hard_blocks)

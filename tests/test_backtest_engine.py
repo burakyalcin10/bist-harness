@@ -210,6 +210,7 @@ def test_trade_sample_is_capped_and_holds_the_latest_trades():
         "signal_date",
         "entry_date",
         "exit_date",
+        "info_date",
         "entry_price",
         "exit_price",
         "return_pct",

@@ -33,6 +33,7 @@ SAMPLE_FIELDS = (
     "signal_date",
     "entry_date",
     "exit_date",
+    "info_date",
     "entry_price",
     "exit_price",
     "return_pct",
