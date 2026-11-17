@@ -77,6 +77,9 @@ Sprint 3 incelemesi temel veri kaynağının zamana göre doğru olmadığını 
 - [ ] Makro, temel ve KAP katmanlarının özetleri `result_id` kimliğine girer; `snapshot verify` bu dosyaları da denetler.
 - [ ] TÜFE yayın günleri kayıtlı bir tablodan alınır; kur, özellik tablosunda bir gün gecikmeyle kullanılır.
 - [ ] `fundamental_trend` denetimleri (nakit akışı, zarardan kâra geçiş) tutarlı hâle getirilir; motorun bilgi tarihi denetimi gerçek bir denetime çevrilir.
+- [ ] *(17 Kasım onayıyla eklendi)* `known_from` ve dönem hizasını etkileyen, Sprint 3'ten ertelenen üç madde: aynı gün yayımlanan konsolide ve solo raporlardan hangisinin alındığı kurala bağlanır; mali yılı Aralık'ta bitmeyen şirketlerin (MAVI) dönem sonları doğru eşlenir; yarım gün seanslarında kapanıştan sonra (13:00–18:00) yayımlanan bildirim ertesi işlem gününe yazılır. Yeniden kurulan temel veri kurulumu, KAP üye kimliği bulunamayan hissede sessizce geçmez, hata verir.
+- [ ] *(17 Kasım onayıyla eklendi)* Ön kayıttaki Senaryo 1–3'ün değerlendirmesi `backtest/study.py`'ye eklenir: Senaryo 1 (geride kalma günleri ve epizotları, isabet oranı, medyan yetişme, yanlış pozitif oranı; birincil ve ikincil tanım), Senaryo 2 (30 hisse × 5 örüntü; keşif döneminde Bonferroni sonrası anlamlılık, test döneminde aynı işaret; şansla beklenen sayıyla karşılaştırma; THYAO "ön kayıtlı değil" işaretli), Senaryo 3 (dokuz olay ailesi ve yön; 1, 3, 5, 10 gün; XU100 200 günlük ortalamasına göre rejim). Koşucular yalnız keşif döneminde denenir; test dönemi aşağıdaki tek çalıştırmada A–E ve Senaryo 4 ile birlikte açılır.
+- [ ] Kalan testler (her madde için önce kalan test): TÜFE yayın tablosundan tatile kayan yayın (Haziran 2023 → 5 Temmuz); özellik tablosunda kurun bir gün gecikmesi; katman dosyası değişince `result_id` değişir ve `snapshot verify` başarısız olur; düzeltilmemiş kapanışla piyasa değeri; yarım gün seansında 13:00 sonrası yayın; aynı gün konsolide/solo seçimi; MAVI dönem sonu; nakit akışı ve kâr denetimlerinin aynı kuralla hesaplanması; bilgi tarihi denetiminin gelecekteki tabloyu yakalaması; Senaryo 1–3 koşucularının sentetik veride bilinen sonucu vermesi; `study test` sonucunun bütün senaryoları içermesi. Temel verinin yeniden kurulma yolunun testleri, yol seçildikten sonra bu listeye eklenir.
 - [ ] Bunlar bittikten sonra, **bir kez**: `uv run python -m bist_harness.backtest.study test`; sonuç `docs/results/` altına, ön kayıt protokolündeki tanımlar değiştirilmeden yazılır.
 
 ### Task 1: Oturum kaydı ve kalan üç araç (EC-040)
@@ -100,6 +103,7 @@ def load(analysis_id, conn) -> Analysis
 - `build_evidence_bundle(analysis_id)`: Task 5'teki `build_evidence` çıktısını döndürür (Task 5'e kadar `NOT_IMPLEMENTED`).
 - `get_speech_features(source_id)`: onaylı liste `data/reference/approved_videos.csv` (Sprint 7'de dolar); listede olmayan kimlik → `UNKNOWN_SOURCE`; liste boşken `DATA_UNAVAILABLE`.
 - Bütün araç fonksiyonları ortak bir sarmalayıcıdan geçer: önce `validate_tool_call`; hata `INVALID_ARGUMENT` nesnesi olur (yanlış tip MCP katmanında sessizce çevrilmez).
+- *(17 Kasım onayıyla eklendi)* KAP olay katmanı kurulumunda üye kimliği bulunamayan hisse sessizce geçilmez, hata verir. Özellik tablosu (`features.table.build_feature_table`) aynı anlık görüntü ve aynı katman özetleri için önbellekten okunur; önbellek anahtarı bu özetlerdir.
 
 - [ ] Kalan testler: kimlik benzersiz ve sıralı çağrı numarası; kayıt ve geri okuma eşit; olmayan `analysis_id` → `UNKNOWN_ANALYSIS`; kalite aracı bozuk seride `HARD_BLOCK`; `forward_days="5"` MCP üzerinden `INVALID_ARGUMENT`; `event_records` çıktısı `json.dumps(allow_nan=False)` ile yazılabilir.
 - [ ] FAIL → uygulama → PASS. Commit: `feat: analysis session store and the remaining MCP tools`.
@@ -228,6 +232,6 @@ Denetimler: etiket uygun kümede; her sayı ve tarih committed kümede ya da sor
 
 ### Task 10: Canlı uçtan uca deneme ve kapanış
 
-- [ ] Dizüstünde `qwen3.5:2b` ile (RTX 5070 açıksa seçilen modelle) dört senaryodan birer soru ve iki tuzak soru; sonuç `docs/results/2026-11-20-harness-live.md`.
+- [ ] Dizüstünde `qwen3.5:2b` ile (RTX 5070 açıksa seçilen modelle) dört senaryodan birer soru ve iki tuzak soru; sonuç `docs/results/<çalıştırma günü>-harness-live.md` (dosya adı gerçek çalıştırma gününün tarihini taşır, K-051).
 - [ ] `uv run pytest -q`, `uv run ruff check .` temiz; bağımsız inceleme; bulgular tek geçişte düzeltilir.
 - [ ] Karar günlüğü, kullanım günlüğü, `git tag sprint-4`, Notion kartları, Sprint 5 planı (ince ayar verisi: harness kayıtlarından üretilir).

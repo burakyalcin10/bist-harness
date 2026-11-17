@@ -159,7 +159,17 @@ Her biri önce kalan bir testle (`tests/test_sprint3_review.py`): reel büyüme 
 - **Keşif dönemi backtest'i.** A ve B varyantları 2020–2024'te hisseleri tutmanın çok gerisinde (yaklaşık %245 ve %225'e karşı %1.549); ortalama işlem getirisi, piyasada kalmanın aynı sürede kazandırdığına yakın. Sektör koşulu işlemleri iyileştirmiyor.
 - **Kaynak tuzağı.** Herkese açık mali tablo servisi geçmiş dönemleri sonradan yeniden düzeltilmiş hâliyle veriyor; bu, enflasyon muhasebesi olan bir piyasada "zamana göre doğru" veri kurmanın neden zor olduğunu gösteren somut bir örnek.
 
-### Senin vermen gereken kararlar (güncel)
+## 17 Kasım 2026 — Sprint 4
+
+Burak planı okudu ve onayladı. Yürütme: Task 0 ve Task 10 ana oturumda, Task 1–9 alt
+ajanlarla (görev başına temiz bağlamlı uygulayıcı ve inceleme).
+
+| No | Karar | Gerekçe | Geri alma maliyeti | Durum |
+| --- | --- | --- | --- | --- |
+| K-053 | Sprint 4 planı dört eklemeyle onaylandı: (1) Senaryo 1–3'ün test dönemi koşucuları `study.py`'ye eklenir ve test dönemi tek çalıştırmada A–E ve Senaryo 4 ile birlikte açılır; (2) konsolide/solo seçimi, MAVI dönem sonu ve yarım gün seansı yayınları Task 0'a; KAP üye kimliği koruması ve özellik tablosu önbelleği Task 1'e; (3) Task 0'a kalan testler listesi; (4) canlı deneme dosyasının adı gerçek çalıştırma günüyle. Yürütme karma düzende. | `study test` yalnız A–E ve Senaryo 4'ü çalıştırıyordu; ön kayıttaki Senaryo 1–3 sorularının test dönemi koşucusu yoktu. Ertelenen üç madde `known_from` ve dönem hizasını etkilediği için tek seferlik çalıştırmadan önce düzelmeli. | Plan metni. | Burak'ın kararı (17 Kasım 2026) |
+| K-054 | Sprint 4 `main` yerine `.worktrees/sprint-4` altında `sprint-4-dev` dalında yürütülüyor; dal adı sprint sonundaki `sprint-4` etiketiyle karışmasın diye farklı. Git dışı veri ortak: worktree'nin `.env` dosyası `BIST_DATA_DIR` ile ana repodaki `data/` klasörünü gösteriyor; izlenen referans dosyaları (`data/reference/`) worktree'nin kendi kopyasından okunuyor. Yürütme defteri betiklerin açtığı `.superpowers/sdd/2026-11-19-sprint-4-mcp-ve-harness/` altında; sprint sonunda `.superpowers/sdd/sprint-4/` olarak ana repoya kopyalanır. | Burak'ın genel talimatı büyük planlarda worktree istiyor (K-019'daki `main` üzerinde çalışma bu sprintte değişti). Veri tek yerde kalmalı; anlık görüntü iki kopyaya bölünürse `snapshot_id` aynı, içerik farklı olabilir. | Dal `main`'e birleştirilir; worktree silinir. | Bekliyor |
+
+## Senin vermen gereken kararlar (güncel)
 
 1. Temel model seçimi ve QLoRA deneme eğitimi: RTX 5070 gerekiyor (EC-005, EC-006).
 2. Tasarım belgesinin onayı ve K-005, K-006, K-007.
