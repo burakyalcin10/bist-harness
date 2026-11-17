@@ -51,6 +51,21 @@ from bist_harness.tools.news import TOPICS, news_events
         ("Yönetim Kurulu Komiteleri", "", "management"),
         ("Bağımsız Denetim Kuruluşunun Belirlenmesi", "", "management"),
         ("Özel Durum Açıklaması (Genel)", "Basında çıkan haberler hakkında", "other"),
+        # found on the real download: phrases that the broad keywords caught wrongly
+        ("Esas Sözleşme Tadili", "Esas Sözleşme Tadili", "management"),
+        ("Kurumsal Yönetim İlkelerine Uyum Derecelendirmesi", "", "management"),
+        (
+            "Özel Durum Açıklaması (Genel)",
+            "Kurumsal Yönetim Derecelendirme Sözleşmesinin Yenilenmesi",
+            "management",
+        ),
+        (
+            "Yatırım Kuruluşu Varant - Sertifika - Senetlerine İlişkin Bildirim",
+            "İş Yatırım Varantları Alım Satım İşlemleri",
+            "structured_products",
+        ),
+        ("Pay Alım Satım Bildirimi", "", "share_transactions"),
+        ("Özel Durum Açıklaması (Genel)", "Yurtiçi Kira Sertifikası İhracı", "financing"),
         (None, None, "other"),
     ],
 )
@@ -273,3 +288,14 @@ def test_news_tool_without_stored_disclosures_names_the_build_command(monkeypatc
     monkeypatch.setattr(srv, "load_disclosures", missing)
     out = srv.get_news_events("2025-03-01", "2025-03-31")
     assert out["error"]["code"] == "DATA_UNAVAILABLE" and "kap build" in out["error"]["message"]
+
+
+def test_topics_are_assigned_when_the_file_is_read_so_a_rule_change_needs_no_download(tmp_path):
+    folder = tmp_path / "s1" / "kap"
+    folder.mkdir(parents=True)
+    stale = _table().iloc[:1].copy()
+    stale["subject"] = "Kar Payı Dağıtım İşlemlerine İlişkin Bildirim"
+    stale["topic"] = "an_old_label"
+    stale.to_parquet(folder / "disclosures.parquet")
+    (tmp_path / "ACTIVE").write_text("s1\n", encoding="utf-8")
+    assert kap.load_disclosures(root=tmp_path)["topic"].tolist() == ["dividend"]

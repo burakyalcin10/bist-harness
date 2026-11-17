@@ -82,3 +82,43 @@ Rules applied:
   inflation-adjusted. Year-over-year growth is reported in nominal terms and in real
   terms (the earlier amount is brought to the later period's price level with the CPI
   index); a comparison that reaches back before the 2023 year end is flagged.
+
+## 4. Company events (KAP disclosure metadata)
+
+Built on 2026-11-18 with `uv run python -m bist_harness.data.kap build 15 520` (two timed
+runs) into `data/snapshots/20261117-0722/kap/disclosures.parquet`.
+
+| Item | Value |
+| --- | --- |
+| Source | KAP disclosure query, class "ODA" (material events), one request per stock and calendar year |
+| Range | 2025-01-02 to 2026-11-16 |
+| Stocks | 30 (58 to 893 disclosures each; the brokerage ISMEN has 893, mostly warrant notices) |
+| Rows | 4,960, no duplicates |
+| Stored | Publication time, company, category, subject line, summary line, disclosure number, link. **No disclosure text** |
+| Published at or after 18:00 | 2,183 of 4,960 |
+
+Topic tags are assigned by keyword rules when the file is read (`data/kap.py`,
+`TOPIC_RULES`; the first matching rule wins):
+
+| Topic | Disclosures | Topic | Disclosures |
+| --- | --- | --- | --- |
+| `financing` | 1,201 | `dividend` | 182 |
+| `management` | 747 | `credit_rating` | 154 |
+| `other` | 745 | `capital_increase` | 148 |
+| `structured_products` | 645 | `investment` | 118 |
+| `contract` | 300 | `earnings` | 107 |
+| `buyback` | 270 | `merger_acquisition` | 86 |
+| `share_transactions` | 221 | `regulation_legal` | 36 |
+
+Notes:
+
+- The rules were corrected once after looking at the real download: "Esas Sözleşme
+  Tadili" (articles of association) had been tagged `contract`, warrant notices
+  `investment`, and "İhracı" was missed because of the Turkish ç/c change. The
+  `regulation_legal` set, the only tag a strategy variant uses, did not change (36).
+- About 15% of the disclosures stay `other` (mostly "Özel Durum Açıklaması (Genel)" with
+  a free-form summary). The tag is a coarse label for context, not a classification to
+  rely on.
+- This layer is context only (announcement 1, item 3): it never supplies a number.
+- There is no speech-to-text layer yet; it is planned for Sprint 7 with a fixed list of
+  approved public videos.

@@ -54,7 +54,10 @@ TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "regulation_legal",
         ("dava", "ceza", "soruşturma", "rekabet kurulu", "mahkeme", "tedbir", "vergi incelemesi"),
     ),
+    ("management", ("esas sözleşme", "kurumsal yönetim")),
     ("credit_rating", ("kredi derecelendirme", "derecelendirme notu")),
+    ("structured_products", ("varant", "yatırım kuruluşu")),
+    ("share_transactions", ("pay alım satım",)),
     ("buyback", ("geri alım", "geri alın", "payların geri")),
     ("dividend", ("kar payı", "kâr payı", "kar dağıtım", "kâr dağıtım", "temettü")),
     (
@@ -69,7 +72,7 @@ TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "financing",
         ("kredi", "tahvil", "bono", "borçlanma aracı", "ihraç", "finansman", "sukuk",
-         "sermaye piyasası aracı", "kupon"),
+         "sermaye piyasası aracı", "ihrac", "kira sertifika", "kupon"),
     ),
     ("contract", ("sözleşme", "ihale", "sipariş", "iş ilişkisi", "anlaşma")),
     ("investment", ("yatırım", "kapasite", "tesis", "fabrika", "teşvik")),
@@ -84,7 +87,7 @@ TOPIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
          "bağımsız denetim", "esas sözleşme", "kurumsal yönetim"),
     ),
 )  # fmt: skip
-TOPICS: tuple[str, ...] = (*[name for name, _ in TOPIC_RULES], "other")
+TOPICS: tuple[str, ...] = (*dict.fromkeys(name for name, _ in TOPIC_RULES), "other")
 
 
 def _fold(text: str | None) -> str:
@@ -232,6 +235,12 @@ def load_disclosures(*, snapshot_id: str | None = None, root: Path | None = None
         raise DataUnavailableError(f"Snapshot {snapshot_id} has no KAP disclosures. {BUILD_HINT}")
     table = pd.read_parquet(path)
     table["published_at"] = pd.to_datetime(table["published_at"])
+    # Tags come from the rules of the code that reads the file, not of the day it was
+    # downloaded: a rule change applies without asking KAP again.
+    table["topic"] = [
+        tag_topic(subject, summary)
+        for subject, summary in zip(table["subject"], table["summary"], strict=True)
+    ]
     return table
 
 

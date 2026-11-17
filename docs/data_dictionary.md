@@ -314,7 +314,7 @@ fundamental tool, and it has no sentiment label.
 
 | Name | Definition |
 | --- | --- |
-| `topic` | Requested topic filter (or null); per event, the tag assigned by keyword rules on the subject and summary lines: `earnings`, `dividend`, `capital_increase`, `buyback`, `contract`, `investment`, `financing`, `merger_acquisition`, `regulation_legal`, `credit_rating`, `management`, `other` |
+| `topic` | Requested topic filter (or null); per event, the tag assigned by keyword rules on the subject and summary lines: `earnings`, `dividend`, `capital_increase`, `buyback`, `contract`, `investment`, `financing`, `merger_acquisition`, `regulation_legal`, `credit_rating`, `structured_products`, `share_transactions`, `management`, `other` |
 | `total` | Disclosures published from `start` to the end of the `end` day that match the filters |
 | `by_topic` | Count per topic among those |
 | `events` | The 12 latest matches, newest first |
