@@ -30,6 +30,7 @@ from bist_harness.data import kap as kap_data
 from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
+from bist_harness.data.raw_prices import load_raw
 from bist_harness.errors import DataUnavailableError
 from bist_harness.features.table import build_feature_table
 from bist_harness.tools import calendar_patterns, events, support_resistance
@@ -437,7 +438,13 @@ def get_fundamental_metrics(ticker: str, as_of: str) -> dict:
         return loaded
     name, statements, calendar, cpi, close, versions = loaded
     result = fundamental_metrics(
-        statements, calendar, ticker=name, as_of=as_of, close=close, cpi=cpi
+        statements,
+        calendar,
+        ticker=name,
+        as_of=as_of,
+        close=close,
+        cpi=cpi,
+        raw_prices=load_raw(name),
     )
     if result is None:
         return _no_statement(name, as_of)

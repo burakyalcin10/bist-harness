@@ -307,21 +307,41 @@ def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> 
     }
 
 
-def _valuation(book: Book, period: Period, close: pd.Series | None, as_of: str) -> dict:
-    """Valuation ratios are withheld.
+def _valuation(
+    book: Book,
+    period: Period,
+    raw_prices: pd.DataFrame | None,
+    as_of: str,
+    cpi: pd.Series | None = None,
+) -> dict:
+    """Market value and the three valuation ratios on ``as_of``.
 
-    The snapshot holds prices adjusted for dividends as well as splits
-    (``auto_adjust=True``), so a past close is lower than the price that was quoted that
-    day, and close times share count understates the market value of the time. Until an
-    unadjusted close is stored, P/E, P/B and EV/EBITDA are not computed rather than
-    reported wrong.
+    Market value is the unadjusted close of ``as_of`` (``data/raw_prices.py``) times the
+    paid-in capital of the period (BIST shares have a nominal value of 1 TL, so the
+    capital in lira is the share count). The dividend-adjusted close of the price
+    snapshot is never used. When a split (a bonus issue) happened between the period end
+    and ``as_of``, the share count is out of date and the ratios are withheld (K-041).
     """
+    withheld = {"market_cap_mn": None, "pe": None, "pb": None, "ev_ebitda": None}
+    if raw_prices is None or raw_prices.empty:
+        return {**withheld, "valuation_note": "WITHHELD_NO_UNADJUSTED_PRICE"}
+    known = raw_prices[raw_prices.index <= pd.Timestamp(as_of)]
+    shares = book.value(period, "paid_in_capital")
+    if known.empty or shares is None or not shares > 0:
+        return {**withheld, "valuation_note": "WITHHELD_NO_UNADJUSTED_PRICE"}
+    after = known[known.index > book.end(period)]
+    if ((after["splits"] > 0) & (after["splits"] != 1)).any():
+        return {**withheld, "valuation_note": "WITHHELD_SHARE_COUNT_CHANGED"}
+    market_cap = float(known["raw_close"].iloc[-1]) * shares
+    net_debt = _net_debt(book, period)
     return {
-        "market_cap_mn": None,
-        "pe": None,
-        "pb": None,
-        "ev_ebitda": None,
-        "valuation_note": "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED",
+        "market_cap_mn": _millions(market_cap),
+        "pe": _ratio(market_cap, book.ttm(period, "parent_net_profit", cpi)),
+        "pb": _ratio(market_cap, book.value(period, "parent_equity")),
+        "ev_ebitda": None
+        if net_debt is None
+        else _ratio(market_cap + net_debt, book.ttm(period, "ebitda", cpi)),
+        "valuation_note": "UNADJUSTED_CLOSE_TIMES_PAID_IN_CAPITAL",
     }
 
 
@@ -368,15 +388,22 @@ def fundamental_metrics(
     as_of: str,
     close: pd.Series | None = None,
     cpi: pd.Series | None = None,
+    raw_prices: pd.DataFrame | None = None,
 ) -> dict | None:
-    """Metrics of the latest period public on ``as_of``; ``None`` when there is none."""
+    """Metrics of the latest period public on ``as_of``; ``None`` when there is none.
+
+    ``close`` (the adjusted close) is not used for valuation; ``raw_prices`` is.
+    """
     known = known_periods(calendar, ticker, as_of)
     if known.empty:
         return None
     row = known.iloc[-1]
     period = Period(int(row["year"]), int(row["quarter"]))
     book = Book(statements, ticker, calendar)
-    metrics = {**period_metrics(book, period, cpi), **_valuation(book, period, close, as_of)}
+    metrics = {
+        **period_metrics(book, period, cpi),
+        **_valuation(book, period, raw_prices, as_of, cpi),
+    }
     return {
         "ticker": book.ticker,
         "as_of": as_of,

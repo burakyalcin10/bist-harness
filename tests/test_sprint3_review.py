@@ -36,11 +36,13 @@ def test_without_a_comparative_column_real_growth_is_not_guessed():
     assert "NO_COMPARABLE_YEAR" in codes and "RESTATED_SOURCE" not in codes
 
 
-def test_valuation_is_withheld_because_stored_prices_are_dividend_adjusted():
+def test_valuation_is_withheld_without_unadjusted_prices():
+    """The dividend-adjusted close is never used for a market value (Sprint 4: the
+    unadjusted close comes from the prices_raw layer, tests/test_raw_prices.py)."""
     out = _metrics()
     assert out["market_cap_mn"] is None and out["pe"] is None
     assert out["pb"] is None and out["ev_ebitda"] is None
-    assert out["valuation_note"] == "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED"
+    assert out["valuation_note"] == "WITHHELD_NO_UNADJUSTED_PRICE"
 
 
 def test_change_tool_carries_the_same_warning_and_still_gives_a_trend():

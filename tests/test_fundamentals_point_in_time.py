@@ -163,3 +163,46 @@ def test_the_period_end_is_the_one_in_the_calendar():
     )
     out = fn.fundamental_metrics(statements, calendar, ticker="MAVI", as_of="2025-11-10", cpi=CPI)
     assert out["period_end"] == "2025-10-31"
+
+
+def _raw(split_on=None):
+    days = pd.bdate_range("2025-09-01", "2025-11-14")
+    frame = pd.DataFrame({"close": 50.0, "splits": 0.0, "raw_close": 50.0}, index=days)
+    if split_on:
+        frame.loc[pd.Timestamp(split_on), "splits"] = 2.0
+    return frame
+
+
+def _with_capital(ticker="TUPRS"):
+    statements, calendar = _book(ticker, True)
+    extra = pd.DataFrame(
+        [(ticker, 2025, 3, "paid_in_capital", "paid_in_capital", 10 * M)],
+        columns=statements.columns,
+    )
+    return pd.concat([statements, extra], ignore_index=True), calendar
+
+
+def test_market_value_is_the_unadjusted_close_times_the_paid_in_capital():
+    statements, calendar = _with_capital()
+    out = fn.fundamental_metrics(
+        statements, calendar, ticker="TUPRS", as_of="2025-11-10", cpi=CPI, raw_prices=_raw()
+    )
+    assert out["market_cap_mn"] == 500.0  # 50 TL x 10 million shares of 1 TL nominal
+    ttm_parent = 54 + 50 * 130 / 110 + 13
+    assert out["pe"] == round(500 / ttm_parent, 2)
+    assert out["pb"] == round(500 / 600, 2)
+    assert out["valuation_note"] == "UNADJUSTED_CLOSE_TIMES_PAID_IN_CAPITAL"
+
+
+def test_valuation_is_withheld_when_shares_changed_after_the_period():
+    statements, calendar = _with_capital()
+    out = fn.fundamental_metrics(
+        statements,
+        calendar,
+        ticker="TUPRS",
+        as_of="2025-11-10",
+        cpi=CPI,
+        raw_prices=_raw(split_on="2025-10-15"),
+    )
+    assert out["market_cap_mn"] is None and out["pe"] is None
+    assert out["valuation_note"] == "WITHHELD_SHARE_COUNT_CHANGED"

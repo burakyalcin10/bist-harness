@@ -142,7 +142,7 @@ def test_leverage_and_liquidity():
 def test_valuation_is_withheld():
     out = _metrics()
     assert out["market_cap_mn"] is None and out["pe"] is None and out["ev_ebitda"] is None
-    assert out["valuation_note"] == "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED"
+    assert out["valuation_note"] == "WITHHELD_NO_UNADJUSTED_PRICE"  # adjusted close is never used
 
 
 def test_valuation_is_withheld_when_the_share_count_changed_after_the_period():
@@ -152,7 +152,7 @@ def test_valuation_is_withheld_when_the_share_count_changed_after_the_period():
     )
     assert out["period"] == "2025Q2"
     assert out["pe"] is None and out["market_cap_mn"] is None
-    assert out["valuation_note"] == "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED"
+    assert out["valuation_note"] == "WITHHELD_NO_UNADJUSTED_PRICE"  # adjusted close is never used
 
 
 @pytest.mark.parametrize(

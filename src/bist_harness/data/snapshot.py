@@ -203,7 +203,7 @@ def adjustments_id(path: Path | None = None) -> str:
     return hashlib.sha256(content).hexdigest()[:8]
 
 
-LAYERS = ("macro", "fundamentals", "kap")
+LAYERS = ("macro", "fundamentals", "kap", "prices_raw")
 LAYER_REFERENCES = tuple(
     REPO_ROOT / "data" / "reference" / name
     for name in ("cpi_release_dates.csv", "half_day_sessions.csv")
