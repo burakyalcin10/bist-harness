@@ -27,6 +27,9 @@ def fundamentals(monkeypatch):
     monkeypatch.setattr(
         srv, "load_history", lambda symbol: pd.DataFrame({"Close": CLOSE}, index=CLOSE.index)
     )
+    # no unadjusted prices: the synthetic statements must not meet the real raw layer
+    # (valuation is tested in tests/test_fundamentals_point_in_time.py)
+    monkeypatch.setattr(srv, "load_raw", lambda ticker: None)
 
 
 def test_metrics_tool_returns_the_point_in_time_metrics():
