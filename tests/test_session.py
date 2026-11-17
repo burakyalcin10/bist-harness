@@ -171,7 +171,13 @@ def test_valid_call_over_mcp_still_works_after_the_strict_wrapper():
         async with Client(srv.server) as client:
             result = await client.call_tool(
                 "detect_reversal_events",
-                {"ticker": "ASELS", "start": "2021-01-01", "end": "2021-12-31", "forward_days": 5},
+                {
+                    "ticker": "ASELS",
+                    "start": "2021-01-01",
+                    "end": "2021-12-31",
+                    "event_type": "BOLLINGER_LOWER_TOUCH",
+                    "forward_days": 5,
+                },
             )
             return srv.unwrap_tool_result(result)
 

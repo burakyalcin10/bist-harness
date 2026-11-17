@@ -45,7 +45,9 @@ def test_stock_history_summary_fields_and_values(offline_history):
 def test_reversal_events_summary_matches_the_tool_function(offline_history):
     from bist_harness.tools.reversal import bollinger_lower_touch_summary
 
-    out = srv.detect_reversal_events("ASELS", "2021-01-01", "2023-12-31", forward_days=10)
+    out = srv.detect_reversal_events(
+        "ASELS", "2021-01-01", "2023-12-31", "BOLLINGER_LOWER_TOUCH", forward_days=10
+    )
     expected = bollinger_lower_touch_summary(
         offline_history.loc[:"2023-12-31"], forward_days=10, since="2021-01-01"
     )
@@ -66,10 +68,14 @@ def test_events_never_use_prices_after_the_requested_end(offline_history, monkey
         skip = {"data_last_date", "coverage_warning", "result_id"}
         return {k: v for k, v in output.items() if k not in skip}
 
-    out_full = srv.detect_reversal_events("ASELS", "2020-06-01", "2022-06-30")
+    out_full = srv.detect_reversal_events(
+        "ASELS", "2020-06-01", "2022-06-30", "BOLLINGER_LOWER_TOUCH"
+    )
     truncated = offline_history.loc[:"2022-06-30"]
     monkeypatch.setattr(srv, "load_history", lambda ticker: truncated)
-    out_cut = srv.detect_reversal_events("ASELS", "2020-06-01", "2022-06-30")
+    out_cut = srv.detect_reversal_events(
+        "ASELS", "2020-06-01", "2022-06-30", "BOLLINGER_LOWER_TOUCH"
+    )
     assert analysis(out_cut) == analysis(out_full)
     assert out_full["event_count"] > 0
 
@@ -93,8 +99,11 @@ def test_same_input_gives_same_result_id_and_different_input_differs():
     ],
 )
 def test_bad_input_returns_an_error_object_instead_of_raising(kwargs, code):
-    for tool in (srv.get_stock_history, srv.detect_reversal_events):
-        out = tool(**kwargs)
+    for tool, extra in (
+        (srv.get_stock_history, {}),
+        (srv.detect_reversal_events, {"event_type": "BOLLINGER_LOWER_TOUCH"}),
+    ):
+        out = tool(**kwargs, **extra)
         assert set(out) == {"error"}
         assert out["error"]["code"] == code
         assert out["error"]["message"]
@@ -170,7 +179,9 @@ def test_server_starts_as_a_subprocess_over_stdio():
 
 def test_every_output_names_the_snapshot_and_the_result_id_depends_on_it(monkeypatch):
     a = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")
-    events = srv.detect_reversal_events("ASELS", "2021-01-01", "2021-12-31")
+    events = srv.detect_reversal_events(
+        "ASELS", "2021-01-01", "2021-12-31", "BOLLINGER_LOWER_TOUCH"
+    )
     assert a["snapshot_id"] == events["snapshot_id"] == "test-snapshot"
     monkeypatch.setattr(srv, "current_snapshot_id", lambda: "another-snapshot")
     b = srv.get_stock_history("ASELS", "2021-01-01", "2021-12-31")

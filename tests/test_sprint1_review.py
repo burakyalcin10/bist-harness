@@ -367,11 +367,13 @@ def test_invalid_endpoint_address_is_an_unavailable_endpoint_without_the_address
 
 def test_outputs_report_data_coverage_and_warn_when_the_request_exceeds_it(offline_history):
     first, last = str(offline_history.index[0].date()), str(offline_history.index[-1].date())
-    inside = srv.detect_reversal_events("ASELS", "2021-01-01", "2023-12-31")
+    inside = srv.detect_reversal_events(
+        "ASELS", "2021-01-01", "2023-12-31", "BOLLINGER_LOWER_TOUCH"
+    )
     assert (inside["data_first_date"], inside["data_last_date"]) == (first, last)
     assert inside["coverage_warning"] is None
 
-    early = srv.detect_reversal_events("ASELS", "2019-06-01", "2023-12-31")
+    early = srv.detect_reversal_events("ASELS", "2019-06-01", "2023-12-31", "BOLLINGER_LOWER_TOUCH")
     assert first in early["coverage_warning"]
 
     late = srv.get_stock_history("ASELS", "2024-01-01", "2024-12-31")  # data ends 2024-08
@@ -441,7 +443,7 @@ def test_download_with_only_missing_prices_raises_data_unavailable(tmp_path):
 
 def test_coverage_warning_ignores_a_gap_of_a_few_non_trading_days(offline_history):
     """A request from 2020-01-01 (a holiday) is fully covered by data starting 2020-01-02."""
-    out = srv.detect_reversal_events("ASELS", "2020-01-01", "2023-12-29")
+    out = srv.detect_reversal_events("ASELS", "2020-01-01", "2023-12-29", "BOLLINGER_LOWER_TOUCH")
     assert out["coverage_warning"] is None
     weekend_after = str((offline_history.index[-1] + pd.Timedelta(days=3)).date())
     assert srv.get_stock_history("ASELS", "2024-01-01", weekend_after)["coverage_warning"] is None

@@ -235,22 +235,7 @@ def test_the_fifteen_tools_are_the_registered_tools():
     assert registered == set(TOOLS) == set(CASES)
 
 
-KNOWN_SCHEMA_MISMATCH = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "schema requires event_type but the function defaults it to BOLLINGER_LOWER_TOUCH; "
-        "existing callers rely on the default, so the controller decides which side moves"
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    "tool",
-    [
-        pytest.param(t, marks=KNOWN_SCHEMA_MISMATCH) if t == "detect_reversal_events" else t
-        for t in TOOLS
-    ],
-)
+@pytest.mark.parametrize("tool", TOOLS)
 def test_schema_matches_the_function_signature(tool):
     parameters = inspect.signature(getattr(srv, tool)).parameters
     schema = TOOL_SCHEMAS[tool]["parameters"]

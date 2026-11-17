@@ -318,7 +318,7 @@ def detect_reversal_events(
     ticker: str,
     start: str,
     end: str,
-    event_type: str = "BOLLINGER_LOWER_TOUCH",
+    event_type: str,
     forward_days: int = 5,
     direction: str = "BULLISH",
 ) -> dict:
