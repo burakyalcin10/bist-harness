@@ -35,6 +35,7 @@ STATE_GROUPS = (
     "LOAD_MACRO_CONTEXT",
 )
 SOURCE_TOOLS = ("get_news_events", "get_speech_features")
+TIME_KEYS = ("published_at", "known_from", "published", "cpi_published")
 VERSION_KEYS = ("snapshot_id", "adjustments_id", "layers_id", "data_source")
 
 
@@ -47,13 +48,44 @@ def _calls(analysis: session.Analysis, tool: str) -> list:
     return [c for c in analysis.tool_calls if c.tool == tool and c.allowed]
 
 
+def _times(value, path: str = "") -> dict:
+    """Every publication time in an output: path -> value, for the keys of ``TIME_KEYS``."""
+    found = {}
+    if isinstance(value, dict):
+        for key, item in value.items():
+            where = f"{path}.{key}" if path else key
+            if key in TIME_KEYS and isinstance(item, str):
+                found[where] = item
+            else:
+                found.update(_times(item, where))
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            found.update(_times(item, f"{path}[{i}]"))
+    return found
+
+
+def _publication_times(analysis: session.Analysis) -> dict:
+    times = {}
+    for call in analysis.tool_calls:
+        if call.allowed and isinstance(call.output, dict):
+            found = _times(call.output)
+            if found:
+                times[f"{call.seq}:{call.tool}"] = found
+    return times
+
+
 def _versions(analysis: session.Analysis) -> dict:
     versions = {"snapshot_id": analysis.snapshot_id, "adjustments_id": analysis.adjustments_id}
     for call in analysis.tool_calls:
         if call.allowed and isinstance(call.output, dict) and "snapshot_id" in call.output:
             versions.update({k: call.output[k] for k in VERSION_KEYS if k in call.output})
             break
-    return {**versions, "analysis_time": analysis.created_at, "reference_date": analysis.today}
+    return {
+        **versions,
+        "analysis_time": analysis.created_at,
+        "reference_date": analysis.today,
+        "publication_times": _publication_times(analysis) or NOT_APPLICABLE,
+    }
 
 
 def latest_review(analysis_id: str, conn: sqlite3.Connection) -> tuple[str, str] | None:
@@ -104,6 +136,56 @@ def decision_log(analysis: session.Analysis, conn: sqlite3.Connection) -> dict:
         "human_review_reason": (review[1] or NOT_APPLICABLE) if review else PENDING,
     }
     return {field: _fill(log[field]) for field in db.DECISION_LOG_FIELDS}
+
+
+JSON_COLUMNS = ("states_json", "sources_json", "backtest_json")
+
+
+def _text(value, *, as_json: bool) -> str:
+    if as_json:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+
+
+def store_log(analysis: session.Analysis, conn: sqlite3.Connection) -> None:
+    """Write the decision-log columns of ``analyses`` and the ``evidence`` rows.
+
+    ``session.save`` calls this, so a reader of the store sees the log of ``decision_log``.
+    The human review is its own ``decisions`` row (``record_review``).
+    """
+    log = decision_log(analysis, conn)
+    skip = ("created_at", "snapshot_id", "data_versions_json")  # saved with the analysis itself
+    values = {
+        column: _text(log[field], as_json=column in JSON_COLUMNS)
+        for field, (table, column) in db.DECISION_LOG_FIELDS.items()
+        if table == "analyses" and column not in skip
+    }
+    values["data_versions_json"] = _text(log["data_versions_and_publication_times"], as_json=True)
+    sets = ", ".join(f"{column} = ?" for column in values)
+    rows = [
+        (
+            analysis.analysis_id,
+            e["label"],
+            e["tool"],
+            e["result_id"],
+            e["field"],
+            json.dumps(e["value"], default=str),
+            e["sentence"],
+            int(e["committed"]),
+        )
+        for e in (log["evidence_bundle"] if isinstance(log["evidence_bundle"], list) else [])
+    ]
+    with conn:
+        conn.execute(
+            f"UPDATE analyses SET {sets} WHERE analysis_id = ?",
+            (*values.values(), analysis.analysis_id),
+        )
+        conn.execute("DELETE FROM evidence WHERE analysis_id = ?", (analysis.analysis_id,))
+        conn.executemany(
+            "INSERT INTO evidence (analysis_id, label, tool, result_id, field, value, sentence, "
+            "committed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
 
 
 def record_review(analysis_id: str, verdict: str, reason: str, conn: sqlite3.Connection) -> None:

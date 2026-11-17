@@ -223,3 +223,105 @@ def test_log_command_prints_the_log_as_json(completed, capsys):
     assert review.main(["log", completed.analysis_id]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert set(printed) == set(db.DECISION_LOG_FIELDS)
+
+
+# --- fix round 1: publication times and the stored log -------------------------------
+def test_publication_times_come_from_the_recorded_outputs(conn):
+    analysis = session.new_analysis("q", model="m")
+    analysis.intent = {**INTENT, "scenario": "FUNDAMENTAL_REACTION"}
+    session.record_call(
+        analysis,
+        state="LOAD_FUNDAMENTALS",
+        tool="get_fundamental_metrics",
+        arguments={"ticker": "THYAO", "as_of": "2025-06-30"},
+        output={
+            "result_id": "f1",
+            "published_at": "2025-05-10T18:00:00",
+            "known_from": "2025-05-11",
+            "quarters": [{"period": "2025Q1", "known_from": "2025-05-11"}],
+        },
+    )
+    session.record_call(
+        analysis,
+        state="LOAD_MACRO_CONTEXT",
+        tool="get_macro_context",
+        arguments={"start": "2025-01-02", "end": "2025-06-30"},
+        output={"result_id": "m1", "cpi_published": "2025-06-03"},
+    )
+    session.record_call(
+        analysis,
+        state="LOAD_MARKET_DATA",
+        tool="get_stock_history",
+        arguments={"ticker": "THYAO"},
+        output={"result_id": "s1", "last_close": 300.0},
+    )
+    times = review.decision_log(analysis, conn)["data_versions_and_publication_times"][
+        "publication_times"
+    ]
+    assert times["1:get_fundamental_metrics"]["published_at"] == "2025-05-10T18:00:00"
+    assert times["1:get_fundamental_metrics"]["quarters[0].known_from"] == "2025-05-11"
+    assert times["2:get_macro_context"] == {"cpi_published": "2025-06-03"}
+    assert "3:get_stock_history" not in times
+
+
+def test_publication_times_are_not_applicable_when_there_are_none(completed, conn):
+    versions = review.decision_log(completed, conn)["data_versions_and_publication_times"]
+    assert versions["publication_times"] == review.NOT_APPLICABLE
+
+
+def test_a_saved_analysis_has_no_null_in_any_decision_log_column(completed, conn):
+    for field, (table, column) in db.DECISION_LOG_FIELDS.items():
+        if table == "decisions":
+            continue  # a row exists only once a human has reviewed (see next test)
+        where = "" if table == "analyses" else " WHERE analysis_id = ?"
+        params = (completed.analysis_id,)
+        if table == "analyses":
+            where, params = " WHERE analysis_id = ?", params
+        rows = conn.execute(f"SELECT {column} FROM {table}{where}", params).fetchall()
+        assert rows, f"{field}: no row in {table}"
+        assert all(r[0] is not None and r[0] != "" for r in rows), f"{field}: NULL in {column}"
+
+
+def test_stored_columns_equal_the_log(completed, conn):
+    log = review.decision_log(completed, conn)
+    row = conn.execute(
+        "SELECT states_json, sources_json, strategy_variant, backtest_json, action, "
+        "explanation FROM analyses WHERE analysis_id = ?",
+        (completed.analysis_id,),
+    ).fetchone()
+    assert json.loads(row[0]) == log["technical_sector_fundamental_macro_states"]
+    assert row[1] == json.dumps(log["news_and_speech_source_metadata"])
+    assert row[2] == log["strategy_variant"] == review.NOT_APPLICABLE
+    assert row[4] == "WATCH" and row[5] == "THYAO returned 12.5% [E1]."
+    stored = conn.execute(
+        "SELECT label, sentence, committed FROM evidence WHERE analysis_id = ? ORDER BY id",
+        (completed.analysis_id,),
+    ).fetchall()
+    assert [s[0] for s in stored] == [e["label"] for e in log["evidence_bundle"]]
+    assert [s[0] for s in stored if s[2]] == log["committed_evidence_set"]
+
+
+def test_saving_again_replaces_the_stored_evidence(completed, conn):
+    session.save(completed, conn)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM evidence WHERE analysis_id = ?", (completed.analysis_id,)
+    ).fetchone()[0]
+    assert n == len(review.decision_log(completed, conn)["evidence_bundle"])
+
+
+def test_the_review_row_completes_the_stored_log(completed, conn):
+    review.record_review(completed.analysis_id, "ACCEPT", "ok", conn)
+    row = conn.execute(
+        "SELECT human_result, reason FROM decisions WHERE analysis_id = ?",
+        (completed.analysis_id,),
+    ).fetchone()
+    assert row == ("ACCEPT", "ok")
+
+
+def test_a_refused_analysis_loads_back_with_no_gate_status(conn):
+    client = Client()
+    client.script = [reply(json.dumps({**INTENT, "scenario": "ADVICE_REQUEST"}))]
+    refused = machine.run_analysis(
+        "Should I buy THYAO?", client, call_tool=tools, today="2026-11-17", conn=conn
+    )
+    assert session.load(refused.analysis_id, conn).gate_status is None

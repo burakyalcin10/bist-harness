@@ -227,6 +227,10 @@ def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
                 for call in analysis.tool_calls
             ],
         )
+    # The decision-log columns of section 28 (imported here: review imports this module).
+    from bist_harness.harness import review
+
+    review.store_log(analysis, conn)
 
 
 def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
@@ -277,7 +281,7 @@ def _read(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
         seed=run.get("seed", SEED),
         outcome=row[9],
         answer=run.get("answer"),
-        gate_status=row[8],
+        gate_status=None if row[8] == "not applicable" else row[8],  # the log's filler
         today=run.get("today"),
         trail=[StateRecord(r["state"], r["status"], r["detail"]) for r in run.get("trail", [])],
     )
