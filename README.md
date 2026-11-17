@@ -42,7 +42,7 @@ src/bist_harness/   package (tools, MCP server, LLM client, evaluation)
 tests/              offline tests; live tests are marked `live`
 data/reference/     frozen study universe (committed)
 data/cache/         market-data snapshots (not committed)
-reference/          instructor-provided example scripts, unmodified
+reference/          place for the instructor's example scripts (not distributed)
 docs/               design, plans, decision log, AI usage log, results
 ```
 

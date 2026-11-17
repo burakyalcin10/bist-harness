@@ -12,3 +12,4 @@ models/
 .superpowers/
 data/snapshots/
 data/*.sqlite
+reference/instructor/*.py
