@@ -832,3 +832,28 @@ def test_a_model_error_in_the_explanation_still_ends_model_unavailable():
     assert analysis.outcome == "MODEL_UNAVAILABLE"
     assert analysis.answer == machine.MODEL_UNAVAILABLE_ANSWERS["en"]
     assert explanation_record(analysis).status == "FAILED"
+
+
+# --- public helpers for the evaluation (Task 9) -------------------------------------------
+def test_advice_language_lists_the_phrases_the_validator_rejects():
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language("You should buy THYAO now. [E1]") == ["should buy"]
+    assert advice_language("Bu hisse kesin yükselir. [E1]") == ["kesin yukselir"]
+    assert advice_language("The RSI of THYAO on 2025-06-30 was 41.27. [E4]") == []
+
+
+def test_unsupported_values_follow_the_whole_set_and_the_sentence_rule():
+    from bist_harness.harness.validator import unsupported_values
+
+    committed = [e for e in EVIDENCE["en"] if e.committed]
+    question = QUESTION["en"]
+    clean = "THYAO changed 12.35% [E1] and its RSI was 41.27 on 2025-06-30. [E4]"
+    assert unsupported_values(clean, committed, question) == ([], [])
+    invented = "THYAO changed 12.4% by 2025-07-15. [E1]"
+    assert unsupported_values(invented, committed, question) == ([12.4], ["2025-07-15"])
+    # 41.27 is in the committed set, but this sentence cites only E1: rule 5, per sentence.
+    wrong_cite = "The RSI was 41.27. [E1] The RSI was 41.27 again. [E1]"
+    assert unsupported_values(wrong_cite, committed, question) == ([41.27], [])
+    # 4.10 is only in E3, which is not committed.
+    assert unsupported_values("The index moved 4.10%. [E3]", committed, question) == ([4.1], [])

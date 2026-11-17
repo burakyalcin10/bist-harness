@@ -1111,3 +1111,21 @@ def test_run_analysis_records_its_today(conn):
     )
     assert analysis.today == TODAY
     assert session.load(analysis.analysis_id, conn).today == TODAY
+
+
+def test_a_fallback_without_a_canonical_call_still_counts_as_an_intervention():
+    # A sector question: CALCULATE_TECHNICALS needs a stock, so its fallback calls nothing.
+    sector_only = intent(scenario="SECTOR_LAGGARD", ticker=None, sector="Banking")
+    client = ScriptedClient(sector_only, *["no call"] * 4)
+    analysis = machine.run_analysis(
+        "Bankacılık grubunda geride kalan var mı?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+        max_attempts=1,
+    )
+    technicals = record_of(analysis, "CALCULATE_TECHNICALS")
+    assert technicals.detail["fallback"] is True
+    assert [c for c in analysis.tool_calls if c.state == "CALCULATE_TECHNICALS"] == []
+    # index history, the empty technicals fallback, the sector ranking and the backtest
+    assert machine.harness_interventions(analysis) == 4

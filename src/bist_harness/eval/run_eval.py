@@ -1,0 +1,569 @@
+"""CSE-481 Engineering Economics — Educational use only. Not investment advice.
+
+The evaluation runner (card EC-060, design spec section 12): the harness experiments A-E
+with one model on the frozen question set.
+
+| Exp. | What runs |
+| --- | --- |
+| A | Raw model. Its intent (no keyword guard) picks the data; the canonical calls of the
+      route are made by code and their outputs are given to the model as text; the model
+      answers freely with a label from all eight. No tool requirement, states, checks. |
+| B | Model + tools. All tool schemas are offered in a loop of up to ``MAX_TOOL_ROUNDS``
+      turns; a call is checked against its schema only, then executed; the model answers
+      freely. No intent, states, permissions or gate. |
+| C | B + the stateful harness: ``machine.run_analysis`` with intent, guards, routes and
+      state permissions, but no evidence builder, a gate that always passes and a free,
+      unvalidated explanation over the raw outputs. |
+| D | C + evidence and quality gate: ``run_analysis`` as built (evidence, gate, eligible
+      labels, output validator). |
+| E | D + memory and human review: the analysis and its decision log are stored in a
+      SQLite memory under the run directory (human review stays pending) and replayed
+      from there (``harness.replay``). |
+
+Every run is recorded the same way (``eval.metrics`` describes the record): the evidence
+is built from the record's own allowed calls, and model-written text that was shown is
+checked by the output validator afterwards (for A-C this is measurement, not control).
+
+Usage (the endpoint comes from the settings, ``BIST_LLM_BASE_URL``; it is never printed)::
+
+    uv run python -m bist_harness.eval.run_eval --experiments A,B,C,D,E --repeats 2
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import sys
+import time
+from collections.abc import Callable, Sequence
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+from bist_harness.config import REPO_ROOT, Settings
+from bist_harness.eval import metrics
+from bist_harness.eval import questions as question_set
+from bist_harness.harness import machine, session
+from bist_harness.harness.actions import eligible_actions
+from bist_harness.harness.evidence import build_evidence
+from bist_harness.harness.gate import PASS, GateResult, quality_gate
+from bist_harness.harness.intent import _guess_language, parse_intent
+from bist_harness.harness.replay import replay
+from bist_harness.harness.routes import ROUTES
+from bist_harness.harness.validator import explanation_schema, validate_explanation
+from bist_harness.storage import db
+from bist_harness.tools.schemas import ACTIONS, to_ollama_tools, validate_tool_call
+
+EXPERIMENTS = ("A", "B", "C", "D", "E")
+MAX_TOOL_ROUNDS = 6  # experiment B: tool-call turns before the final answer
+OUTPUT_CHARS = 6000  # each tool output is cut to this length when given to the model as text
+DATA_STATE = "DATA_AS_TEXT"  # state name of the calls experiment A makes for its data
+LOOP_STATE = "TOOL_LOOP"  # state name of the calls of experiment B
+ToolCaller = Callable[[str, dict], dict]
+
+_ANSWER_PROMPT = (
+    "You answer questions about the stocks of an educational BIST 100 study universe. "
+    "Write in {language}. Answer with one JSON object: "
+    '{{"action": <one of {actions}>, "explanation": <text>}}.'
+)
+_DATA_PROMPT = "Question: {question}\n\nData (tool outputs as JSON):\n{data}"
+_LOOP_PROMPT = (
+    "You answer questions about the stocks of an educational BIST 100 study universe. "
+    "Use the tools to get the data you need. Today is {today}. This analysis has the id "
+    "{analysis_id} (some tools ask for it). When you have the data, reply with text."
+)
+_FINAL_REQUEST = (
+    "Now answer the question in {language} with one JSON object: "
+    '{{"action": <one of {actions}>, "explanation": <text>}}.'
+)
+LANGUAGE_NAMES = {"tr": "Turkish", "en": "English"}
+
+
+@dataclasses.dataclass(frozen=True)
+class FreeAnswer:
+    """A model answer that no validator checked (experiments A to C)."""
+
+    action: str | None
+    text: str
+    fallback: bool = False
+
+
+# --- shared pieces -------------------------------------------------------------------------
+def _execute(analysis, call_tool: ToolCaller, state: str, name: str, arguments: dict, source):
+    try:
+        output = call_tool(name, arguments)
+    except Exception as exc:  # a tool failure is recorded, never lost
+        output = {"error": {"code": "TOOL_FAILED", "message": f"{type(exc).__name__}: {exc}"}}
+    return session.record_call(
+        analysis, state=state, tool=name, arguments=arguments, output=output, source=source
+    )
+
+
+def _as_text(output: object) -> str:
+    return json.dumps(output, ensure_ascii=False, sort_keys=True, default=str)[:OUTPUT_CHARS]
+
+
+def _parse_answer(content: str) -> FreeAnswer:
+    try:
+        data = json.loads(content)
+    except (TypeError, ValueError):
+        return FreeAnswer(None, content)
+    if not isinstance(data, dict):
+        return FreeAnswer(None, content)
+    action, text = data.get("action"), data.get("explanation")
+    return FreeAnswer(
+        action if action in ACTIONS else None, text if isinstance(text, str) else content
+    )
+
+
+def _free_answer(client, question: str, outputs: Sequence[object], language: str) -> FreeAnswer:
+    """One schema-constrained answer over raw outputs given as text (experiments A and C)."""
+    data = "\n".join(_as_text(o) for o in outputs) or "(no data)"
+    messages = [
+        {
+            "role": "system",
+            "content": _ANSWER_PROMPT.format(
+                language=LANGUAGE_NAMES[language], actions=", ".join(ACTIONS)
+            ),
+        },
+        {"role": "user", "content": _DATA_PROMPT.format(question=question, data=data)},
+    ]
+    result = client.chat(
+        messages,
+        response_format=explanation_schema(ACTIONS),
+        temperature=session.TEMPERATURE,
+        seed=session.SEED,
+    )
+    return _parse_answer(result.content)
+
+
+def _allowed_outputs(analysis) -> list[object]:
+    return [c.output for c in analysis.tool_calls if c.allowed]
+
+
+def _new(question: str, client, today: str):
+    analysis = session.new_analysis(question, model=getattr(client, "model", "unknown"))
+    analysis.today = today
+    return analysis
+
+
+def _unavailable(analysis, exc: BaseException, language: str):
+    analysis.trail.append(session.StateRecord("START", "FAILED", machine._failure(exc)))
+    analysis.outcome = machine.MODEL_UNAVAILABLE
+    analysis.answer = machine.MODEL_UNAVAILABLE_ANSWERS[language]
+    return analysis
+
+
+# --- A: raw model, data as text --------------------------------------------------------------
+def run_raw(question: str, client, *, call_tool: ToolCaller, today: str):
+    analysis = _new(question, client, today)
+    language = _guess_language(question)
+    try:
+        intent = parse_intent(question, client, today=today, guard=False)
+        analysis.intent = dataclasses.asdict(intent)
+        language = intent.language
+        for state in ROUTES.get(intent.scenario, ())[1:-1]:
+            for name, arguments in machine.canonical_calls(state, intent):
+                _execute(analysis, call_tool, DATA_STATE, name, arguments, "harness")
+        answer = _free_answer(client, question, _allowed_outputs(analysis), language)
+    except machine.MODEL_ERRORS as exc:
+        return _unavailable(analysis, exc, language)
+    analysis.outcome = answer.action or machine.COMPLETED
+    analysis.answer = answer.text
+    return analysis
+
+
+# --- B: model + tools ------------------------------------------------------------------------
+def run_tools(question: str, client, *, call_tool: ToolCaller, today: str):
+    analysis = _new(question, client, today)
+    language = _guess_language(question)
+    tools = to_ollama_tools()
+    prompt = _LOOP_PROMPT.format(today=today, analysis_id=analysis.analysis_id)
+    messages: list[dict] = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": question},
+    ]
+    options = {"temperature": session.TEMPERATURE, "seed": session.SEED}
+    try:
+        for _ in range(MAX_TOOL_ROUNDS):
+            result = client.chat(messages, tools=tools, **options)
+            if result.malformed_tool_call:
+                message = "The tool call could not be parsed."
+                session.record_call(
+                    analysis,
+                    state=LOOP_STATE,
+                    tool=machine.MALFORMED_TOOL,
+                    arguments={},
+                    output={"error": {"code": "MALFORMED_CALL", "message": message}},
+                    allowed=False,
+                    source="model",
+                )
+                if not result.tool_calls:
+                    messages += [
+                        {"role": "assistant", "content": result.content},
+                        {"role": "user", "content": message},
+                    ]
+                    continue
+            if not result.tool_calls:
+                break
+            calls = [
+                {"function": {"name": c.name, "arguments": c.arguments}} for c in result.tool_calls
+            ]
+            messages.append({"role": "assistant", "content": result.content, "tool_calls": calls})
+            for proposal in result.tool_calls:
+                arguments = dict(proposal.arguments)
+                problem = validate_tool_call(proposal.name, arguments)
+                if problem is not None:
+                    output = {"error": {"code": "INVALID_CALL", "message": problem}}
+                    session.record_call(
+                        analysis,
+                        state=LOOP_STATE,
+                        tool=proposal.name,
+                        arguments=arguments,
+                        output=output,
+                        allowed=False,
+                        source="model",
+                    )
+                else:
+                    record = _execute(
+                        analysis, call_tool, LOOP_STATE, proposal.name, arguments, "model"
+                    )
+                    output = record.output
+                messages.append({"role": "tool", "content": _as_text(output)})
+        request = _FINAL_REQUEST.format(
+            language=LANGUAGE_NAMES[language], actions=", ".join(ACTIONS)
+        )
+        result = client.chat(
+            [*messages, {"role": "user", "content": request}],
+            response_format=explanation_schema(ACTIONS),
+            **options,
+        )
+    except machine.MODEL_ERRORS as exc:
+        return _unavailable(analysis, exc, language)
+    answer = _parse_answer(result.content)
+    analysis.outcome = answer.action or machine.COMPLETED
+    analysis.answer = answer.text
+    return analysis
+
+
+# --- C: the state machine without evidence, gate or validation ------------------------------
+def _no_evidence(analysis, *, language: str) -> list:
+    return []
+
+
+def _no_gate(analysis, evidence) -> GateResult:
+    return GateResult(PASS)
+
+
+def _free_explanation(analysis, client, evidence, gate) -> FreeAnswer:
+    language = (analysis.intent or {}).get("language") or _guess_language(analysis.question)
+    return _free_answer(client, analysis.question, _allowed_outputs(analysis), language)
+
+
+def run_stateful(question: str, client, *, call_tool: ToolCaller, today: str, max_attempts=2):
+    return machine.run_analysis(
+        question,
+        client,
+        call_tool=call_tool,
+        today=today,
+        max_attempts=max_attempts,
+        evidence_fn=_no_evidence,
+        gate_fn=_no_gate,
+        explain_fn=_free_explanation,
+    )
+
+
+# --- the record ----------------------------------------------------------------------------
+def _answer_by(experiment: str, analysis) -> str | None:
+    if analysis.answer is None:
+        return None
+    if analysis.outcome == machine.MODEL_UNAVAILABLE:
+        return "harness"
+    if experiment in ("A", "B"):
+        return "model"
+    if analysis.outcome in metrics.CONCLUSIONS or analysis.outcome == machine.COMPLETED:
+        explained = [r for r in analysis.trail if r.state == "GENERATE_EXPLANATION"]
+        fallback = any(r.detail.get("fallback") is True for r in explained)
+        return "harness" if fallback else "model"
+    return "harness"  # a fixed refusal, out-of-scope or unsafe answer
+
+
+def make_record(
+    experiment: str,
+    question: dict,
+    repeat: int,
+    analysis,
+    *,
+    latency_s: float,
+    replay_status: str | None = None,
+) -> dict:
+    """The JSON record of one run (fields in ``eval.metrics``)."""
+    intent = analysis.intent
+    scenario = (intent or {}).get("scenario") or question["expected"]["scenarios"][0]
+    language = (intent or {}).get("language") or _guess_language(analysis.question)
+    scored = dataclasses.replace(analysis, intent={**(intent or {}), "scenario": scenario})
+    evidence = build_evidence(scored, language=language)
+    answer_by = _answer_by(experiment, analysis)
+    validation: list[str] = []
+    if answer_by == "model":
+        eligible = eligible_actions(scored, evidence, quality_gate(scored, evidence))
+        validation = validate_explanation(
+            analysis.answer,
+            action=str(analysis.outcome),
+            eligible=eligible,
+            evidence=evidence,
+            question=analysis.question,
+            language=language,
+            defaulted_period=bool((intent or {}).get("defaulted_period")),
+        )
+    return {
+        "experiment": experiment,
+        "question_id": question["id"],
+        "repeat": repeat,
+        "question": analysis.question,
+        "language": language,
+        "expected": question["expected"],
+        "intent": intent,
+        "outcome": analysis.outcome,
+        "answer": analysis.answer,
+        "answer_by": answer_by,
+        "tool_calls": [
+            {
+                "seq": c.seq,
+                "state": c.state,
+                "tool": c.tool,
+                "arguments": c.arguments,
+                "output": c.output,
+                "allowed": c.allowed,
+                "source": c.source,
+            }
+            for c in analysis.tool_calls
+        ],
+        "trail": [
+            {"state": r.state, "status": r.status, "detail": r.detail} for r in analysis.trail
+        ],
+        "evidence": [dataclasses.asdict(e) for e in evidence],
+        "validation": validation,
+        "latency_s": latency_s,
+        "replay": replay_status,
+        "error": None,
+    }
+
+
+def _error_record(experiment: str, question: dict, repeat: int, exc: BaseException) -> dict:
+    failure = machine._failure(exc)  # the message without any server address
+    return {
+        "experiment": experiment,
+        "question_id": question["id"],
+        "repeat": repeat,
+        "question": question["question"],
+        "language": question["lang"],
+        "expected": question["expected"],
+        "intent": None,
+        "outcome": None,
+        "answer": None,
+        "answer_by": None,
+        "tool_calls": [],
+        "trail": [],
+        "evidence": [],
+        "validation": [],
+        "latency_s": None,
+        "replay": None,
+        "error": f"{failure['error']}: {failure['message']}",
+    }
+
+
+# --- the run -------------------------------------------------------------------------------
+def run_one(
+    experiment: str,
+    question: dict,
+    repeat: int,
+    client,
+    *,
+    call_tool: ToolCaller,
+    today: str,
+    memory=None,
+    max_attempts: int = 2,
+    replay_options: dict | None = None,
+) -> dict:
+    """Run one question once under one experiment and return its record."""
+    text = question["question"]
+    started = time.perf_counter()
+    if experiment == "A":
+        analysis = run_raw(text, client, call_tool=call_tool, today=today)
+    elif experiment == "B":
+        analysis = run_tools(text, client, call_tool=call_tool, today=today)
+    elif experiment == "C":
+        analysis = run_stateful(
+            text, client, call_tool=call_tool, today=today, max_attempts=max_attempts
+        )
+    elif experiment in ("D", "E"):
+        analysis = machine.run_analysis(
+            text,
+            client,
+            call_tool=call_tool,
+            today=today,
+            max_attempts=max_attempts,
+            conn=memory if experiment == "E" else None,
+        )
+    else:
+        raise ValueError(f"unknown experiment: {experiment}")
+    latency = time.perf_counter() - started
+    status = None
+    if experiment == "E":
+        stored = session.load(analysis.analysis_id, memory)  # read back from the memory
+        status = replay(stored, call_tool=call_tool, **(replay_options or {})).status
+    return make_record(
+        experiment, question, repeat, analysis, latency_s=latency, replay_status=status
+    )
+
+
+def run_eval(
+    questions: Sequence[dict],
+    client,
+    *,
+    experiments: Sequence[str] = EXPERIMENTS,
+    call_tool: ToolCaller,
+    today: str,
+    repeats: int = 2,
+    out_dir: Path,
+    max_attempts: int = 2,
+    replay_options: dict | None = None,
+    endpoint: str = "not recorded",
+    progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Run every experiment on every question ``repeats`` times; write ``records.jsonl``
+    and ``summary.json`` under ``out_dir`` and return the summary."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    started = datetime.now(UTC).isoformat(timespec="seconds")
+    memory = db.connect(out_dir / "memory.sqlite") if "E" in experiments else None
+    records: list[dict] = []
+    try:
+        with (out_dir / "records.jsonl").open("w", encoding="utf-8", newline="\n") as sink:
+            for experiment in experiments:
+                for question in questions:
+                    for repeat in range(repeats):
+                        try:
+                            record = run_one(
+                                experiment,
+                                question,
+                                repeat,
+                                client,
+                                call_tool=call_tool,
+                                today=today,
+                                memory=memory,
+                                max_attempts=max_attempts,
+                                replay_options=replay_options,
+                            )
+                        except Exception as exc:  # one broken run must not stop the grading
+                            record = _error_record(experiment, question, repeat, exc)
+                        records.append(record)
+                        sink.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                        sink.flush()
+                        if progress is not None:
+                            progress(record)
+    finally:
+        if memory is not None:
+            memory.close()
+    summary = {
+        "config": {
+            "model": getattr(client, "model", "unknown"),
+            "endpoint": endpoint,
+            "experiments": list(experiments),
+            "repeats": repeats,
+            "today": today,
+            "max_attempts": max_attempts,
+            "question_set_sha256": question_set.recorded_sha256(),
+            "questions": [q["id"] for q in questions],
+            "started_at": started,
+            "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        },
+        "metrics": metrics.summarize(records),
+    }
+    with (out_dir / "summary.json").open("w", encoding="utf-8", newline="\n") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
+        f.write("\n")
+    return summary
+
+
+# --- command line --------------------------------------------------------------------------
+def _server_call_tool(name: str, arguments: dict) -> dict:
+    from bist_harness.mcp_server import server
+
+    return getattr(server, name)(**arguments)
+
+
+def _print_record(record: dict) -> None:
+    latency = record["latency_s"]
+    shown = "-" if latency is None else f"{latency:.1f}s"
+    outcome = record["outcome"] or record["error"]
+    print(
+        f"[eval] {record['experiment']} {record['question_id']} r{record['repeat']} "
+        f"{outcome} {shown}",
+        flush=True,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[2])
+    parser.add_argument("--experiments", default=",".join(EXPERIMENTS))
+    parser.add_argument("--repeats", type=int, default=2)
+    parser.add_argument("--ids", help="comma-separated question ids (default: all)")
+    parser.add_argument("--limit", type=int, help="only the first N questions")
+    parser.add_argument("--model", help="model tag (default: BIST_LLM_MODEL)")
+    parser.add_argument("--today", default=date.today().isoformat())
+    parser.add_argument("--max-attempts", type=int, default=2)
+    parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--out", type=Path, default=REPO_ROOT / "runs")
+    args = parser.parse_args(argv)
+
+    try:
+        question_set.verify_frozen(question_set.QUESTIONS_PATH)
+    except ValueError as exc:
+        print(f"[eval] {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    experiments = [e.strip().upper() for e in args.experiments.split(",") if e.strip()]
+    unknown = [e for e in experiments if e not in EXPERIMENTS]
+    if unknown:
+        raise SystemExit(f"[eval] unknown experiment(s): {', '.join(unknown)}")
+    chosen = question_set.load_questions(question_set.QUESTIONS_PATH)
+    if args.ids:
+        wanted = {i.strip() for i in args.ids.split(",")}
+        chosen = [q for q in chosen if q["id"] in wanted]
+    if args.limit:
+        chosen = chosen[: args.limit]
+
+    from bist_harness.bakeoff.run import endpoint_label
+    from bist_harness.llm.client import OllamaClient
+
+    settings = Settings.from_env()
+    client = OllamaClient(
+        settings.llm_base_url, args.model or settings.llm_model, timeout_s=args.timeout
+    )
+    endpoint = endpoint_label(settings.llm_base_url)
+    out_dir = args.out / f"eval-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    print(
+        f"[eval] {len(chosen)} questions, experiments {','.join(experiments)}, "
+        f"{args.repeats} repeat(s), model {client.model} on the {endpoint}",
+        flush=True,
+    )
+    summary = run_eval(
+        chosen,
+        client,
+        experiments=experiments,
+        call_tool=_server_call_tool,
+        today=args.today,
+        repeats=args.repeats,
+        out_dir=out_dir,
+        max_attempts=args.max_attempts,
+        endpoint=endpoint,
+        progress=_print_record,
+    )
+    for name, values in summary["metrics"].items():
+        print(f"[eval] {name}: {json.dumps(values, default=str)}", flush=True)
+    print(f"[eval] written to {out_dir}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

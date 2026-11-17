@@ -59,8 +59,10 @@ __all__ = [
     "FALLBACK_ACTION",
     "PERIOD_NOTE",
     "Explanation",
+    "advice_language",
     "explanation_schema",
     "generate_explanation",
+    "unsupported_values",
     "validate_explanation",
 ]
 
@@ -355,15 +357,15 @@ def _unsupported(
     return numbers, find_unsupported_dates(text, source, question)
 
 
-def _number_problems(text: str, committed: Sequence[Evidence], question: str) -> list[str]:
+def _number_findings(
+    text: str, committed: Sequence[Evidence], question: str
+) -> tuple[list[float], list[str], list[tuple[int, str, str, float | str]]]:
     """First against the whole committed set; then each number or date the set does support
     against the items its own sentence cites (spec section 13: the number and the field it
-    comes from belong to the same sentence)."""
+    comes from belong to the same sentence). Returns the set-level numbers and dates and
+    the per-sentence findings ``(sentence number, cited labels, "number"|"date", value)``."""
     numbers, dates = _unsupported(text, committed, question)
-    problems = [
-        f"number {_fmt(n)} is not in the committed evidence or the question" for n in numbers
-    ]
-    problems += [f"date {d} is not in the committed evidence or the question" for d in dates]
+    per_sentence: list[tuple[int, str, str, float | str]] = []
     by_label = {e.label: e for e in committed}
     for i, sentence in enumerate(_sentences(text), 1):
         cited = list(dict.fromkeys(m[0] for m in _LABEL.finditer(sentence)))
@@ -372,20 +374,47 @@ def _number_problems(text: str, committed: Sequence[Evidence], question: str) ->
         items = [by_label[label] for label in cited if label in by_label]
         own_numbers, own_dates = _unsupported(sentence, items, question)
         names = ", ".join(cited)
-        problems += [
-            f"sentence {i}: number {_fmt(n)} is not in the items it cites ({names}) or the question"
+        per_sentence += [
+            (i, names, "number", n)
             for n in own_numbers
             if not any(numbers_match(n, m) for m in numbers)
         ]
-        problems += [
-            f"sentence {i}: date {d} is not in the items it cites ({names}) or the question"
-            for d in own_dates
-            if d not in dates
-        ]
+        per_sentence += [(i, names, "date", d) for d in own_dates if d not in dates]
+    return numbers, dates, per_sentence
+
+
+def _number_problems(text: str, committed: Sequence[Evidence], question: str) -> list[str]:
+    numbers, dates, per_sentence = _number_findings(text, committed, question)
+    problems = [
+        f"number {_fmt(n)} is not in the committed evidence or the question" for n in numbers
+    ]
+    problems += [f"date {d} is not in the committed evidence or the question" for d in dates]
+    for i, names, kind, value in per_sentence:
+        shown = _fmt(value) if kind == "number" else value
+        problems.append(
+            f"sentence {i}: {kind} {shown} is not in the items it cites ({names}) or the question"
+        )
     return problems
 
 
-def _advice_problems(text: str) -> list[str]:
+def unsupported_values(
+    text: str, committed: Sequence[Evidence], question: str
+) -> tuple[list[float], list[str]]:
+    """The distinct numbers and dates of ``text`` that rule 5 rejects: not in the committed
+    set or the question, or (in a sentence that cites labels) not in the cited items or
+    the question. The evaluation counts these as numeric hallucinations (Task 9)."""
+    numbers, dates, per_sentence = _number_findings(text, committed, question)
+    numbers, dates = list(numbers), list(dates)
+    for _, _, kind, value in per_sentence:
+        if kind == "number" and not any(numbers_match(value, n) for n in numbers):
+            numbers.append(value)
+        elif kind == "date" and value not in dates:
+            dates.append(value)
+    return numbers, dates
+
+
+def advice_language(text: str) -> list[str]:
+    """The advice or prediction phrases of ``text`` (rule 6), folded, each once."""
     found: list[str] = []
     for match in _ADVICE.finditer(fold_text(text)):
         if match[0] not in found:
@@ -396,7 +425,11 @@ def _advice_problems(text: str) -> list[str]:
         match = _IMPERATIVE.search(fold_text(_LABEL.sub(" ", sentence)))
         if match and match[0].strip() not in found:
             found.append(match[0].strip())
-    return [f"advice or prediction language: {phrase!r}" for phrase in found]
+    return found
+
+
+def _advice_problems(text: str) -> list[str]:
+    return [f"advice or prediction language: {phrase!r}" for phrase in advice_language(text)]
 
 
 def _known_tickers() -> set[str]:

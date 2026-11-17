@@ -113,10 +113,21 @@ def wrong_tool_calls(analysis: session.Analysis) -> int:
 
 
 def harness_interventions(analysis: session.Analysis) -> int:
-    """Calls the harness made in a model state because the model gave no valid call."""
-    return sum(
-        1 for c in analysis.tool_calls if c.source == "harness" and c.state not in HARNESS_STATES
+    """Calls the harness made in a model state because the model gave no valid call, plus
+    one for each such fallback that had no canonical call to make (a sector question in a
+    state that needs a stock): the model still failed there and the harness stepped in."""
+    calls = [
+        c for c in analysis.tool_calls if c.source == "harness" and c.state not in HARNESS_STATES
+    ]
+    with_calls = {c.state for c in calls}
+    empty = sum(
+        1
+        for r in analysis.trail
+        if r.detail.get("fallback") is True
+        and r.state not in (*HARNESS_STATES, "GENERATE_EXPLANATION")
+        and r.state not in with_calls
     )
+    return len(calls) + empty
 
 
 # --- the run ---------------------------------------------------------------------------

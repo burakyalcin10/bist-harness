@@ -322,13 +322,14 @@ def _guess_language(question: str) -> str:
     return "tr" if re.search(r"[ıİşŞğĞüÜöÖçÇ]", question) or " mi " in fold_text(question) else "en"
 
 
-def parse_intent(question: str, client: ChatClient, *, today: str) -> Intent:
+def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool = True) -> Intent:
     """Ask the model for a JSON intent, then apply the code-side guard and defaults.
 
     A malformed answer is re-requested once; a second failure yields ``OUT_OF_SCOPE``.
-    The keyword guard runs regardless of the model's label.
+    The keyword guard runs regardless of the model's label. ``guard=False`` leaves it out:
+    the raw model intent of evaluation experiment A, which has no harness at all.
     """
-    guard = keyword_guard(question)
+    found = keyword_guard(question) if guard else None
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": question},
@@ -350,7 +351,7 @@ def parse_intent(question: str, client: ChatClient, *, today: str) -> Intent:
             ]
     if intent is None:
         intent = Intent(
-            scenario=guard or "OUT_OF_SCOPE",
+            scenario=found or "OUT_OF_SCOPE",
             ticker=None,
             sector=None,
             start=None,
@@ -358,9 +359,9 @@ def parse_intent(question: str, client: ChatClient, *, today: str) -> Intent:
             as_of=None,
             language=_guess_language(question),
         )
-    if guard is not None and intent.scenario not in ("ADVICE_REQUEST", "PREDICTION_REQUEST"):
+    if found is not None and intent.scenario not in ("ADVICE_REQUEST", "PREDICTION_REQUEST"):
         intent = Intent(
-            scenario=guard,
+            scenario=found,
             ticker=intent.ticker,
             sector=None,
             start=None,
