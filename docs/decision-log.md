@@ -63,3 +63,55 @@ kısımları backlog'a at."
 3. `numbers_match` kuralı (K-008) ve katı sayı denetimi (K-015): senin katkı noktandı; kuralı sen sahiplenmelisin.
 4. Peer grubu listesi ve olay tanımları (Sprint 2 planı Task 2 ve Task 6).
 5. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.
+
+## 18 Kasım 2026 — Sprint 2 gece vardiyası (Claude tek başına çalıştı)
+
+Burak'ın talimatı: "Sprint 2'ye geçelim, aynı işlemi Sprint 3 için de yapalım, ben yokum,
+sabaha kadar aralıksız çalış." Yürütme yöntemi Sprint 1 ile aynı: tek oturum, sonunda
+bağımsız inceleme (K-001).
+
+| No | Karar | Gerekçe | Geri alma maliyeti | Durum |
+| --- | --- | --- | --- | --- |
+| K-019 | Çalışma `main` dalında sürdü; sprint sınırlarını `sprint-1`, `sprint-2` etiketleri gösteriyor. | Uzak deposu olmayan tek kişilik repo; inceleme aralığı etiketten alınıyor. | Etiketten dal açılabilir. | Bekliyor |
+| K-020 | Construction grubuna ORGE ve ANELE referans hisse olarak eklendi. | ENKAI ve TKFEN ile grup 2 üyeydi; medyan için en az 3 üye gerekiyor. İkisinin de 2020'den beri verisi var. | CSV'de iki satır. | Bekliyor |
+| K-021 | CCOLA'nın 11'e 1 bölünmesi `data/reference/price_adjustments.csv` ile okuma sırasında düzeltiliyor; ham anlık görüntü değişmiyor. Dosyanın özeti (`adjustments_id`) her araç çıktısında ve `result_id` içinde. | Yahoo bölünmeyi 13 Ağustos 2024'e kaydetmiş ama fiyatlara uygulamamış: 31 Temmuz kapanışı 846,00, 1 Ağustos 78,27 (sahte %−90,7). | CSV'de bir satır; CCOLA'nın Ağustos 2024 öncesi bütün sonuçları etkilenir. | Bekliyor |
+| K-022 | Beş referans hissedeki fiyat sıçraması (AYGAZ, TATGD, HEKTS, INFO, OSMEN) düzeltilmedi; getiri penceresinde %40'tan büyük günlük hareket olan üye sektör medyanından çıkarılıyor ve uyarıda adı geçiyor. | Faktörleri tahmin etmek yerine veriyi kullanmamak daha güvenli; bu hisseler yalnız medyan için. | Düzeltme satırı eklenirse üye geri gelir. | Bekliyor |
+| K-023 | Supertrend, ATR'nin ilk hesaplandığı günden başlatılıyor. | **Hocanın betiğindeki `add_supertrend` hiçbir gün değer üretmiyor** (ATR'nin ilk 9 günlük boşluğu bant özyinelemesinde sonsuza kadar taşınıyor; yön hep 1, dönüş olayı 0). Bir test bu davranışı sabitliyor, bir başka test bizim özyinelememizin betiğinkiyle aynı olduğunu gösteriyor. | Sonuçlarımız betiğin çıktısından farklı olur (betik 0 Supertrend olayı raporlar). Raporda açıklanmalı. | Bekliyor |
+| K-024 | Gösterge listesine `VOLUME` eklendi; `detect_reversal_events` aracına isteğe bağlı `direction` (BULLISH/BEARISH) eklendi. | Hacim rejimi §8 piyasa durumunun parçası; dokuz olay ailesinin altısı iki yönlü. | Şema değişirse ince ayar verisi yeniden üretilir; henüz üretilmedi. | Bekliyor |
+| K-025 | Destek/direnç gücünde "dönüş gücü" terimi: seviyeden ortalama uzaklaşmanın her %5'i için 1 puan, en çok 3 puan. "En yakın destek/direnç" bütün seviyelerden seçiliyor; listede en güçlü 6 seviye var. | Slayt formülü terimin birimini vermiyor. İlk hâlinde (yüzde olarak) tek dokunuşlu bir seviye dört dokunuşlu seviyeyi geçiyordu ve en yakın seviye 30 hissenin 27'sinde yanlış çıkıyordu (inceleme bulgusu). | Tek fonksiyon; seviye sıralaması değişir. | Bekliyor |
+| K-026 | Olay tanımları: betikte olan dört yükseliş olayı birebir; düşüş karşılıkları ayna; `BOLLINGER_MIDDLE_TEST` ve `SUPPORT_RESISTANCE_TOUCH` bizim tanımımız (metinleri her araç çıktısında). Destek dokunuşu, son 250 günün bilinen pivotlarına %1,5 yaklaşmanın **ilk** günü. | İstem bu iki aileyi adlandırıyor ama tanımlamıyor. | Tanım değişirse o ailenin sayıları değişir; ön kayıt protokolünde sapma olarak yazılır. | Bekliyor |
+| K-027 | Olay çıktısına `pending_events` (ileri penceresi dolmamış olaylar) ve `last_event_date` eklendi. | "Şu an sinyal var mı" sorusu ikinci bir araç gerektirmeden cevaplanabilsin; istatistiğe girmeyen olaylar gizlenmesin. | İki alan. | Bekliyor |
+| K-028 | `THREE_DOWN_TWO_UP` haftaya bağlı tanımlandı: Pzt, Sal, Çar negatif → aynı haftanın Per–Cum bileşik getirisi. Betiğin tam örüntü sayısı ayrıca raporlanıyor. | Hocanın örüntüsünün, sonucu koşula katmayan hâli; betikle birebir karşılaştırılabiliyor. | Tek dal. | Bekliyor |
+| K-029 | Takvim örüntülerinde anlamlılık: 2.000 karıştırmalı permütasyon testi (tohum 42), iki yönlü ve karıştırmaların kendi ortalamasına göre; koşullu örüntülerde Welch t istatistiği; beş örüntü için Bonferroni. | İlk hâli, koşulun oynak günleri seçtiği durumda (büyük düşüş sonrası) fazla sık "anlamlı" diyordu: etkisiz GARCH serilerinde %5 yerine %15–27 (inceleme bulgusu, yeniden üretildi). | İstatistik değişirse p değerleri değişir. | Bekliyor |
+| K-030 | Göstergeler ısınma süresi dolmadan değer döndürmüyor: RSI 15, EMA 20, MACD 35, Ichimoku bulutu 78 bar. Bu barlardan önceki RSI ve Ichimoku olayları sayılmıyor. | Üstel ortalamalar ikinci bardan itibaren anlamsız bir sayı üretiyor (2 barda RSI 0,0). | Sabitler. | Bekliyor |
+| K-031 | Sektör aracı: verisi olan üye 3'ten azsa lag skoru, lider ve geride kalan verilmez (Telecom böyle: TCELL ve TTKOM dışında üye yok); verisi eski üye çıkarılır; veri `as_of` tarihinden önce bitiyorsa uyarı. | İki üyeli grupta biri tanım gereği "lider", diğeri "geride kalan" olur. | Eşik sabiti. | Bekliyor |
+| K-032 | SQLite şemasında `analyses` tablosuna plandakinden on sütun fazla kondu. | §28'deki her karar günlüğü alanının bir sütunu olsun; eşleme testle doğrulanıyor. | Şema sürümü artar. | Bekliyor |
+| K-033 | Sprint 2 kodu bağımsız bir inceleyiciye incelettirildi: geleceğe bakma bulunmadı; 2 kritik, 9 önemli bulgu tek geçişte, her biri önce kalan bir testle düzeltildi. | Tek oturumda yürütmenin tek ikinci gözü. | Yok. | Bekliyor |
+| K-034 | Anlık görüntü özet (hash) yöntemi değişti ve `20261117-0722` manifesti saklanan dosyalardan yeniden hesaplandı. | İlk yöntem Parquet'e yazıp okuyunca aynı sonucu vermiyordu; doğrulama bütün serileri "değişmiş" gösteriyordu. Dosyalara dokunulmadı. | Yok; `snapshot verify` komutu eşleşme bildiriyor. | Bekliyor |
+| K-035 | Sprint 3 veri kaynakları: çeyreklik tablolar İş Yatırım'ın herkese açık mali tablo servisinden, açıklama zamanları KAP bildirim sorgusundan; TÜFE ve politika faizi TCMB sayfalarından; kur Yahoo'dan; Fed hedefi Federal Reserve sayfasından. | Fintables erişimi yok (K-003); EVDS anahtar istiyor. Hepsi 18 Kasım'da denendi ve cevap verdi. Duyuru 1 madde 2 başka güvenilir kaynağa izin veriyor. | Kaynak değişirse yalnız indirme katmanı değişir. | Bekliyor |
+| K-036 | Ön kayıt protokolü (`docs/preregistration.md`) yazıldı: keşif 2020–2024, test 2025 – 13 Kasım 2026; strateji parametreleri (t+1 açılışında giriş, 10 gün tutma, tek yön %0,15 maliyet) hiçbir backtest çalıştırılmadan sabitlendi. | İstem §34 madde 5. THYAO'nun takvim sonuçları test dönemini de içerecek biçimde önceden görüldüğü için protokolde "ön kayıtlı değil" olarak işaretlendi. | Parametre değişirse protokolde sapma olarak yazılır. | Bekliyor |
+
+### Sprint 2'de ortaya çıkan bulgular (raporda kullanılabilir)
+
+- **Hocanın betiklerinde iki kusur doğrulandı.** Senaryo 2'de "örüntü sonrası getiri" tanım gereği pozitif (K-014); Senaryo 3'te Supertrend hiç değer üretmiyor (K-023).
+- **Veri kusurları.** CCOLA'da uygulanmamış bölünme (düzeltildi); SASA'da 155 gün hacim yok (128'i 2026'da, fiyat hareket ediyor): SASA için hacme dayalı özellikler güvenilmez ve Sprint 4 kalite kapısı bunu uyarmalı.
+- **Yanlış pozitif örneği.** THYAO'da "büyük düşüşten sonra toparlanma" ilk hesapta anlamlı görünüyordu (Bonferroni p 0,0075); düzeltilmiş testte keşif döneminde p 0,22. Sistem artık bunu "anlamlı değil" diye raporluyor.
+- **Küçük model (qwen3.5:2b, ince ayarsız) yeni araçlarla.** Araç ve argümanlar doğru; ama başarı oranına "başarısız oranı" dedi, "26 başarılı olay" yazdı (doğrusu 26 olay, 16 başarılı), tavsiye sorusunu reddetmedi ve ASELS için uydurma bir şirket adı yazdı. Sayı denetimi bunların hiçbirini yakalayamaz; Sprint 4'te kanıt cümleleri şablondan üretilmeli, Sprint 5 verisi alan adlarını öğretmeli.
+
+### Ertelenen küçük bulgular (Sprint 2 incelemesinden)
+
+- Arka arkaya eşit yüksek/alçak günler ayrı pivot sayılıyor (gerçek veride yalnız tek tük hacimsiz barlarda görülüyor).
+- `event_records` ileri penceresi dolmamış getirilerde NaN veriyor; veritabanına yazılmadan önce `None` yapılmalı (Sprint 4).
+- MCP katmanı `forward_days="5"` gibi yanlış tipleri kendiliğinden çeviriyor; katı denetim `validate_tool_call` içinde ve harness onu çağırıyor (Sprint 4'te bütün çağrılar oradan geçecek).
+- Sektör getirisinde pencere takvim gününe göre değil bar sayısına göre; barı eksik üyede pencere birkaç gün erken başlıyor.
+- Anlık görüntü seans sırasında kurulursa bitmemiş bar günlük kapanış gibi saklanır; kurulum seans dışında yapılmalı.
+- ECILC'de 12 Mart 2020'de hacimsiz bir barın ardından %+31,9: %40 sınırının altında kaldığı için işaretlenmiyor.
+
+### Senin vermen gereken kararlar (güncel)
+
+1. Temel model seçimi ve QLoRA deneme eğitimi: RTX 5070 gerekiyor (Sprint 2 planı Task 11, EC-005 ve EC-006 açık).
+2. Tasarım belgesinin onayı ve K-005, K-006, K-007.
+3. Sayı eşleştirme kuralı (K-008) ve katı sayı denetimi (K-015).
+4. Peer grubu listesi (K-020, K-031) ve olay tanımları (K-026, K-028).
+5. İstatistik seçimleri (K-029) ve ön kayıt protokolü (K-036): rapora girecekleri için okuyup sahiplenmen gerekiyor.
+6. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.
