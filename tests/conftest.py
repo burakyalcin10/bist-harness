@@ -20,6 +20,9 @@ IMPLEMENTED_TOOLS = {
     "calculate_fundamental_change",
     "get_news_events",
     "detect_reversal_events",
+    "check_data_quality",
+    "build_evidence_bundle",
+    "get_speech_features",
 }
 
 

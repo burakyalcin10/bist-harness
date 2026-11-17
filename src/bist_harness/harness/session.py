@@ -1,0 +1,204 @@
+"""CSE-481 Engineering Economics — Educational use only. Not investment advice.
+
+The analysis session: one question, its data versions and every tool call made for it.
+
+Two places hold an analysis:
+
+* an in-process registry of live analyses, so a tool such as ``check_data_quality`` can
+  resolve an ``analysis_id`` in the middle of a run, before anything is saved;
+* SQLite (``analyses`` and ``tool_calls``), written by ``save`` and read by ``load``.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+
+@dataclass
+class ToolCallRecord:
+    seq: int
+    state: str
+    tool: str
+    arguments: dict
+    output: dict
+    result_id: str | None
+    allowed: bool = True
+    source: str = "model"  # "model" or "harness"
+
+
+@dataclass
+class Analysis:
+    analysis_id: str
+    question: str
+    created_at: str
+    model: str
+    snapshot_id: str
+    adjustments_id: str
+    intent: dict | None = None
+    state: str = "START"
+    tool_calls: list[ToolCallRecord] = field(default_factory=list)
+
+
+_LIVE: dict[str, Analysis] = {}
+
+
+def _versions() -> tuple[str, str]:
+    # Imported here: the MCP server module imports this one.
+    from bist_harness.mcp_server import server
+
+    return server.current_snapshot_id(), server.current_adjustments_id()
+
+
+def new_analysis(question: str, *, model: str) -> Analysis:
+    """Start an analysis on the active data versions and register it as live."""
+    snapshot_id, adjustments_id = _versions()
+    analysis = Analysis(
+        analysis_id=f"AN-{uuid.uuid4().hex[:12]}",
+        question=question,
+        created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        model=model,
+        snapshot_id=snapshot_id,
+        adjustments_id=adjustments_id,
+    )
+    _LIVE[analysis.analysis_id] = analysis
+    return analysis
+
+
+def get(analysis_id: str) -> Analysis | None:
+    """A live (or loaded) analysis by id, or ``None``."""
+    return _LIVE.get(analysis_id)
+
+
+def record_call(
+    analysis: Analysis,
+    *,
+    state: str,
+    tool: str,
+    arguments: dict,
+    output: dict,
+    allowed: bool = True,
+    source: str = "model",
+) -> ToolCallRecord:
+    """Append one tool call; the call number is the position in the analysis."""
+    result_id = output.get("result_id") if isinstance(output, dict) else None
+    record = ToolCallRecord(
+        seq=len(analysis.tool_calls) + 1,
+        state=state,
+        tool=tool,
+        arguments=arguments,
+        output=output,
+        result_id=result_id,
+        allowed=allowed,
+        source=source,
+    )
+    analysis.tool_calls.append(record)
+    return record
+
+
+def _dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
+    """Write the analysis and its tool calls; saving again replaces what was stored."""
+    intent = analysis.intent or {}
+    versions = {"adjustments_id": analysis.adjustments_id}
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO analyses (analysis_id, created_at, question, intent_json, ticker,
+                                  sector, as_of, period_start, period_end, snapshot_id,
+                                  data_versions_json, model, state)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(analysis_id) DO UPDATE SET
+                question = excluded.question, intent_json = excluded.intent_json,
+                ticker = excluded.ticker, sector = excluded.sector, as_of = excluded.as_of,
+                period_start = excluded.period_start, period_end = excluded.period_end,
+                snapshot_id = excluded.snapshot_id,
+                data_versions_json = excluded.data_versions_json,
+                model = excluded.model, state = excluded.state
+            """,
+            (
+                analysis.analysis_id,
+                analysis.created_at,
+                analysis.question,
+                None if analysis.intent is None else _dump(analysis.intent),
+                intent.get("ticker"),
+                intent.get("sector"),
+                intent.get("as_of"),
+                intent.get("start"),
+                intent.get("end"),
+                analysis.snapshot_id,
+                _dump(versions),
+                analysis.model,
+                analysis.state,
+            ),
+        )
+        conn.execute("DELETE FROM tool_calls WHERE analysis_id = ?", (analysis.analysis_id,))
+        conn.executemany(
+            """
+            INSERT INTO tool_calls (analysis_id, seq, state, tool, arguments_json, output_json,
+                                    result_id, allowed, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    analysis.analysis_id,
+                    call.seq,
+                    call.state,
+                    call.tool,
+                    _dump(call.arguments),
+                    _dump(call.output),
+                    call.result_id,
+                    int(call.allowed),
+                    call.source,
+                )
+                for call in analysis.tool_calls
+            ],
+        )
+
+
+def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
+    """Read an analysis back (and register it as live); ``KeyError`` if it is not stored."""
+    row = conn.execute(
+        "SELECT analysis_id, question, created_at, model, snapshot_id, data_versions_json, "
+        "intent_json, state FROM analyses WHERE analysis_id = ?",
+        (analysis_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown analysis: {analysis_id}")
+    calls = conn.execute(
+        "SELECT seq, state, tool, arguments_json, output_json, result_id, allowed, source "
+        "FROM tool_calls WHERE analysis_id = ? ORDER BY seq",
+        (analysis_id,),
+    ).fetchall()
+    analysis = Analysis(
+        analysis_id=row[0],
+        question=row[1],
+        created_at=row[2],
+        model=row[3],
+        snapshot_id=row[4],
+        adjustments_id=json.loads(row[5])["adjustments_id"],
+        intent=None if row[6] is None else json.loads(row[6]),
+        state=row[7],
+        tool_calls=[
+            ToolCallRecord(
+                seq=c[0],
+                state=c[1],
+                tool=c[2],
+                arguments=json.loads(c[3]),
+                output=json.loads(c[4]),
+                result_id=c[5],
+                allowed=bool(c[6]),
+                source=c[7],
+            )
+            for c in calls
+        ],
+    )
+    _LIVE[analysis.analysis_id] = analysis
+    return analysis

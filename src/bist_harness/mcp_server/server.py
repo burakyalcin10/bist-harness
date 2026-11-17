@@ -14,10 +14,13 @@ Run over stdio:  uv run python -m bist_harness.mcp_server.server
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import inspect
 import json
 import re
 from datetime import date, timedelta
+from typing import Any
 
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
@@ -31,8 +34,11 @@ from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.data.raw_prices import load_raw
+from bist_harness.data.snapshot import REPO_ROOT
 from bist_harness.errors import DataUnavailableError
 from bist_harness.features.table import build_feature_table
+from bist_harness.harness import session
+from bist_harness.quality.checks import check_price_series
 from bist_harness.tools import calendar_patterns, events, support_resistance
 from bist_harness.tools.disclosure import quarter_reactions, summarize_reactions
 from bist_harness.tools.fundamentals import fundamental_change, fundamental_metrics
@@ -46,6 +52,7 @@ from bist_harness.tools.schemas import (
     STRATEGY_VARIANTS,
     TOOL_SCHEMAS,
     WEEKDAY_PATTERNS,
+    validate_tool_call,
 )
 from bist_harness.tools.sector import rank_sector_relative_strength as rank_sector
 from bist_harness.universe import is_in_universe, load_universe, normalize_ticker
@@ -112,6 +119,54 @@ def _with_result_id(tool: str, args: dict, output: dict) -> dict:
         {"tool": tool, "args": args, "output": output}, sort_keys=True, default=str
     )
     return {**output, "result_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]}
+
+
+def _tool(fn):
+    """Register ``fn`` as an MCP tool behind the strict argument check.
+
+    Every call, from MCP or from Python, first goes through ``validate_tool_call``; a
+    problem comes back as an ``INVALID_ARGUMENT`` error object. The MCP layer would
+    otherwise convert arguments to the annotated types (``"5"`` becomes ``5``), so the
+    registered entry takes the raw arguments and the published input schema is the one
+    of ``TOOL_SCHEMAS``.
+    """
+    name = fn.__name__
+    signature = inspect.signature(fn)
+
+    required = TOOL_SCHEMAS[name]["parameters"]["required"]
+
+    def refusal(given: dict) -> dict | None:
+        # An optional argument sent as null is an argument left out.
+        given = {k: v for k, v in given.items() if v is not None or k in required}
+        problem = validate_tool_call(name, given)
+        return _error("INVALID_ARGUMENT", problem) if problem else None
+
+    @functools.wraps(fn)
+    def checked(*args, **kwargs):
+        # A direct Python call may rely on the function's defaults; those count as given.
+        try:
+            bound = signature.bind(*args, **kwargs)
+        except TypeError as exc:
+            return _error("INVALID_ARGUMENT", str(exc))
+        bound.apply_defaults()
+        return refusal(dict(bound.arguments)) or fn(*args, **kwargs)
+
+    def entry(**arguments):
+        # Over MCP the arguments are exactly what the model sent: the schema decides.
+        return refusal(arguments) or fn(**arguments)
+
+    entry.__name__ = name
+    entry.__doc__ = fn.__doc__
+    entry.__signature__ = signature.replace(  # type: ignore[attr-defined]
+        parameters=[p.replace(annotation=Any) for p in signature.parameters.values()],
+        return_annotation=dict,
+    )
+    server.tool(description=TOOL_SCHEMAS[name]["description"])(entry)
+    registered = server._tool_manager.get_tool(name)
+    registered.parameters = TOOL_SCHEMAS[name]["parameters"]
+    # Keep the arguments as the model sent them: no JSON pre-parsing of strings.
+    object.__setattr__(registered.fn_metadata, "pre_parse_json", lambda data: data)
+    return checked
 
 
 def _coverage(history: pd.DataFrame, start: str, end: str) -> dict:
@@ -189,17 +244,17 @@ def _history_summary(tool: str, key: str, symbol: str, start: str, end: str) -> 
     return _with_result_id(tool, args, output)
 
 
-@server.tool(description=TOOL_SCHEMAS["get_stock_history"]["description"])
+@_tool
 def get_stock_history(ticker: str, start: str, end: str) -> dict:
     return _history_summary("get_stock_history", "ticker", ticker, start, end)
 
 
-@server.tool(description=TOOL_SCHEMAS["get_index_history"]["description"])
+@_tool
 def get_index_history(index: str, start: str, end: str) -> dict:
     return _history_summary("get_index_history", "index", index, start, end)
 
 
-@server.tool(description=TOOL_SCHEMAS["calculate_indicators"]["description"])
+@_tool
 def calculate_indicators(ticker: str, start: str, end: str, indicators: list[str]) -> dict:
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
@@ -225,7 +280,7 @@ MAX_TOLERANCE = 0.10
 MAX_LEVELS = 6
 
 
-@server.tool(description=TOOL_SCHEMAS["find_support_resistance"]["description"])
+@_tool
 def find_support_resistance(ticker: str, start: str, end: str, tolerance: float = 0.015) -> dict:
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
@@ -258,7 +313,7 @@ def find_support_resistance(ticker: str, start: str, end: str, tolerance: float 
     return _with_result_id("find_support_resistance", args, output)
 
 
-@server.tool(description=TOOL_SCHEMAS["detect_reversal_events"]["description"])
+@_tool
 def detect_reversal_events(
     ticker: str,
     start: str,
@@ -292,7 +347,7 @@ def detect_reversal_events(
     return _with_result_id("detect_reversal_events", args, {**args, **result, **meta})
 
 
-@server.tool(description=TOOL_SCHEMAS["test_weekday_pattern"]["description"])
+@_tool
 def test_weekday_pattern(ticker: str, pattern: str, start: str, end: str) -> dict:
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
@@ -314,7 +369,7 @@ def _check_as_of(as_of: str) -> dict | None:
     return None
 
 
-@server.tool(description=TOOL_SCHEMAS["rank_sector_relative_strength"]["description"])
+@_tool
 def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) -> dict:
     problem = _check_as_of(as_of)
     if problem:
@@ -431,7 +486,7 @@ def _add_reactions(result: dict, name: str, calendar, close, as_of: str) -> None
     result["reaction_summary"] = summarize_reactions(table)
 
 
-@server.tool(description=TOOL_SCHEMAS["get_fundamental_metrics"]["description"])
+@_tool
 def get_fundamental_metrics(ticker: str, as_of: str) -> dict:
     loaded = _fundamental_inputs(ticker, as_of)
     if isinstance(loaded, dict):
@@ -452,7 +507,7 @@ def get_fundamental_metrics(ticker: str, as_of: str) -> dict:
     return _with_result_id("get_fundamental_metrics", args, {**result, **versions})
 
 
-@server.tool(description=TOOL_SCHEMAS["calculate_fundamental_change"]["description"])
+@_tool
 def calculate_fundamental_change(ticker: str, as_of: str, periods: int = 4) -> dict:
     loaded = _fundamental_inputs(ticker, as_of)
     if isinstance(loaded, dict):
@@ -487,7 +542,7 @@ NEWS_SOURCE = (
 )
 
 
-@server.tool(description=TOOL_SCHEMAS["get_news_events"]["description"])
+@_tool
 def get_news_events(
     start: str, end: str, ticker: str | None = None, topic: str | None = None
 ) -> dict:
@@ -540,7 +595,7 @@ MACRO_SOURCES = (
 )
 
 
-@server.tool(description=TOOL_SCHEMAS["get_macro_context"]["description"])
+@_tool
 def get_macro_context(start: str, end: str) -> dict:
     problem = _period_problem(start, end)
     if problem:
@@ -591,7 +646,7 @@ def _feature_layers(strategy: str) -> dict:
     return layers
 
 
-@server.tool(description=TOOL_SCHEMAS["run_backtest"]["description"])
+@_tool
 def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> dict:
     problem = _period_problem(start, end)
     if problem:
@@ -680,6 +735,111 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
     args = {"strategy": strategy, "universe": tickers, "start": start, "end": end}
     output = {**args, **result, "benchmark": BENCHMARK, "warnings": warnings, **versions}
     return _with_result_id("run_backtest", args, output)
+
+
+APPROVED_VIDEOS = REPO_ROOT / "data" / "reference" / "approved_videos.csv"
+
+
+def _approved_sources() -> set[str]:
+    if not APPROVED_VIDEOS.is_file():
+        return set()
+    table = pd.read_csv(APPROVED_VIDEOS, dtype=str)
+    return set(table["source_id"].dropna()) if "source_id" in table else set()
+
+
+@_tool
+def get_speech_features(source_id: str) -> dict:
+    approved = _approved_sources()
+    if not approved:
+        return _error(
+            "DATA_UNAVAILABLE", "No approved video has been added yet (approved_videos.csv)."
+        )
+    if source_id not in approved:
+        return _error("UNKNOWN_SOURCE", f"{source_id!r} is not an approved video source.")
+    return _error("NOT_IMPLEMENTED", "Speech feature extraction is not available yet.")
+
+
+@_tool
+def build_evidence_bundle(analysis_id: str) -> dict:
+    if session.get(analysis_id) is None:
+        return _error("UNKNOWN_ANALYSIS", f"{analysis_id!r} is not a known analysis.")
+    # The evidence builder arrives with the harness (Sprint 4, Task 5).
+    return _error("NOT_IMPLEMENTED", "The evidence bundle is not available yet.")
+
+
+def _tool_tickers(arguments: dict) -> list[str]:
+    tickers = []
+    if isinstance(arguments.get("ticker"), str):
+        tickers.append(arguments["ticker"])
+    if isinstance(arguments.get("universe"), list):
+        tickers.extend(t for t in arguments["universe"] if isinstance(t, str))
+    return tickers
+
+
+def _finding(code: str, severity: str, message: str, count: int, source: str) -> dict:
+    return {
+        "code": code,
+        "severity": severity,
+        "message": message,
+        "count": count,
+        "source": source,
+    }
+
+
+def _quality_findings(analysis: session.Analysis) -> tuple[list[dict], list[dict]]:
+    """Series checks for every stock and period of the analysis, plus tool warnings."""
+    findings: list[dict] = []
+    periods: dict[tuple[str, str], None] = {}
+    for call in analysis.tool_calls:
+        end = call.arguments.get("end") or call.arguments.get("as_of")
+        if isinstance(end, str):
+            for ticker in _tool_tickers(call.arguments):
+                if is_in_universe(ticker):
+                    periods[(normalize_ticker(ticker), end)] = None
+        output = call.output if isinstance(call.output, dict) else {}
+        texts = [output.get("coverage_warning"), output.get("sample_warning")]
+        texts += output.get("warnings") or []
+        for text in texts:
+            if isinstance(text, str) and text:
+                findings.append(
+                    _finding("TOOL_WARNING", "soft", text, 1, f"{call.tool} #{call.seq}")
+                )
+    try:
+        calendar = load_history(BENCHMARK).index
+    except (DataUnavailableError, ValueError):
+        calendar = None
+    checked: list[dict] = []
+    for ticker, end in periods:
+        subject = f"{ticker} to {end}"
+        try:
+            history = load_history(ticker).loc[: pd.Timestamp(end)]
+            series = check_price_series(history, as_of=end, expected_days=calendar)
+        except (DataUnavailableError, ValueError) as exc:
+            checked.append({"ticker": ticker, "as_of": end, "rows": 0})
+            findings.append(_finding("DATA_UNAVAILABLE", "hard", str(exc), 1, subject))
+            continue
+        checked.append({"ticker": ticker, "as_of": end, "rows": int(len(history))})
+        findings += [_finding(f.code, f.severity, f.message, f.count, subject) for f in series]
+    return findings, checked
+
+
+@_tool
+def check_data_quality(analysis_id: str) -> dict:
+    analysis = session.get(analysis_id)
+    if analysis is None:
+        return _error("UNKNOWN_ANALYSIS", f"{analysis_id!r} is not a known analysis.")
+    try:
+        versions = _versions()
+    except DataUnavailableError as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    findings, checked = _quality_findings(analysis)
+    if any(f["severity"] == "hard" for f in findings):
+        status = "HARD_BLOCK"
+    else:
+        status = "PASS_WITH_WARNINGS" if findings else "PASS"
+    args = {"analysis_id": analysis_id}
+    output = {**args, "status": status, "findings": findings, "checked": checked, **versions}
+    return _with_result_id("check_data_quality", args, output)
 
 
 def unwrap_tool_result(result) -> dict:

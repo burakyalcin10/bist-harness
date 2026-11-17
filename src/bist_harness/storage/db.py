@@ -18,7 +18,7 @@ from pathlib import Path
 
 from bist_harness.config import Settings
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: tool_calls.source
 DEFAULT_FILE = "harness.sqlite"
 
 _SCHEMA = """
@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     output_json    TEXT,
     result_id      TEXT,
     allowed        INTEGER NOT NULL DEFAULT 1,
+    source         TEXT NOT NULL DEFAULT 'model',
     UNIQUE (analysis_id, seq)
 );
 
@@ -138,6 +139,9 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
         )
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_SCHEMA)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tool_calls)")}
+    if "source" not in columns:  # a version-1 file: who made the call was not recorded
+        conn.execute("ALTER TABLE tool_calls ADD COLUMN source TEXT NOT NULL DEFAULT 'model'")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
     return conn

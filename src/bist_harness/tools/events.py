@@ -321,7 +321,8 @@ def event_records(
 ) -> pd.DataFrame:
     """One row per event (section 8): market state and forward returns.
 
-    Every event is listed; a forward return that is not available yet is NaN.
+    Every event is listed; a forward return that is not available yet is ``None``, so the
+    records can be written as strict JSON.
     """
     keep = mask.copy()
     if since is not None:
@@ -337,7 +338,7 @@ def event_records(
         records[f"forward_{horizon}d_return_pct"] = values.to_numpy()
     strength = _reversal_strength(df, strength_days, direction == "BULLISH")[keep] * 100
     records["reversal_strength_pct"] = strength.round(2).to_numpy()
-    return records
+    return records.astype(object).where(records.notna(), None)
 
 
 def _cloud_rejections(df: pd.DataFrame, keep: pd.Series, days: int, bullish: bool) -> int:

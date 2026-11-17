@@ -111,7 +111,7 @@ def test_numbers_repeated_from_the_question_are_allowed():
 
 def test_call_to_a_tool_outside_the_slice_is_refused_and_logged():
     client = ScriptedClient(
-        _result(calls=[ToolCall("get_speech_features", {"source_id": "v1"})]),
+        _result(calls=[ToolCall("place_order", {"ticker": "ASELS"})]),
         _result("Bu araç şu an kullanılamıyor."),
     )
     out = run_slice(QUESTION, client, server=srv.server)

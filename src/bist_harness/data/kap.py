@@ -211,13 +211,21 @@ def build_kap(
             missing.append(name)
             continue
         table = None
+        unknown = False
         for attempt in range(retries):
             try:
                 oid = fetch_member_oid(name, get_json=get_json)
+                if not oid:
+                    unknown = True
+                    break
                 table = fetch_disclosures(name, oid, start, end, post_json=post_json)
                 break
             except Exception:  # noqa: BLE001 - retried below
                 sleep(pause * (attempt + 2))
+        if unknown:
+            # A silent gap would drop the stock from every study that uses the layer.
+            save()
+            raise DataUnavailableError(f"KAP has no member id for {name}.")
         if table is None:
             missing.append(name)
             continue

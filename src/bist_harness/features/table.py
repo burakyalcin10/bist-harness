@@ -15,6 +15,9 @@ The table is the input of strategy variants C to E and of the fine-tuning exampl
 
 from __future__ import annotations
 
+import hashlib
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -164,7 +167,7 @@ def _news(table: pd.DataFrame, ticker: str, disclosures) -> None:
     table["kap_regulation_legal_5d"] = legal.rolling(window).sum() > 0
 
 
-def build_feature_table(
+def _build_feature_table(
     ticker: str,
     history: pd.DataFrame,
     *,
@@ -188,3 +191,60 @@ def build_feature_table(
     _news(table, ticker, disclosures)
     table["info_date"] = table.index
     return table
+
+
+_CACHE: dict[str, pd.DataFrame] = {}
+
+
+def _cache_identity() -> dict[str, str]:
+    """The data versions a feature table depends on."""
+    from bist_harness.data import snapshot
+
+    return {
+        "snapshot": snapshot.active_snapshot_id(),
+        "adjustments": snapshot.adjustments_id(),
+        "layers": snapshot.layers_id(),
+    }
+
+
+def _fingerprint(value: Any) -> Any:
+    """A stable, hashable description of an argument for the cache key."""
+    if isinstance(value, pd.DataFrame):
+        return ("frame", value.shape, hashlib.sha256(_hash_frame(value)).hexdigest())
+    if isinstance(value, pd.Series):
+        return ("series", value.name, hashlib.sha256(_hash_frame(value.to_frame())).hexdigest())
+    if isinstance(value, dict):
+        return tuple((str(k), _fingerprint(v)) for k, v in sorted(value.items(), key=str))
+    return repr(value)
+
+
+def _hash_frame(frame: pd.DataFrame) -> bytes:
+    return (
+        pd.util.hash_pandas_object(frame, index=True).to_numpy().tobytes()
+        + "|".join(map(str, frame.columns)).encode()
+    )
+
+
+def clear_feature_cache() -> None:
+    _CACHE.clear()
+
+
+def build_feature_table(ticker: str, history: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+    """Features of one stock for every trading day of ``history`` (cached in memory).
+
+    The cache key holds the snapshot id, the corrections id, the layers id, the ticker and
+    a fingerprint of every argument, so a rebuilt layer or other inputs never return
+    stale features. See ``_build_feature_table`` for the arguments.
+    """
+    key = repr(
+        (
+            sorted(_cache_identity().items()),
+            ticker,
+            _fingerprint(history),
+            [(name, _fingerprint(value)) for name, value in sorted(kwargs.items())],
+        )
+    )
+    cached = _CACHE.get(key)
+    if cached is None:
+        cached = _CACHE[key] = _build_feature_table(ticker, history, **kwargs)
+    return cached.copy()
