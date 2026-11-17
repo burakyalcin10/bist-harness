@@ -9,7 +9,7 @@ import pytest
 from mcp import Client, StdioServerParameters
 
 from bist_harness.mcp_server import server as srv
-from bist_harness.tools.schemas import TOOL_SCHEMAS
+from bist_harness.tools.schemas import REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
 
 from .conftest import IMPLEMENTED_TOOLS as IMPLEMENTED
 
@@ -104,9 +104,26 @@ def test_bad_input_returns_an_error_object_instead_of_raising(kwargs, code):
         assert out["error"]["message"]
 
 
-def test_event_family_not_built_yet_is_reported_as_not_implemented():
-    out = srv.detect_reversal_events("ASELS", "2021-01-01", "2021-12-31", "SUPERTREND_FLIP")
-    assert out["error"]["code"] == "NOT_IMPLEMENTED"
+@pytest.mark.parametrize("event_type", REVERSAL_EVENT_TYPES)
+@pytest.mark.parametrize("direction", ["BULLISH", "BEARISH"])
+def test_every_event_family_runs_in_both_directions(event_type, direction, offline_history):
+    from bist_harness.tools.events import detect_events
+
+    out = srv.detect_reversal_events("ASELS", "2021-01-01", "2023-12-31", event_type, 5, direction)
+    expected = detect_events(
+        offline_history.loc[:"2023-12-31"], event_type, direction, since="2021-01-01"
+    )
+    for key, value in expected.items():
+        assert out[key] == value
+    assert out["event_type"] == event_type and out["direction"] == expected["direction"]
+    assert out["definition"] and len(out["result_id"]) == 12
+
+
+def test_invalid_direction_is_rejected():
+    out = srv.detect_reversal_events(
+        "ASELS", "2021-01-01", "2021-12-31", "SUPERTREND_FLIP", 5, "SIDEWAYS"
+    )
+    assert out["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_unknown_event_type_is_rejected():

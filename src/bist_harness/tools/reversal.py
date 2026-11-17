@@ -1,25 +1,28 @@
-"""Technical reversal events (project brief, sections 8 and 13).
+"""Lower-Bollinger reversal summary (the Sprint 1 thin-slice function).
 
-Definitions follow the instructor's Scenario 3 script so that results are directly
-comparable with the course material. Only the lower-Bollinger reversal is implemented
-in Sprint 1; the other event families are added in Sprint 2.
+Kept for its parameters (``window``, ``num_std``, ``success_threshold``); the event
+families and the shared statistics live in ``bist_harness.tools.events``.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-VERY_SMALL_SAMPLE = "Very small sample size"
-LIMITED_SAMPLE = "Limited sample size"
+from bist_harness.tools.events import (  # noqa: F401 - re-exported
+    LIMITED_SAMPLE,
+    VERY_SMALL_SAMPLE,
+    sample_warning,
+    summarize_events,
+)
 
-
-def sample_warning(event_count: int) -> str | None:
-    """Sample-size warning used across event tools (instructor thresholds: 5 and 20)."""
-    if event_count < 5:
-        return VERY_SMALL_SAMPLE
-    if event_count < 20:
-        return LIMITED_SAMPLE
-    return None
+_KEYS = (
+    "event_count",
+    "successful_events",
+    "success_rate_pct",
+    "average_forward_return_pct",
+    "median_forward_return_pct",
+    "sample_warning",
+)
 
 
 def bollinger_lower_touch_summary(
@@ -35,40 +38,26 @@ def bollinger_lower_touch_summary(
     """Summarise lower-Bollinger reversal events and what followed them.
 
     Event on day t: the previous close was at or below the previous lower band and
-    today's close is back above today's lower band. The event is known at the close of
-    day t and uses data up to t only. The forward return runs from the close of day t
-    to the close ``forward_days`` trading days later; events without that much future
-    data are left out, as in the instructor's script.
-
-    ``since`` keeps only events on or after that date while still letting earlier rows
-    warm up the bands.
+    today's close is back above today's lower band. ``since`` keeps only events on or
+    after that date while still letting earlier rows warm up the bands.
     """
     close = df["Close"]
-    middle = close.rolling(window).mean()
-    lower = middle - num_std * close.rolling(window).std()
+    lower = close.rolling(window).mean() - num_std * close.rolling(window).std()
     is_event = (close.shift(1) <= lower.shift(1)) & (close > lower)
-    forward_return = close.shift(-forward_days) / close - 1
-    returns = forward_return[is_event].dropna()
-    if since is not None:
-        returns = returns[returns.index >= pd.Timestamp(since)]
-
-    count = int(len(returns))
-    summary: dict = {
-        "event_count": count,
-        "successful_events": 0,
-        "success_rate_pct": None,
-        "average_forward_return_pct": None,
-        "median_forward_return_pct": None,
-        "sample_warning": sample_warning(count),
-    }
-    if count:
-        successful = int((returns > success_threshold).sum())
-        summary.update(
-            successful_events=successful,
-            success_rate_pct=round(float(successful / count * 100), 2),
-            average_forward_return_pct=round(float(returns.mean() * 100), 2),
-            median_forward_return_pct=round(float(returns.median() * 100), 2),
-        )
+    # Only closes are needed here; the shared summary also reads highs and lows.
+    frame = df.assign(High=df.get("High", close), Low=df.get("Low", close))
+    full = summarize_events(
+        frame,
+        is_event,
+        direction="BULLISH",
+        forward_days=forward_days,
+        since=since,
+        success_threshold=success_threshold,
+    )
+    summary = {key: full[key] for key in _KEYS}
     if return_event_dates:
-        summary["event_dates"] = list(returns.index)
+        evaluated = is_event & (close.shift(-forward_days) / close - 1).notna()
+        if since is not None:
+            evaluated &= df.index >= pd.Timestamp(since)
+        summary["event_dates"] = list(df.index[evaluated])
     return summary

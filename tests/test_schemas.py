@@ -78,3 +78,17 @@ def test_reversal_event_types_cover_the_mandatory_families():
         "ICHIMOKU_BREAKOUT",
         "SUPPORT_RESISTANCE_TOUCH",
     } == set(enum)
+
+
+def test_reversal_events_accept_an_optional_direction():
+    from bist_harness.tools.schemas import validate_tool_call
+
+    base = {
+        "ticker": "ASELS",
+        "start": "2021-01-01",
+        "end": "2021-12-31",
+        "event_type": "KAMA_TURN",
+    }
+    assert validate_tool_call("detect_reversal_events", base) is None
+    assert validate_tool_call("detect_reversal_events", {**base, "direction": "BEARISH"}) is None
+    assert "direction" in validate_tool_call("detect_reversal_events", {**base, "direction": "UP"})

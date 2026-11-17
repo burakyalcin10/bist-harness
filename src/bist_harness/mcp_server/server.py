@@ -24,20 +24,13 @@ from mcp.server.mcpserver import MCPServer
 from bist_harness.data import snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
-from bist_harness.tools import support_resistance
+from bist_harness.tools import events, support_resistance
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
-from bist_harness.tools.reversal import bollinger_lower_touch_summary
 from bist_harness.tools.schemas import INDICATORS, REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
 from bist_harness.universe import is_in_universe, normalize_ticker
 
 FORWARD_DAYS = (1, 3, 5, 10)
 COVERAGE_SLACK_DAYS = 7
-IMPLEMENTED_EVENTS = {"BOLLINGER_LOWER_TOUCH"}
-BOLLINGER_LOWER_TOUCH_DEFINITION = (
-    "Previous close at or below the lower Bollinger band (20-day mean minus 2 standard "
-    "deviations) and today's close back above it. The forward return is measured from "
-    "the event day's close."
-)
 
 server = MCPServer(
     "bist-harness",
@@ -214,6 +207,7 @@ def detect_reversal_events(
     end: str,
     event_type: str = "BOLLINGER_LOWER_TOUCH",
     forward_days: int = 5,
+    direction: str = "BULLISH",
 ) -> dict:
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
@@ -223,24 +217,21 @@ def detect_reversal_events(
         return _error("INVALID_ARGUMENT", f"event_type must be one of {REVERSAL_EVENT_TYPES}.")
     if forward_days not in FORWARD_DAYS:
         return _error("INVALID_ARGUMENT", f"forward_days must be one of {list(FORWARD_DAYS)}.")
-    if event_type not in IMPLEMENTED_EVENTS:
-        return _error("NOT_IMPLEMENTED", f"{event_type} is not available yet.")
+    if direction not in events.DIRECTIONS:
+        return _error("INVALID_ARGUMENT", f"direction must be one of {list(events.DIRECTIONS)}.")
 
-    summary = bollinger_lower_touch_summary(history, forward_days=forward_days, since=start)
+    result = events.detect_events(
+        history, event_type, direction, forward_days=forward_days, since=start
+    )
     args = {
         "ticker": name,
         "start": start,
         "end": end,
         "event_type": event_type,
         "forward_days": forward_days,
+        "direction": result["direction"],
     }
-    output = {
-        **args,
-        **summary,
-        "definition": BOLLINGER_LOWER_TOUCH_DEFINITION,
-        **meta,
-    }
-    return _with_result_id("detect_reversal_events", args, output)
+    return _with_result_id("detect_reversal_events", args, {**args, **result, **meta})
 
 
 def unwrap_tool_result(result) -> dict:

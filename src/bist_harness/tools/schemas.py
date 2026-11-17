@@ -140,6 +140,14 @@ TOOL_SCHEMAS: dict[str, dict] = {
                     "enum": [1, 3, 5, 10],
                     "description": "Trading days after the event used for the forward return.",
                 },
+                "direction": {
+                    "type": "string",
+                    "enum": ["BULLISH", "BEARISH"],
+                    "description": (
+                        "Side of the event (default BULLISH). Ignored by one-sided "
+                        "families such as BOLLINGER_LOWER_TOUCH."
+                    ),
+                },
             },
             ["ticker", "start", "end", "event_type"],
         ),
