@@ -10,7 +10,10 @@ proposed call is checked in
 order (schema, permission of the state, agreement with the intent); a rejected call is
 recorded with ``allowed=False`` and the model gets a short error. After ``max_attempts``
 without a valid call the harness makes the canonical call derived from the intent itself
-(``source="harness"``), which experiment C counts as a harness intervention.
+(``source="harness"``), which experiment C counts as a harness intervention. After the
+model's valid calls in a state, the harness also tops up the canonical calls of that state
+that the scenario's minimum evidence (``evidence.MINIMUM``) still needs (``top_up_calls``,
+also ``source="harness"`` and counted as interventions); the model's calls are kept.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import httpx
 from bist_harness.data import peers
 from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import session
-from bist_harness.harness.evidence import build_evidence
+from bist_harness.harness.evidence import MINIMUM, build_evidence, missing_requirements
 from bist_harness.harness.gate import quality_gate
 from bist_harness.harness.intent import (
     Intent,
@@ -113,8 +116,9 @@ def wrong_tool_calls(analysis: session.Analysis) -> int:
 
 
 def harness_interventions(analysis: session.Analysis) -> int:
-    """Calls the harness made in a model state because the model gave no valid call, plus
-    one for each such fallback that had no canonical call to make (a sector question in a
+    """Calls the harness made in a model state (the model gave no valid call, or its valid
+    calls left the minimum evidence short and the harness topped it up), plus
+    one for each fallback that had no canonical call to make (a sector question in a
     state that needs a stock): the model still failed there and the harness stepped in."""
     calls = [
         c for c in analysis.tool_calls if c.source == "harness" and c.state not in HARNESS_STATES
@@ -526,9 +530,15 @@ def _model_state(
                 {"role": "user", "content": "Rejected: " + " ".join(errors)},
             ]
     fallback = not executed
+    topped_up: list[str] = []
     if fallback:  # no valid call in max_attempts: the harness calls what the intent implies
         for name, arguments in canonical_calls(state, intent):
             run.execute(call_tool, state, name, arguments, "harness")
+    else:  # the model's valid calls stay; the harness adds what the minimum still needs
+        for name, arguments in top_up_calls(run.analysis, state, intent):
+            run.execute(call_tool, state, name, arguments, "harness")
+            topped_up.append(name)
+    extra = {"topped_up": topped_up} if topped_up else {}
     run.mark(
         state,
         "RAN",
@@ -536,4 +546,41 @@ def _model_state(
         rejected=rejected,
         text_replies=text_replies,
         fallback=fallback,
+        **extra,
     )
+
+
+def _same_call_key(arguments: dict) -> dict:
+    """Arguments as the tool reads them: a ticker in any case is the same stock."""
+    ticker = arguments.get("ticker")
+    return (
+        {**arguments, "ticker": normalize_ticker(ticker)} if isinstance(ticker, str) else arguments
+    )
+
+
+def top_up_calls(analysis: session.Analysis, state: str, intent: Intent) -> list[tuple[str, dict]]:
+    """Canonical calls of the state that the scenario's minimum evidence still needs.
+
+    A call is added when its tool supplies a ``(tool, field)`` kind of a requirement of
+    ``evidence.MINIMUM`` that no executed call has met yet, and the same call (tool and
+    arguments) has not run already. So one partial model call (``calculate_indicators``
+    with only ``BOLLINGER``, ``get_fundamental_metrics`` without
+    ``calculate_fundamental_change``) no longer decides what evidence the analysis has.
+    """
+    missing = set(missing_requirements(build_evidence(analysis, language="en"), intent.scenario))
+    needed = {
+        tool
+        for name, kinds in MINIMUM.get(intent.scenario, ())
+        if name in missing
+        for tool, _ in kinds
+    }
+    ran = [
+        (c.tool, _same_call_key(c.arguments))
+        for c in analysis.tool_calls
+        if c.allowed and isinstance(c.output, dict) and "error" not in c.output
+    ]
+    calls = []
+    for name, arguments in canonical_calls(state, intent):
+        if name in needed and (name, _same_call_key(arguments)) not in ran:
+            calls.append((name, arguments))
+    return calls
