@@ -16,6 +16,7 @@ The table is the input of strategy variants C to E and of the fine-tuning exampl
 from __future__ import annotations
 
 import hashlib
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,7 @@ import pandas as pd
 from bist_harness.backtest.strategies import ENTRY_EVENTS
 from bist_harness.data.fundamentals import known_from
 from bist_harness.data.peers import peer_group_of
+from bist_harness.errors import DataUnavailableError
 from bist_harness.tools.events import (
     EVENT_TYPES,
     counted_mask,
@@ -193,11 +195,13 @@ def _build_feature_table(
     return table
 
 
-_CACHE: dict[str, pd.DataFrame] = {}
+CACHE_LIMIT = 64
+_CACHE: OrderedDict[str, pd.DataFrame] = OrderedDict()
+_FINGERPRINTS: OrderedDict[int, tuple[Any, tuple, str]] = OrderedDict()
+FINGERPRINT_LIMIT = 64
 
 
-def _cache_identity() -> dict[str, str]:
-    """The data versions a feature table depends on."""
+def _identity_parts() -> dict[str, str]:
     from bist_harness.data import snapshot
 
     return {
@@ -207,12 +211,34 @@ def _cache_identity() -> dict[str, str]:
     }
 
 
+def _cache_identity() -> dict[str, str] | None:
+    """The data versions a feature table depends on; ``None`` when they cannot be read
+    (no snapshot built), in which case the cache is bypassed."""
+    try:
+        return _identity_parts()
+    except (DataUnavailableError, ValueError, OSError):
+        return None
+
+
+def _frame_digest(frame: pd.DataFrame) -> str:
+    """Hash of a frame, remembered per object so a frame shared by many calls (the
+    disclosures or macro layer of a backtest) is hashed once."""
+    known = _FINGERPRINTS.get(id(frame))
+    if known is not None and known[0] is frame and known[1] == frame.shape:
+        return known[2]
+    digest = hashlib.sha256(_hash_frame(frame)).hexdigest()
+    _FINGERPRINTS[id(frame)] = (frame, frame.shape, digest)
+    while len(_FINGERPRINTS) > FINGERPRINT_LIMIT:
+        _FINGERPRINTS.popitem(last=False)
+    return digest
+
+
 def _fingerprint(value: Any) -> Any:
     """A stable, hashable description of an argument for the cache key."""
     if isinstance(value, pd.DataFrame):
-        return ("frame", value.shape, hashlib.sha256(_hash_frame(value)).hexdigest())
+        return ("frame", value.shape, _frame_digest(value))
     if isinstance(value, pd.Series):
-        return ("series", value.name, hashlib.sha256(_hash_frame(value.to_frame())).hexdigest())
+        return ("series", value.name, _frame_digest(value.to_frame()))
     if isinstance(value, dict):
         return tuple((str(k), _fingerprint(v)) for k, v in sorted(value.items(), key=str))
     return repr(value)
@@ -227,6 +253,7 @@ def _hash_frame(frame: pd.DataFrame) -> bytes:
 
 def clear_feature_cache() -> None:
     _CACHE.clear()
+    _FINGERPRINTS.clear()
 
 
 def build_feature_table(ticker: str, history: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
@@ -236,9 +263,12 @@ def build_feature_table(ticker: str, history: pd.DataFrame, **kwargs: Any) -> pd
     a fingerprint of every argument, so a rebuilt layer or other inputs never return
     stale features. See ``_build_feature_table`` for the arguments.
     """
+    identity = _cache_identity()
+    if identity is None:
+        return _build_feature_table(ticker, history, **kwargs)
     key = repr(
         (
-            sorted(_cache_identity().items()),
+            sorted(identity.items()),
             ticker,
             _fingerprint(history),
             [(name, _fingerprint(value)) for name, value in sorted(kwargs.items())],
@@ -247,4 +277,8 @@ def build_feature_table(ticker: str, history: pd.DataFrame, **kwargs: Any) -> pd
     cached = _CACHE.get(key)
     if cached is None:
         cached = _CACHE[key] = _build_feature_table(ticker, history, **kwargs)
+        while len(_CACHE) > CACHE_LIMIT:
+            _CACHE.popitem(last=False)
+    else:
+        _CACHE.move_to_end(key)
     return cached.copy()

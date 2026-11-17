@@ -761,7 +761,7 @@ def get_speech_features(source_id: str) -> dict:
 
 @_tool
 def build_evidence_bundle(analysis_id: str) -> dict:
-    if session.get(analysis_id) is None:
+    if session.resolve(analysis_id) is None:
         return _error("UNKNOWN_ANALYSIS", f"{analysis_id!r} is not a known analysis.")
     # The evidence builder arrives with the harness (Sprint 4, Task 5).
     return _error("NOT_IMPLEMENTED", "The evidence bundle is not available yet.")
@@ -825,7 +825,7 @@ def _quality_findings(analysis: session.Analysis) -> tuple[list[dict], list[dict
 
 @_tool
 def check_data_quality(analysis_id: str) -> dict:
-    analysis = session.get(analysis_id)
+    analysis = session.resolve(analysis_id)
     if analysis is None:
         return _error("UNKNOWN_ANALYSIS", f"{analysis_id!r} is not a known analysis.")
     try:

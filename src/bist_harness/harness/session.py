@@ -16,7 +16,11 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+from bist_harness.config import Settings
+from bist_harness.storage import db
 
 
 @dataclass
@@ -72,6 +76,27 @@ def new_analysis(question: str, *, model: str) -> Analysis:
 def get(analysis_id: str) -> Analysis | None:
     """A live (or loaded) analysis by id, or ``None``."""
     return _LIVE.get(analysis_id)
+
+
+def _store_path() -> Path:
+    return Settings.from_env().data_dir / db.DEFAULT_FILE
+
+
+def resolve(analysis_id: str) -> Analysis | None:
+    """A live analysis, else one saved in the default store (never creating the file)."""
+    live = _LIVE.get(analysis_id)
+    if live is not None:
+        return live
+    path = _store_path()
+    if not path.is_file():
+        return None
+    conn = db.connect(path)
+    try:
+        return load(analysis_id, conn)
+    except KeyError:
+        return None
+    finally:
+        conn.close()
 
 
 def record_call(

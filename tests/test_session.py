@@ -229,3 +229,54 @@ def test_feature_table_cache_is_keyed_by_the_layer_identity(monkeypatch):
     assert len(built) == 2
     ft.build_feature_table("ASELS", history.iloc[:-5], **kwargs)  # other arguments
     assert len(built) == 3
+
+
+def test_quality_tool_resolves_an_analysis_saved_by_an_earlier_process(monkeypatch, tmp_path):
+    path = tmp_path / "store.sqlite"
+    monkeypatch.setattr(session, "_store_path", lambda: path)
+    analysis = session.new_analysis("q", model="m")
+    connection = db.connect(path)
+    session.save(analysis, connection)
+    connection.close()
+    session._LIVE.clear()  # a new process knows nothing live
+    assert srv.check_data_quality(analysis.analysis_id)["status"] == "PASS"
+    assert srv.check_data_quality("still-unknown")["error"]["code"] == "UNKNOWN_ANALYSIS"
+
+
+def test_a_missing_store_file_is_not_created_by_the_lookup(monkeypatch, tmp_path):
+    path = tmp_path / "none" / "store.sqlite"
+    monkeypatch.setattr(session, "_store_path", lambda: path)
+    assert srv.check_data_quality("x")["error"]["code"] == "UNKNOWN_ANALYSIS"
+    assert not path.exists()
+
+
+def test_feature_table_without_a_snapshot_bypasses_the_cache(monkeypatch):
+    from bist_harness.features import table as ft
+
+    def no_snapshot():
+        raise DataUnavailableError("no snapshot")
+
+    monkeypatch.setattr(ft, "_identity_parts", no_snapshot)
+    ft.clear_feature_cache()
+    history = ohlcv(300, 3)
+    kwargs = {"peer_closes": {"ASELS": history["Close"]}, "benchmark": history["Close"]}
+    assert len(ft.build_feature_table("ASELS", history, **kwargs)) == 300
+    assert not ft._CACHE
+
+
+def test_feature_table_cache_is_bounded_and_shared_frames_hash_once(monkeypatch):
+    from bist_harness.features import table as ft
+
+    ft.clear_feature_cache()
+    monkeypatch.setattr(ft, "_cache_identity", lambda: {"snapshot": "s"})
+    monkeypatch.setattr(ft, "_build_feature_table", lambda t, h, **k: h.copy())
+    monkeypatch.setattr(ft, "CACHE_LIMIT", 3)
+    history = ohlcv(100, 3)
+    hashed = []
+    real = ft._hash_frame
+    monkeypatch.setattr(ft, "_hash_frame", lambda f: hashed.append(1) or real(f))
+    shared = ohlcv(100, 5)
+    for n in range(6):
+        ft.build_feature_table(f"T{n}", history, disclosures=shared)
+    assert len(ft._CACHE) == 3
+    assert len(hashed) == 2  # history and the shared frame, once each
