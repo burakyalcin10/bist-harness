@@ -132,3 +132,56 @@ def test_columns_follow_the_requested_horizons(horizons):
     )
     for h in horizons:
         assert f"return_{h}d_pct" in table and f"abnormal_vs_peers_{h}d_pct" in table
+
+
+def _known() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ticker": "TUPRS",
+            "year": [2024, 2025],
+            "quarter": [4, 1],
+            "known_from": [EVENT, INDEX[21]],
+        }
+    )
+
+
+def test_quarter_reactions_are_cut_at_the_analysis_date():
+    late = dc.quarter_reactions(
+        _known(), STOCK, benchmark=XU100, peers=PEERS, as_of=str(INDEX[-1].date())
+    )
+    assert late["period"].tolist() == ["2024Q4", "2025Q1"]
+    assert late.iloc[0]["return_20d_pct"] == 21.0 and late.iloc[1]["return_5d_pct"] == 0.0
+    early = dc.quarter_reactions(
+        _known(), STOCK, benchmark=XU100, peers=PEERS, as_of=str(INDEX[16].date())
+    )
+    # on day 16 the five-day reaction of the first period is complete, the twenty-day one is not
+    assert early.iloc[0]["return_5d_pct"] == 10.0 and pd.isna(early.iloc[0]["return_20d_pct"])
+    # the second period only becomes usable on day 21: no reaction yet
+    assert early["period"].tolist() == ["2024Q4"]
+
+
+def test_reaction_study_labels_each_event_with_the_trend_known_that_day():
+    from .test_fundamentals_tools import CPI, _calendar, _statements
+
+    days = pd.date_range("2024-01-01", "2025-12-31", freq="B")
+    rising = pd.Series(np.linspace(100.0, 200.0, len(days)), index=days)
+    flat = pd.Series(100.0, index=days)
+    study = dc.reaction_study(
+        _statements(),
+        _calendar(),
+        closes={"TUPRS": rising},
+        benchmark=flat,
+        peer_closes={"TUPRS": {"P1": flat}},
+        cpi=CPI,
+        start="2025-01-01",
+        end="2025-12-31",
+    )
+    table = study["events"]
+    assert table["period"].tolist() == ["2024Q4", "2025Q2", "2025Q3"]
+    assert table["ticker"].unique().tolist() == ["TUPRS"]
+    assert table.iloc[-1]["fundamental_trend"] == "Improving"
+    assert (table["return_5d_pct"] > 0).all()
+    assert table["abnormal_vs_index_5d_pct"].equals(table["return_5d_pct"])
+    summary = study["summary"]
+    assert summary["events"] == 3 and "Improving" in summary["by_group"]
+    assert summary["horizons"]["5d"]["events"] == 3

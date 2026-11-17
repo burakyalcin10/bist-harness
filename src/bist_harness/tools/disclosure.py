@@ -131,3 +131,105 @@ def summarize_reactions(reactions: pd.DataFrame, groups: pd.Series | None = None
             output["by_group"][str(name)] = entry
     output["sample_warning"] = sample_warning(len(reactions))
     return output
+
+
+def quarter_reactions(
+    known: pd.DataFrame,
+    close: pd.Series,
+    *,
+    benchmark: pd.Series | None,
+    peers: dict[str, pd.Series],
+    as_of: str,
+    horizons: Sequence[int] = HORIZONS,
+) -> pd.DataFrame:
+    """Reaction to each reporting period of ``known`` (rows with year, quarter, known_from).
+
+    Prices are cut at ``as_of`` first, so a horizon that was not complete on that day is
+    missing, and a period that was not usable yet has no row.
+    """
+    day = pd.Timestamp(as_of)
+    usable = known[known["known_from"].notna() & (known["known_from"] <= day)]
+    usable = usable.sort_values(["year", "quarter"])
+    cut_peers = {name: series.loc[:day] for name, series in peers.items()}
+    cut_benchmark = None if benchmark is None else benchmark.loc[:day]
+    rows = []
+    for _, row in usable.iterrows():
+        reaction = post_disclosure_returns(
+            close.loc[:day],
+            [row["known_from"]],
+            benchmark=cut_benchmark,
+            peers=cut_peers,
+            horizons=horizons,
+        )
+        if reaction.empty:
+            continue
+        entry = reaction.iloc[0].to_dict()
+        entry["period"] = f"{int(row['year'])}Q{int(row['quarter'])}"
+        rows.append(entry)
+    table = pd.DataFrame(rows)
+    if table.empty:
+        table = post_disclosure_returns(close, [], benchmark=None, peers={}, horizons=horizons)
+        table["period"] = pd.Series(dtype=object)
+    return table
+
+
+def reaction_study(
+    statements: pd.DataFrame,
+    calendar: pd.DataFrame,
+    *,
+    closes: dict[str, pd.Series],
+    benchmark: pd.Series | None,
+    peer_closes: dict[str, dict[str, pd.Series]],
+    cpi: pd.Series | None,
+    start: str,
+    end: str,
+    horizons: Sequence[int] = HORIZONS,
+) -> dict:
+    """Scenario 4: the reaction to every report that became usable between ``start`` and
+    ``end``, labelled with the fundamental trend that was computable on that day.
+
+    Returns ``{"events": DataFrame, "summary": dict}``; the summary is broken down by
+    trend. Nothing after ``end`` is used.
+    """
+    from bist_harness.tools.fundamentals import fundamental_change
+
+    first, last = pd.Timestamp(start), pd.Timestamp(end)
+    parts = []
+    for ticker, close in closes.items():
+        known = calendar[
+            (calendar["ticker"] == ticker)
+            & calendar["known_from"].notna()
+            & (calendar["known_from"] >= first)
+            & (calendar["known_from"] <= last)
+        ]
+        if known.empty:
+            continue
+        table = quarter_reactions(
+            known,
+            close,
+            benchmark=benchmark,
+            peers=peer_closes.get(ticker, {}),
+            as_of=end,
+            horizons=horizons,
+        )
+        if table.empty:
+            continue
+        trends = []
+        for event_day in table["event_day"]:
+            change = fundamental_change(
+                statements, calendar, ticker=ticker, as_of=event_day, cpi=cpi
+            )
+            trends.append(None if change is None else change["fundamental_trend"])
+        table.insert(0, "ticker", ticker)
+        table["fundamental_trend"] = trends
+        parts.append(table)
+    if not parts:
+        events = quarter_reactions(
+            calendar.iloc[:0], pd.Series(dtype=float), benchmark=None, peers={}, as_of=end
+        )
+        events.insert(0, "ticker", pd.Series(dtype=object))
+        events["fundamental_trend"] = pd.Series(dtype=object)
+    else:
+        events = pd.concat(parts, ignore_index=True)
+    groups = events["fundamental_trend"].fillna("No trend")
+    return {"events": events, "summary": summarize_reactions(events, groups)}

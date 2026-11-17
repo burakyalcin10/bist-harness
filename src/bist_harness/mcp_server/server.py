@@ -30,6 +30,7 @@ from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
 from bist_harness.tools import calendar_patterns, events, support_resistance
+from bist_harness.tools.disclosure import quarter_reactions, summarize_reactions
 from bist_harness.tools.fundamentals import fundamental_change, fundamental_metrics
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.macro import macro_context
@@ -383,6 +384,42 @@ def _no_statement(name: str, as_of: str) -> dict:
     return _error("DATA_UNAVAILABLE", f"No financial statement of {name} was public on {as_of}.")
 
 
+def _add_reactions(result: dict, name: str, calendar, close, as_of: str) -> None:
+    """Attach the post-disclosure price reaction to each quarter and a summary of all."""
+    fields = (
+        ("reaction_1d_pct", "return_1d_pct"),
+        ("reaction_5d_pct", "return_5d_pct"),
+        ("reaction_20d_pct", "return_20d_pct"),
+        ("abnormal_vs_index_5d_pct", "abnormal_vs_index_5d_pct"),
+        ("abnormal_vs_peers_5d_pct", "abnormal_vs_peers_5d_pct"),
+    )
+    if close is None:
+        for quarter in result["quarters"]:
+            quarter.update({key: None for key, _ in fields})
+        result["reaction_summary"] = None
+        return
+    peer_closes: dict[str, pd.Series] = {}
+    for member in peers.peer_group_of(name).members:
+        if member != name:
+            try:
+                peer_closes[member] = load_history(member)["Close"]
+            except (DataUnavailableError, ValueError):
+                continue
+    try:
+        benchmark = load_history(BENCHMARK)["Close"]
+    except (DataUnavailableError, ValueError):
+        benchmark = None
+    known = calendar[calendar["ticker"] == name]
+    table = quarter_reactions(known, close, benchmark=benchmark, peers=peer_closes, as_of=as_of)
+    by_period = {row["period"]: row for row in table.to_dict("records")}
+    for quarter in result["quarters"]:
+        row = by_period.get(quarter["period"], {})
+        for key, column in fields:
+            value = row.get(column)
+            quarter[key] = None if value is None or pd.isna(value) else float(value)
+    result["reaction_summary"] = summarize_reactions(table)
+
+
 @server.tool(description=TOOL_SCHEMAS["get_fundamental_metrics"]["description"])
 def get_fundamental_metrics(ticker: str, as_of: str) -> dict:
     loaded = _fundamental_inputs(ticker, as_of)
@@ -403,7 +440,7 @@ def calculate_fundamental_change(ticker: str, as_of: str, periods: int = 4) -> d
     loaded = _fundamental_inputs(ticker, as_of)
     if isinstance(loaded, dict):
         return loaded
-    name, statements, calendar, cpi, _, versions = loaded
+    name, statements, calendar, cpi, close, versions = loaded
     if (
         isinstance(periods, bool)
         or not isinstance(periods, int)
@@ -417,6 +454,7 @@ def calculate_fundamental_change(ticker: str, as_of: str, periods: int = 4) -> d
     )
     if result is None:
         return _no_statement(name, as_of)
+    _add_reactions(result, name, calendar, close, as_of)
     args = {"ticker": name, "as_of": as_of, "periods": periods}
     return _with_result_id("calculate_fundamental_change", args, {**args, **result, **versions})
 

@@ -293,6 +293,9 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `revenue_q_yoy_pct`, `net_profit_q_yoy_pct` | Quarter's value against the same quarter a year earlier, nominal | % |
 | `ebitda_margin_change_pp`, `net_margin_change_pp`, `roe_change_pp` | Latest period minus a year earlier | % points |
 | `net_debt_to_ebitda_change`, `current_ratio_change` | Latest period minus a year earlier | ratio |
+| `reaction_1d_pct`, `reaction_5d_pct`, `reaction_20d_pct` | Per quarter: stock return from the close before the `known_from` day to the close 1, 5 and 20 trading days after it; null while the horizon is not complete on `as_of` | % |
+| `abnormal_vs_index_5d_pct`, `abnormal_vs_peers_5d_pct` | The 5-day reaction minus the XU100 return and minus the equal-weight return of the sector peers over the same two dates | % points |
+| `reaction_summary` | Over every period of the stock public on `as_of`: `events`, and under `horizons` for `1d`, `5d` and `20d` the number of completed events, `mean_return_pct`, `median_return_pct`, `positive_rate_pct`, `mean_abnormal_vs_index_pct`, `mean_abnormal_vs_peers_pct` | — |
 | `improvement_flags` | Checks that are positive against a year earlier: `REVENUE_UP`, `PROFIT_UP` (real growth when CPI is available), `MARGIN_UP`, `RETURN_ON_EQUITY_UP`, and for industrial companies `LEVERAGE_DOWN`, `CASH_FLOW_UP` | — |
 | `fundamental_trend` | `Improving` when at least two thirds of the applicable checks are positive, `Deteriorating` when at most one third, otherwise `Mixed`; null with fewer than three applicable checks | — |
 

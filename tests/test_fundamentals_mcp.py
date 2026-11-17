@@ -93,3 +93,39 @@ def test_fundamental_data_that_was_never_built_names_the_build_command(monkeypat
     out = srv.get_fundamental_metrics("TUPRS", "2025-11-10")
     assert out["error"]["code"] == "DATA_UNAVAILABLE"
     assert "fundamentals build" in out["error"]["message"]
+
+
+def test_change_tool_adds_the_price_reaction_of_each_quarter(monkeypatch):
+    from bist_harness.tools.disclosure import post_disclosure_returns
+
+    days = pd.date_range("2024-01-01", "2025-12-31", freq="B")
+    frames = {
+        "TUPRS": pd.DataFrame(
+            {"Close": pd.Series(range(100, 100 + len(days)), index=days, dtype=float)}
+        ),
+        "XU100": pd.DataFrame({"Close": pd.Series(500.0, index=days)}),
+    }
+
+    def load(symbol):
+        if symbol not in frames:
+            raise DataUnavailableError(f"no data for {symbol}")
+        return frames[symbol]
+
+    monkeypatch.setattr(srv, "load_history", load)
+    out = srv.calculate_fundamental_change("TUPRS", "2025-11-12")
+    latest, previous = out["quarters"][0], out["quarters"][1]
+    assert latest["period"] == "2025Q3" and previous["period"] == "2025Q2"
+    expected = post_disclosure_returns(
+        frames["TUPRS"]["Close"].loc[:"2025-11-12"],
+        [pd.Timestamp("2025-11-03"), pd.Timestamp("2025-08-01")],
+        benchmark=frames["XU100"]["Close"],
+        peers={},
+    )
+    assert latest["reaction_5d_pct"] == expected.iloc[0]["return_5d_pct"]
+    assert latest["reaction_20d_pct"] is None  # not complete seven trading days later
+    assert previous["reaction_20d_pct"] == expected.iloc[1]["return_20d_pct"]
+    assert previous["abnormal_vs_index_5d_pct"] == expected.iloc[1]["return_5d_pct"]
+    assert previous["abnormal_vs_peers_5d_pct"] is None  # no peer data in this test
+    summary = out["reaction_summary"]
+    assert summary["events"] == 5 and summary["horizons"]["5d"]["events"] == 5
+    assert summary["horizons"]["20d"]["events"] == 4
