@@ -821,7 +821,8 @@ def test_hooks_receive_the_analysis_evidence_and_gate():
         gate_fn=gate_fn,
         explain_fn=explain_fn,
     )
-    assert evidence_fn.calls == [((analysis,), {"language": "en"})]
+    # BUILD_EVIDENCE, then the rebuild at RISK_GATE (Task 6): one call each.
+    assert evidence_fn.calls == [((analysis,), {"language": "en"})] * 2
     assert gate_fn.calls == [((analysis, evidence), {})]
     assert explain_fn.calls == [((analysis, client, evidence, gate_result), {})]
     assert analysis.outcome == "WATCH"
@@ -832,7 +833,7 @@ def test_hooks_run_after_the_call_of_their_state():
     seen = {}
 
     def evidence_fn(analysis, *, language):
-        seen["evidence"] = [c.tool for c in analysis.tool_calls][-1]
+        seen.setdefault("evidence", [c.tool for c in analysis.tool_calls][-1])  # first call
         return ()
 
     def gate_fn(analysis, evidence):
@@ -1029,3 +1030,67 @@ def test_a_programming_error_in_the_client_is_not_swallowed():
     client = FailingClient(2, KeyError("bug"), *price_summary_script())
     with pytest.raises(KeyError):
         machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+
+
+# --- Task 6: the final evidence feeds the gate; the default gate is the quality gate ------
+def test_the_evidence_is_rebuilt_at_the_risk_gate_from_all_calls_so_far():
+    seen = []
+
+    def evidence_fn(analysis, *, language):
+        seen.append([(c.state, c.tool) for c in analysis.tool_calls][-1])
+        return (f"E-{len(seen)}",)
+
+    gate_fn = Spy(SimpleNamespace(status="PASS", hard_blocks=()))
+    explain_fn = Spy(SimpleNamespace(action="WATCH"))
+    machine.run_analysis(
+        "How did THYAO do?",
+        ScriptedClient(*price_summary_script()),
+        call_tool=FakeTools(),
+        today=TODAY,
+        evidence_fn=evidence_fn,
+        gate_fn=gate_fn,
+        explain_fn=explain_fn,
+    )
+    assert seen == [
+        ("BUILD_EVIDENCE", "build_evidence_bundle"),
+        ("RISK_GATE", "check_data_quality"),
+    ]
+    assert gate_fn.calls[0][0][1] == ("E-2",)  # the gate sees the final set
+    assert explain_fn.calls[0][0][2] == ("E-2",)  # and so does the explanation
+
+
+def test_the_default_gate_is_the_quality_gate():
+    class EmptyHistory(FakeTools):
+        def __call__(self, name, arguments):
+            output = super().__call__(name, arguments)
+            if name == "get_stock_history":
+                output["rows"] = 0
+            return output
+
+    explain = Spy()
+    analysis = machine.run_analysis(
+        "How did THYAO do?",
+        ScriptedClient(*price_summary_script()),
+        call_tool=EmptyHistory(),
+        today=TODAY,
+        explain_fn=explain,
+    )
+    assert analysis.gate_status == "HARD_BLOCK" and analysis.outcome == "ANALYSIS_UNSAFE"
+    assert explain.calls == []
+
+
+def test_the_default_gate_warns_without_blocking():
+    class Warned(FakeTools):
+        def __call__(self, name, arguments):
+            output = super().__call__(name, arguments)
+            if name == "calculate_indicators":
+                output["sample_warning"] = "few events"
+            return output
+
+    analysis = machine.run_analysis(
+        "How did THYAO do?",
+        ScriptedClient(*price_summary_script()),
+        call_tool=Warned(),
+        today=TODAY,
+    )
+    assert analysis.gate_status == "PASS_WITH_WARNINGS" and analysis.outcome == "COMPLETED"

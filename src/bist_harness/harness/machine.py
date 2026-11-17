@@ -16,8 +16,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import sqlite3
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -27,6 +26,7 @@ from bist_harness.data import peers
 from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import session
 from bist_harness.harness.evidence import build_evidence
+from bist_harness.harness.gate import quality_gate
 from bist_harness.harness.intent import (
     Intent,
     _guess_language,
@@ -93,33 +93,11 @@ UNSAFE_ANSWERS = {
 }
 
 
-# --- hooks: Tasks 5, 6 and 7 replace the defaults ------------------------------------
-@dataclass(frozen=True)
-class GateDecision:
-    """What the default gate decided; Task 6's ``quality_gate`` returns its own result."""
-
-    status: str
-    reasons: tuple[str, ...] = ()
-
-
+# --- hooks: Task 7 replaces the explanation default ------------------------------------
 default_evidence = build_evidence  # BUILD_EVIDENCE: templated sentences E1..En
 EvidenceFn = Callable[..., Any]  # (analysis, *, language) -> evidence
 GateFn = Callable[[session.Analysis, Any], Any]  # (analysis, evidence) -> result with .status
 ExplainFn = Callable[..., Any]  # (analysis, client, evidence, gate) -> None or result
-
-
-def default_gate(analysis: session.Analysis, evidence: Sequence) -> GateDecision:
-    """Use the status of the RISK_GATE quality check; a check without a status blocks."""
-    checks = [
-        c for c in analysis.tool_calls if c.state == "RISK_GATE" and c.tool == "check_data_quality"
-    ]
-    output = checks[-1].output if checks else {}
-    status = output.get("status") if isinstance(output, dict) else None
-    if isinstance(status, str):
-        return GateDecision(status)
-    error = output.get("error") if isinstance(output, dict) else None
-    reason = error.get("code", "NO_STATUS") if isinstance(error, dict) else "NO_STATUS"
-    return GateDecision("HARD_BLOCK", (f"the quality check gave no status: {reason}",))
 
 
 def placeholder_explanation(analysis: session.Analysis, client, evidence, gate) -> None:
@@ -203,7 +181,7 @@ def run_analysis(
     max_attempts: int = 2,
     conn: sqlite3.Connection | None = None,
     evidence_fn: EvidenceFn = default_evidence,
-    gate_fn: GateFn = default_gate,
+    gate_fn: GateFn = quality_gate,
     explain_fn: ExplainFn = placeholder_explanation,
 ) -> session.Analysis:
     """Run one question through its route and return the recorded analysis.
@@ -258,6 +236,9 @@ def run_analysis(
             run.mark(state, "RAN", variants=list(STRATEGY_VARIANTS))
         elif state == "RISK_GATE":
             run.execute(call_tool, state, "check_data_quality", dict(own_id), "harness")
+            # BUILD_EVIDENCE comes before RUN_BACKTEST, so the backtest items are only
+            # there now: rebuild from every call so far; gate and eligibility use this set.
+            evidence = evidence_fn(analysis, language=language)
             gate = gate_fn(analysis, evidence)
             analysis.gate_status = gate.status
             run.mark(state, "RAN", status=gate.status)
