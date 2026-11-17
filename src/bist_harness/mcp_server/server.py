@@ -703,11 +703,8 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
         )
     features = None
     if needs_features:
-        warnings.append(
-            "FUNDAMENTALS_NOT_POINT_IN_TIME: the statement source restates earlier periods "
-            "at a later price level, so the fundamental trend behind these signals is not "
-            "exactly what was computable on the signal day."
-        )
+        # The Sprint 3 warning about a restating statement source is gone: the layer is
+        # rebuilt from the as-published KAP reports (K-055).
         if start < TEST_PERIOD[0]:
             effective_start = TEST_PERIOD[0]
             warnings.append(

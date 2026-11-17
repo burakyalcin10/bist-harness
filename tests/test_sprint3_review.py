@@ -66,7 +66,9 @@ def test_variants_that_read_fundamentals_say_the_source_is_not_point_in_time(mon
     monkeypatch.setattr(srv, "load_macro", lambda name: macro[name])
     monkeypatch.setattr(srv, "load_disclosures", lambda: _disclosures())
     out = srv.run_backtest("C_TECH_SECTOR_FUND", ["TUPRS"], "2025-01-01", "2026-06-30")
-    assert any(w.startswith("FUNDAMENTALS_NOT_POINT_IN_TIME") for w in out["warnings"])
+    # superseded by K-055: the layer is rebuilt from as-published KAP reports, so the
+    # Sprint 3 warning about a restating source no longer applies
+    assert not any(w.startswith("FUNDAMENTALS_NOT_POINT_IN_TIME") for w in out["warnings"])
     plain = srv.run_backtest("A_TECHNICAL", ["TUPRS"], "2025-01-01", "2026-06-30")
     assert not any(w.startswith("FUNDAMENTALS") for w in plain["warnings"])
 
