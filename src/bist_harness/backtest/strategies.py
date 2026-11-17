@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from bist_harness.data.fundamentals import known_from
 from bist_harness.data.peers import peer_group_of
 from bist_harness.tools.events import counted_mask
 from bist_harness.tools.indicators import add_all_indicators
@@ -52,6 +53,9 @@ class StrategyContext:
     peer_closes: dict[str, pd.Series]  # closes of every peer-group member
     benchmark: pd.Series  # XU100 close
     features: pd.DataFrame | None = None  # point-in-time feature table (variants C to E)
+    # publication time of every reporting period; the engine's look-ahead check
+    # recomputes the usable-from day from it instead of trusting the feature table
+    disclosure_calendar: pd.DataFrame | None = None
 
 
 def technical_signal(df: pd.DataFrame) -> pd.Series:
@@ -132,6 +136,31 @@ def information_dates(variant: str, context: StrategyContext) -> dict[str, pd.Se
         return None
     dates = {}
     for ticker in context.histories:
-        known = _features(context, ticker)["fundamental_known_from"]
-        dates[ticker] = known.where(known.notna(), pd.Series(known.index, index=known.index))
+        features = _features(context, ticker)
+        own_days = pd.Series(features.index, index=features.index)
+        if context.disclosure_calendar is None:
+            known = features["fundamental_known_from"]
+            dates[ticker] = known.where(known.notna(), own_days)
+            continue
+        # Independent of the feature table's alignment: the usable-from day of the
+        # period it names is recomputed from the KAP publication time.
+        calendar = context.disclosure_calendar
+        mine = calendar[calendar["ticker"] == ticker]
+        published = {
+            f"{int(y)}Q{int(q)}": pd.Timestamp(p)
+            for y, q, p in zip(mine["year"], mine["quarter"], mine["published_at"], strict=True)
+        }
+        trading = context.histories[ticker].index
+        recomputed = []
+        for day, period in features["fundamental_period"].items():
+            if period is None or pd.isna(period):
+                recomputed.append(day)
+            elif period not in published:
+                raise ValueError(
+                    f"{ticker}: the feature table uses {period} on {pd.Timestamp(day).date()}, "
+                    "which the disclosure calendar does not hold"
+                )
+            else:
+                recomputed.append(known_from(published[period], trading))
+        dates[ticker] = pd.Series(recomputed, index=features.index)
     return dates

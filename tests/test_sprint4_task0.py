@@ -60,6 +60,46 @@ def test_every_tool_result_names_the_layers_it_was_computed_from(monkeypatch):
     assert server._versions()["layers_id"] == "abcd1234"
 
 
+def test_information_dates_are_recomputed_from_the_publication_time():
+    """The engine's look-ahead check must not read the feature table's own alignment."""
+    from bist_harness.backtest import engine, strategies
+
+    days = pd.bdate_range("2025-11-03", periods=15)
+    history = pd.DataFrame(
+        {"Open": 10.0, "High": 10.0, "Low": 10.0, "Close": 10.0, "Volume": 1.0}, index=days
+    )
+    # a faulty feature table that uses 2025Q3 one day before it became public
+    features = pd.DataFrame(
+        {
+            "fundamental_period": [None] + ["2025Q3"] * 14,
+            "fundamental_known_from": [pd.NaT] + [days[1]] * 14,
+        },
+        index=days,
+    )
+    calendar = pd.DataFrame(
+        {
+            "ticker": ["TUPRS"],
+            "year": [2025],
+            "quarter": [3],
+            "published_at": [pd.Timestamp("2025-11-04 18:30:00")],
+        }
+    )
+    context = strategies.StrategyContext(
+        histories={"TUPRS": history},
+        peer_closes={},
+        benchmark=history["Close"],
+        features={"TUPRS": features},
+        disclosure_calendar=calendar,
+    )
+    dates = strategies.information_dates("C_TECH_SECTOR_FUND", context)["TUPRS"]
+    assert dates[days[1]] == pd.Timestamp("2025-11-05")  # published after the close
+    assert dates[days[0]] == days[0]
+    signal = pd.Series(False, index=days)
+    signal.iloc[1] = True
+    with pytest.raises(ValueError):
+        engine.run_trades(history, signal, ticker="TUPRS", info_dates=dates)
+
+
 HALF_DAY_CALENDAR = pd.DatetimeIndex(["2025-10-27", "2025-10-28", "2025-10-30", "2025-10-31"])
 
 

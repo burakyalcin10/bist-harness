@@ -665,6 +665,7 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
         peer_closes=peer_closes,
         benchmark=benchmark,
         features=features,
+        disclosure_calendar=None if features is None else layers["calendar"],
     )
     result = run_variant(strategy, context, start=effective_start, end=end)
     result["effective_start"] = effective_start
