@@ -1,5 +1,6 @@
 """Evidence-based action eligibility: which of the eight labels the model may choose."""
 
+import dataclasses
 import re
 from types import SimpleNamespace
 
@@ -46,21 +47,36 @@ def analysis_of(scenario, *, backtest=None, calendar=None):
     return analysis
 
 
-def evidence_of(scenario, *, skip=(), committed=True):
-    """One item for every minimum-evidence requirement, except those named in ``skip``."""
-    items = []
+# The item that meets a requirement, with a value in the candidate's direction: the stock
+# lags its sector, the fundamentals improve, most reversal events succeeded.
+RIGHT_DIRECTION = {
+    "lag_score": (("rank_sector_relative_strength", "members.lag_score_pct"), -2.5),
+    "fundamental_change": (("calculate_fundamental_change", "fundamental_trend"), "Improving"),
+    "reversal_stats": (("detect_reversal_events", "success_rate_pct"), 66.67),
+}
+
+
+def evidence_of(scenario, *, skip=(), committed=True, values=None, extra=()):
+    """One item for every minimum-evidence requirement, except those named in ``skip``.
+
+    ``values`` replaces the (kind, value) of a requirement; ``extra`` adds (kind, value)
+    items. A row field names the analysis's stock, THYAO.
+    """
+    chosen = {**RIGHT_DIRECTION, **(values or {})}
+    pairs = []
     for name, kinds in MINIMUM.get(scenario, ()):
-        if name in skip:
-            continue
-        tool, field = kinds[0]
-        field = re.sub(r"^(\w+)\.(\w+)$", r"\1[X].\2", field) if "." in field else field
+        if name not in skip:
+            pairs.append(chosen.get(name, (kinds[0], 1.0)))
+    items = []
+    for (tool, field), value in [*pairs, *extra]:
+        field = re.sub(r"^(\w+)\.(\w+)$", r"\1[THYAO].\2", field) if "." in field else field
         items.append(
             Evidence(
                 label=f"E{len(items) + 1}",
                 tool=tool,
                 result_id=f"{tool}-1",
                 field=field,
-                value=1.0,
+                value=value,
                 sentence="s",
                 committed=False,
             )
@@ -301,3 +317,94 @@ def test_eligibility_does_not_change_the_analysis_or_evidence():
     before = (len(analysis.tool_calls), list(evidence))
     eligible_actions(analysis, evidence, GATE_PASS)
     assert (len(analysis.tool_calls), list(evidence)) == before
+
+
+# --- I2: a candidate label needs evidence pointing its way -------------------------------
+LAG = ("rank_sector_relative_strength", "members.lag_score_pct")
+RETURN = ("rank_sector_relative_strength", "members.return_pct")
+TREND = ("calculate_fundamental_change", "fundamental_trend")
+REAL_PROFIT = ("calculate_fundamental_change", "net_profit_real_yoy_pct")
+SUCCESS = ("detect_reversal_events", "success_rate_pct")
+AVERAGE = ("detect_reversal_events", "average_forward_return_pct")
+
+
+def candidate_offered(scenario, *, analysis=None, **evidence_kwargs):
+    analysis = analysis or analysis_of(scenario, backtest={})
+    got = eligible_actions(analysis, evidence_of(scenario, **evidence_kwargs), GATE_PASS)
+    return CANDIDATE[scenario] in got
+
+
+@pytest.mark.parametrize(
+    ("values", "offered"),
+    [
+        ({"lag_score": (LAG, -2.5)}, True),  # behind its sector: lag score < 0
+        ({"lag_score": (LAG, 6.39)}, False),  # SL-01 live: PGSUS led its sector
+        ({"lag_score": (LAG, 0.0)}, False),
+        ({"lag_score": (RETURN, -4.0)}, False),  # a return alone is no lag evidence
+    ],
+)
+def test_catch_up_needs_the_stock_to_lag_its_sector(values, offered):
+    assert candidate_offered("SECTOR_LAGGARD", values=values) is offered
+
+
+def test_catch_up_reads_the_lag_score_of_the_analysis_stock():
+    # THYAO (the analysis's stock) leads; a peer that lags does not make THYAO a candidate.
+    peer = (("rank_sector_relative_strength", "members.lag_score_pct"), -3.0)
+    evidence = evidence_of("SECTOR_LAGGARD", values={"lag_score": (LAG, 4.0)}, extra=(peer,))
+    evidence = [
+        dataclasses.replace(item, field="members[AKBNK].lag_score_pct")
+        if item.value == -3.0
+        else item
+        for item in evidence
+    ]
+    analysis = analysis_of("SECTOR_LAGGARD", backtest={})
+    assert "POTENTIAL_CATCH_UP_CANDIDATE" not in eligible_actions(analysis, evidence, GATE_PASS)
+
+
+@pytest.mark.parametrize(
+    ("values", "extra", "offered"),
+    [
+        ({"fundamental_change": (TREND, "Improving")}, (), True),
+        ({"fundamental_change": (TREND, "Deteriorating")}, (), False),
+        ({"fundamental_change": (TREND, "Mixed")}, (), False),
+        ({"fundamental_change": (REAL_PROFIT, 12.5)}, (), True),  # no trend: real profit grew
+        ({"fundamental_change": (REAL_PROFIT, -12.5)}, (), False),
+        ({"fundamental_change": (TREND, "Deteriorating")}, ((REAL_PROFIT, 12.5),), False),
+    ],
+)
+def test_fundamental_improvement_needs_improving_fundamentals(values, extra, offered):
+    assert candidate_offered("FUNDAMENTAL_REACTION", values=values, extra=extra) is offered
+
+
+def reversal_analysis(direction):
+    analysis = analysis_of("TECHNICAL_REVERSAL", backtest={})
+    session.record_call(
+        analysis,
+        state="RUN_PATTERN_AND_REVERSAL_ANALYSIS",
+        tool="detect_reversal_events",
+        arguments={},
+        output={"result_id": "detect_reversal_events-1", "direction": direction},
+    )
+    return analysis
+
+
+@pytest.mark.parametrize(
+    ("direction", "values", "extra", "offered"),
+    [
+        ("BULLISH", {"reversal_stats": (SUCCESS, 66.67)}, ((AVERAGE, 1.2),), True),
+        ("BULLISH", {"reversal_stats": (SUCCESS, 16.67)}, (), False),  # 1 of 6 live
+        ("BULLISH", {"reversal_stats": (SUCCESS, 50.0)}, (), False),  # not a majority
+        ("BULLISH", {"reversal_stats": (SUCCESS, 60.0)}, ((AVERAGE, -1.2),), False),
+        ("BEARISH", {"reversal_stats": (SUCCESS, 60.0)}, ((AVERAGE, -1.2),), True),
+        ("BEARISH", {"reversal_stats": (SUCCESS, 60.0)}, ((AVERAGE, 1.2),), False),
+        ("BULLISH", {"reversal_stats": (AVERAGE, 1.2)}, (), False),  # no success rate
+    ],
+)
+def test_reversal_candidate_needs_successful_events_in_their_direction(
+    direction, values, extra, offered
+):
+    analysis = reversal_analysis(direction)
+    assert (
+        candidate_offered("TECHNICAL_REVERSAL", analysis=analysis, values=values, extra=extra)
+        is offered
+    )
