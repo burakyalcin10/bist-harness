@@ -81,3 +81,17 @@ What the source does, as far as these 23 stock-periods show:
   quarters, so its period-end dates and CPI ratios are one month off.
 - KAP reports state the unit: THYAO reports in million TL, TURSG in TL, the others in
   thousand TL.
+
+## After the rebuild (same day)
+
+All 534 report pages were downloaded (`failed: []`) and the layer was built with
+`uv run python -m bist_harness.data.fundamentals build-kap`: 30 stocks, 479 periods (MAVI
+15, the rest 16), every period with a usable-from day and with revenue, net profit, total
+assets, equity and paid-in capital; every stock with comparative columns. The consolidated
+report was used everywhere except TRALT, which files a consolidated report for one of its
+16 periods. The figures read in the measurement above come out of the layer unchanged
+(TUPRS 2024Q4 revenue 810,385,588 and comparative 991,202,993 thousand TL; AKBNK 2024Q3
+total assets 2,404,289,929 thousand TL, TL plus FX; THYAO in million TL; TURSG in TL; MAVI
+2024Q4 from 2024-02-01 to 2025-01-31). Periods with a later correction fell from 55 to 7:
+most of the 55 were the consolidated and solo reports a company files minutes apart.
+Snapshot sealed afterwards: `layers_id` `21b3a428`.

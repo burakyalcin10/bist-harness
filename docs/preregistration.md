@@ -169,3 +169,9 @@ together, with the definitions of section 3 unchanged.
 The discovery-period results of Scenarios 1 to 3 were produced on 2026-11-17 to try the
 runners (`runs/study-discovery-20261117-143125.json`); discovery is open to inspection
 (section 1). Nothing of the test period was computed.
+
+### 6.2 The test-period run
+
+Run once on 2026-11-17 at commit `beb5650`, data snapshot `20261117-0722` with
+`layers_id` `21b3a428` (fundamental layer rebuilt from as-published KAP reports), after
+the corrections of 6.1. Results: `docs/results/2026-11-17-test-period.md`. Not repeated.
