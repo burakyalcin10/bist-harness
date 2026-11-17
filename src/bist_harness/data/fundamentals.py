@@ -399,6 +399,178 @@ def update_publication_times(
     return missing
 
 
+# --- The layer rebuilt from KAP report pages (K-055) ----------------------------------
+
+# Metric keys and the XBRL concepts they are read from; several concepts are summed.
+CONCEPTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "industrial": {
+        "current_assets": ("ifrs-full_CurrentAssets",),
+        "cash": ("ifrs-full_CashAndCashEquivalents",),
+        "short_term_investments": ("kap-fr_CurrentFinancialInvestments",),
+        "inventories": ("ifrs-full_Inventories",),
+        "total_assets": ("ifrs-full_Assets",),
+        "short_term_liabilities": ("ifrs-full_CurrentLiabilities",),
+        "short_term_debt": (
+            "ifrs-full_ShorttermBorrowings",
+            "kap-fr_CurrentPortionOfNoncurrentBorrowings",
+        ),
+        "long_term_debt": ("ifrs-full_LongtermBorrowings",),
+        "equity": ("ifrs-full_Equity",),
+        "parent_equity": ("ifrs-full_EquityAttributableToOwnersOfParent",),
+        "paid_in_capital": ("ifrs-full_IssuedCapital",),
+        "revenue": ("ifrs-full_Revenue",),
+        "operating_profit": ("ifrs-full_ProfitLossFromOperatingActivities",),
+        "net_profit": ("ifrs-full_ProfitLoss",),
+        "parent_net_profit": ("ifrs-full_ProfitLossAttributableToOwnersOfParent",),
+        "depreciation": ("ifrs-full_AdjustmentsForDepreciationAndAmortisationExpense",),
+        "operating_cash_flow": ("ifrs-full_CashFlowsFromUsedInOperatingActivities",),
+    },
+    "bank": {
+        "total_assets": ("ifrs-full_Assets",),
+        "equity": ("ifrs-full_Equity",),
+        "parent_equity": ("ifrs-full_Equity",),
+        "paid_in_capital": ("ifrs-full_IssuedCapital",),
+        "revenue": ("kap-fr_InterestIncomeOrExpense",),  # net interest income
+        "net_profit": ("ifrs-full_ProfitLoss",),
+        "parent_net_profit": ("ifrs-full_ProfitLossAttributableToOwnersOfParent",),
+    },
+    "insurance": {
+        "total_assets": ("ifrs-full_Assets",),
+        "equity": ("ifrs-full_Equity",),
+        "parent_equity": ("ifrs-full_Equity",),
+        "paid_in_capital": ("ifrs-full_IssuedCapital",),
+        "revenue": (  # gross written premiums, non-life and life
+            "kap-fr_GrossWrittenPremiumsClassifiedAsNonlifeTechnicalIncome",
+            "kap-fr_GrossWrittenPremiumsClassifiedAsLifeTechnicalIncome",
+        ),
+        "net_profit": ("ifrs-full_ProfitLoss",),
+        "parent_net_profit": ("ifrs-full_ProfitLoss",),
+    },
+}
+# suffix of the metric key -> column of the report it is read from
+REPORT_COLUMNS = {
+    "": "Current Period",
+    "@prior": "Previous Period",
+    "@q": "Current Period 3 Months",
+}
+KAP_CALENDAR_COLUMNS = [
+    *CALENDAR_COLUMNS,
+    "period_start",
+    "period_end",
+    "disclosure_index",
+    "consolidated",
+    "unit",
+]
+KAP_SOURCE = "KAP financial-report disclosures (XBRL pages), https://www.kap.org.tr/tr/Bildirim/"
+
+
+def report_values(report, group: str) -> tuple[dict[str, tuple[float, str]], Any, Any]:
+    """Metric values of one parsed report, and the start and end of its period.
+
+    Returns ``{key: (value, concepts)}`` with keys like ``revenue`` (current period),
+    ``revenue@prior`` (the comparative column of the same report) and ``revenue@q`` (the
+    quarter alone, where the report has it).
+    """
+    first: dict[tuple[str, str], float] = {}
+    for fact in report.facts:
+        if fact.column.part in (None, "Total"):
+            first.setdefault((fact.concept, fact.column.label), fact.value)
+    values: dict[str, tuple[float, str]] = {}
+    for key, concepts in CONCEPTS[group].items():
+        for suffix, label in REPORT_COLUMNS.items():
+            found = [(c, first[(c, label)]) for c in concepts if (c, label) in first]
+            if found:
+                values[key + suffix] = (
+                    float(sum(v for _, v in found)),
+                    "+".join(c for c, _ in found),
+                )
+    flow = next(
+        (f for f in report.facts if f.column.label == "Current Period" and f.column.start),
+        None,
+    )
+    return values, (flow.column.start if flow else None), (flow.column.end if flow else None)
+
+
+def build_from_kap_reports(
+    folder: Path,
+    reports: pd.DataFrame,
+    *,
+    read_page: Callable[[int], str],
+    calendar: pd.DatetimeIndex,
+    tickers: Sequence[str],
+    first: Period = Period(FIRST_PERIOD_YEAR, FIRST_PERIOD_QUARTER),
+) -> pd.DataFrame:
+    """Write ``folder/fundamentals`` from the KAP financial-report pages.
+
+    Per stock and period the consolidated report is used when there is one, otherwise
+    the solo report; of that kind the first publication counts and later ones are
+    counted as corrections. A listed stock without any report stops the build.
+    """
+    from bist_harness.data.kap_report_parser import parse_report
+
+    wanted = [normalize_ticker(t) for t in tickers]
+    missing = [t for t in wanted if not (reports["ticker"] == t).any()]
+    if missing:
+        raise DataUnavailableError(f"No KAP financial report listed for {', '.join(missing)}.")
+    target = folder / "fundamentals"
+    target.mkdir(parents=True, exist_ok=True)
+    statements, dates = [], []
+    for (ticker, year, quarter), group in reports.groupby(["ticker", "year", "quarter"]):
+        if ticker not in wanted or Period(int(year), int(quarter)) < first:
+            continue
+        parsed = [
+            (row, parse_report(read_page(int(row.disclosure_index))))
+            for row in group.sort_values("published_at").itertuples()
+        ]
+        pool = [p for p in parsed if p[1].consolidated is True] or parsed
+        chosen, report = pool[0]
+        values, start, end = report_values(report, financial_group(ticker))
+        statements += [
+            (ticker, int(year), int(quarter), key, concepts, value)
+            for key, (value, concepts) in values.items()
+        ]
+        published = pd.Timestamp(chosen.published_at)
+        dates.append(
+            (
+                ticker,
+                int(year),
+                int(quarter),
+                published,
+                known_from(published, calendar),
+                len(pool) - 1,
+                pd.Timestamp(start) if start else pd.NaT,
+                pd.Timestamp(end) if end else pd.NaT,
+                int(chosen.disclosure_index),
+                bool(report.consolidated),
+                float(report.unit),
+            )
+        )
+    table = pd.DataFrame(statements, columns=STATEMENT_COLUMNS)
+    table.to_parquet(target / "statements.parquet")
+    calendar_table = pd.DataFrame(dates, columns=KAP_CALENDAR_COLUMNS)
+    calendar_table.to_parquet(target / "calendar.parquet")
+    coverage = (
+        calendar_table.groupby("ticker")
+        .agg(periods=("year", "size"), consolidated=("consolidated", "sum"))
+        .reset_index()
+    )
+    (target / "manifest.json").write_text(
+        json.dumps(
+            {
+                "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "sources": {"statements": KAP_SOURCE, "publication_times": KAP_QUERY_URL},
+                "first_period": str(first),
+                "rule": "consolidated report if any, else solo; first publication of that kind",
+                "coverage": coverage.to_dict("records"),
+            },
+            indent=2,
+            default=int,
+        ),
+        encoding="utf-8",
+    )
+    return coverage
+
+
 def _path(name: str, snapshot_id: str | None, root: Path | None) -> Path:
     snapshot_id = snapshot_id or snapshot.active_snapshot_id(root)
     path = snapshot._root(root) / snapshot_id / "fundamentals" / name
@@ -426,11 +598,32 @@ def load_disclosure_calendar(
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if args[:1] not in (["build"], ["times"]):
-        print("usage: python -m bist_harness.data.fundamentals build | times [pause] [seconds]")
+    if args[:1] not in (["build"], ["times"], ["build-kap"]):
+        print(
+            "usage: python -m bist_harness.data.fundamentals build-kap | build | times "
+            "[pause] [seconds]"
+        )
         return 2
     folder = snapshot._root(None) / snapshot.active_snapshot_id()
     calendar = snapshot.load_history("XU100").index
+    if args[:1] == ["build-kap"]:
+        from bist_harness.data import kap_reports
+
+        source = kap_reports.report_folder()
+        reports = pd.read_parquet(source / "reports.parquet")
+        old, kept = folder / "fundamentals", folder / "fundamentals_isyatirim"
+        if old.is_dir() and not kept.exists():
+            old.rename(kept)  # the restated-source layer stays for comparison
+        coverage = build_from_kap_reports(
+            folder,
+            reports,
+            read_page=lambda index: kap_reports.read_page(source / "pages", index),
+            calendar=calendar,
+            tickers=list(load_universe()["ticker"]),
+        )
+        print(coverage.to_string(index=False))
+        print("now run: uv run python -m bist_harness.data.snapshot seal")
+        return 0
     today = pd.Timestamp.today()
     last = Period(today.year, (today.month - 1) // 3 or 4)
     if today.month <= 3:
