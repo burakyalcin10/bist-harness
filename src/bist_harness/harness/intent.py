@@ -7,14 +7,15 @@ predictions: if either layer fires, no analysis starts.
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Protocol
 
 from bist_harness.data import peers
-from bist_harness.universe import is_in_universe, normalize_ticker
+from bist_harness.universe import is_in_universe, load_universe, normalize_ticker
 
 SCENARIOS = (
     "SECTOR_LAGGARD",
@@ -84,6 +85,10 @@ class Intent:
     as_of: str | None
     language: str  # "tr" | "en"
     defaulted_period: bool = False  # True when start/end came from the scenario default
+    # Fields the model filled that the question does not name, as
+    # {field: [model value, value kept]} (see ``ground_intent``). An audit record for the
+    # evaluation (how often the model invents a field); left out of comparisons.
+    grounded: dict[str, list[str | None]] = field(default_factory=dict, compare=False)
 
 
 class ChatClient(Protocol):
@@ -307,16 +312,252 @@ def _apply_default_period(intent: Intent, today: str) -> Intent:
         start = intent.start
     else:
         start = (date.fromisoformat(end) - timedelta(days=days)).isoformat()
-    return Intent(
-        scenario=intent.scenario,
-        ticker=intent.ticker,
-        sector=intent.sector,
-        start=start,
-        end=end,
-        as_of=intent.as_of,
-        language=intent.language,
-        defaulted_period=True,
-    )
+    return replace(intent, start=start, end=end, defaulted_period=True)
+
+
+# --- grounding: the intent keeps only what the question names ----------------------------
+# A small model fills fields the question does not hold: another stock, an invented
+# sector, dates around its own idea of "now". The system prompt asks it not to; code
+# enforces it here, before the default period and ``check_intent``.
+
+# Upper-case ticker-like tokens of the raw question ("PGSUS'un" gives PGSUS).
+_UPPER_TOKEN = re.compile(r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])[A-ZÇĞİÖŞÜ]{4,6}(?![A-Za-z0-9çğıöşü])")
+_UPPER_FOLD = str.maketrans("ÇĞİÖŞÜ", "CGIOSU")
+# Upper-case abbreviations that are not tickers: never read as an out-of-universe stock.
+_NOT_TICKERS = frozenset(
+    {
+        "BIST",
+        "BORSA",
+        "MACD",
+        "EBIT",
+        "EBITDA",
+        "FAVOK",
+        "BBVA",
+        "TUFE",
+        "TCMB",
+        "BDDK",
+        "VIOP",
+        "IMKB",
+        "OECD",
+        "FOMC",
+        "NYSE",
+        "NASDAQ",
+        "USDTRY",
+        "EURTRY",
+        "OHLC",
+        "CAGR",
+        "VWAP",
+    }
+)
+
+# Word starts (folded) by which a question names a peer group, Turkish and English. The
+# group's own name parts count as well (see ``_names_sector``).
+SECTOR_WORDS: dict[str, tuple[str, ...]] = {
+    "Banking": ("bank", "lender"),
+    "Defense / Vehicles": ("savunma", "defense", "defence"),
+    "Energy / Petrochemicals": ("enerji", "energy", "petrokimya", "petrochem", "rafineri", "refin"),
+    "Holding": ("holding",),
+    "Food & Beverage": ("gida", "icecek", "food", "beverage", "drink"),
+    "Retail": ("perakende", "retail"),
+    "Airlines / Transport": ("havayol", "havacilik", "ulasim", "airline", "aviation", "transport"),
+    "Steel": ("celik", "steel"),
+    "Telecom": ("telekom", "telecom"),
+    "Chemicals / Fertilizer": ("kimya", "gubre", "chemical", "fertili"),
+    "Mining": ("maden", "mining", "gold"),
+    "Automotive": ("otomotiv", "otomobil", "automotive", "automaker", "carmaker"),
+    "Construction": ("insaat", "construction"),
+    "Healthcare / Pharma": ("saglik", "ilac", "hastane", "health", "pharma", "hospital"),
+    "Real Estate": ("gayrimenkul", "emlak", "real estate", "reit", "property"),
+    "Insurance": ("sigorta", "insur"),
+    "Electric Utilities": ("elektrik", "electric", "utilit"),
+    "Cement": ("cimento", "cement"),
+    "Brokerage": ("araci kurum", "brokerage", "broker"),
+    "Durables": ("dayanikli", "beyaz esya", "durable", "appliance"),
+}
+
+# Month names, folded: Turkish, English and English short forms (fixed, not the locale's).
+_MONTH_NAMES = (
+    ("ocak", "january", "jan"),
+    ("subat", "february", "feb"),
+    ("mart", "march", "mar"),
+    ("nisan", "april", "apr"),
+    ("mayis", "may"),
+    ("haziran", "june", "jun"),
+    ("temmuz", "july", "jul"),
+    ("agustos", "august", "aug"),
+    ("eylul", "september", "sept", "sep"),
+    ("ekim", "october", "oct"),
+    ("kasim", "november", "nov"),
+    ("aralik", "december", "dec"),
+)
+_MONTHS = {name: number for number, names in enumerate(_MONTH_NAMES, 1) for name in names}
+_MONTH = "|".join(sorted(_MONTHS, key=len, reverse=True))
+# Numeric dates on the raw question: 2025-03-31 (2025/03/31) and 31.03.2025 (31/03/2025).
+_YMD = re.compile(r"(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)")
+_DMY = re.compile(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?!\d)")
+# Written dates on the folded question: "15 ağustos 2025", "june 30, 2025", "mart 2025".
+_DAY_MONTH_YEAR = re.compile(rf"\b(\d{{1,2}}) ({_MONTH}) (\d{{4}})\b")
+_MONTH_DAY_YEAR = re.compile(rf"\b({_MONTH}) (\d{{1,2}}) (\d{{4}})\b")
+_MONTH_YEAR = re.compile(rf"\b({_MONTH}) (\d{{4}})\b")
+_YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
+# A year the question names alone ("2023 yılı", "during 2024", "first half of 2025")
+# grounds the bounds of its quarters and halves.
+_YEAR_BOUNDS = ("01-01", "03-31", "04-01", "06-30", "07-01", "09-30", "10-01", "12-31")
+
+
+def _iso(year: str, month: str | int, day: str | int) -> str:
+    """ISO text of the parts, not checked: a malformed date stays for ``check_intent``."""
+    return f"{year}-{int(month):02d}-{int(day):02d}"
+
+
+def named_dates(question: str) -> set[str]:
+    """The ISO dates a question names, in ISO, numeric or written Turkish/English form."""
+    found: set[str] = set()
+
+    def ymd(match: re.Match) -> str:
+        found.update({match[0], _iso(match[1], match[2], match[3])})
+        return " "
+
+    def dmy(match: re.Match) -> str:
+        found.add(_iso(match[3], match[2], match[1]))
+        return " "
+
+    text = _DMY.sub(dmy, _YMD.sub(ymd, question))
+    folded = fold_text(text)
+
+    def day_month_year(match: re.Match) -> str:
+        found.add(_iso(match[3], _MONTHS[match[2]], match[1]))
+        return " "
+
+    def month_day_year(match: re.Match) -> str:
+        found.add(_iso(match[3], _MONTHS[match[1]], match[2]))
+        return " "
+
+    def month_year(match: re.Match) -> str:
+        year, month = int(match[2]), _MONTHS[match[1]]
+        last = calendar.monthrange(year, month)[1]
+        found.update({_iso(match[2], month, 1), _iso(match[2], month, last)})
+        return " "
+
+    folded = _DAY_MONTH_YEAR.sub(day_month_year, folded)
+    folded = _MONTH_DAY_YEAR.sub(month_day_year, folded)
+    folded = _MONTH_YEAR.sub(month_year, folded)
+    for year in _YEAR.findall(folded):
+        found.update(f"{year}-{bound}" for bound in _YEAR_BOUNDS)
+    return found
+
+
+def _company_names() -> dict[str, tuple[str, ...]]:
+    # Imported here: the validator imports this module.
+    from bist_harness.harness.validator import COMPANY_NAMES
+
+    return COMPANY_NAMES
+
+
+def _names_company(folded: str, ticker: str) -> bool:
+    names = _company_names().get(ticker, ())
+    return any(f" {fold_text(name).strip()} " in folded for name in names)
+
+
+def _names_ticker(folded: str, ticker: str) -> bool:
+    """The question names the stock: its code (any case, Turkish suffix allowed) or one of
+    its company names."""
+    return f" {fold_text(ticker).strip()} " in folded or _names_company(folded, ticker)
+
+
+def _known_tickers() -> set[str]:
+    return set(peers.all_symbols()) | set(load_universe()["ticker"]) | set(_company_names())
+
+
+def _upper_tokens(question: str) -> list[str]:
+    return [m[0].translate(_UPPER_FOLD) for m in _UPPER_TOKEN.finditer(question)]
+
+
+def _known_named(question: str, folded: str) -> list[str]:
+    """Universe and peer-group stocks the question names, by code or company name.
+
+    Codes are read upper-case only here ("mavi" is also a Turkish word); names any case.
+    """
+    known = _known_tickers()
+    named = [t for t in _upper_tokens(question) if t in known]
+    named += [t for t in sorted(_company_names()) if _names_company(folded, t)]
+    return list(dict.fromkeys(named))
+
+
+def _named_ticker(question: str, folded: str) -> str | None:
+    """The one stock the question names, when it names exactly one.
+
+    Universe and peer-group stocks come first. Only when there is none does an unknown
+    upper-case code count ("AAPL", a misspelled "AKBMK"), so that ``check_intent`` still
+    reports it as UNKNOWN_TICKER.
+    """
+    named = _known_named(question, folded)
+    if not named:
+        tokens = _upper_tokens(question)
+        named = list(dict.fromkeys(t for t in tokens if t not in _NOT_TICKERS))
+    return named[0] if len(named) == 1 else None
+
+
+def _group_of(ticker: str) -> str | None:
+    try:
+        return peers.peer_group_of(ticker).name
+    except KeyError:
+        return None
+
+
+def _sector_stems(name: str) -> set[str]:
+    """Folded parts of a sector name, a plural "s" dropped ("Airlines" gives "airline")."""
+    stems = set()
+    for part in re.split(r"[/&]", name):
+        stem = fold_text(part).strip()
+        if len(stem) > 4 and stem.endswith("s"):
+            stem = stem[:-1]
+        if len(stem) >= 4:
+            stems.add(stem)
+    return stems
+
+
+def _names_sector(question: str, folded: str, sector: str) -> bool:
+    """The sector resolves to a peer group and the question words it (a word of the sector
+    or of its group, or one of the group's Turkish/English words) or names a universe
+    stock of that group ("TCELL ile TTKOM" means Telecom)."""
+    group = peers.sector_group(sector)
+    if group is None:
+        return False
+    words = _sector_stems(sector) | _sector_stems(group) | set(SECTOR_WORDS.get(group, ()))
+    if any(f" {word}" in folded for word in words):
+        return True
+    return any(_group_of(t) == group for t in _known_named(question, folded))
+
+
+def ground_intent(intent: Intent, question: str) -> Intent:
+    """Keep only the ticker, sector and dates the question names.
+
+    - ticker: kept when the question names it (code or company name); otherwise the one
+      stock the question names, else None.
+    - sector: kept when it resolves to a peer group and the question words it; else None.
+    - start, end, as_of: kept when the question names that date; else None, so the default
+      period is built from today.
+
+    Every changed field is recorded in ``Intent.grounded`` as [model value, kept value].
+    """
+    folded = fold_text(question)
+    changed: dict[str, list[str | None]] = {}
+    values: dict[str, str | None] = {}
+    if intent.ticker is not None and not _names_ticker(folded, intent.ticker):
+        values["ticker"] = _named_ticker(question, folded)
+    if intent.sector is not None and not _names_sector(question, folded, intent.sector):
+        values["sector"] = None
+    dates = named_dates(question)
+    for key in ("start", "end", "as_of"):
+        value = getattr(intent, key)
+        if value is not None and value not in dates:
+            values[key] = None
+    for key, value in values.items():
+        changed[key] = [getattr(intent, key), value]
+    if not changed:
+        return intent
+    return replace(intent, **values, grounded=changed)
 
 
 def _guess_language(question: str) -> str:
@@ -324,11 +565,14 @@ def _guess_language(question: str) -> str:
 
 
 def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool = True) -> Intent:
-    """Ask the model for a JSON intent, then apply the code-side guard and defaults.
+    """Ask the model for a JSON intent, then ground it in the question and apply the
+    code-side guard and defaults.
 
     A malformed answer is re-requested once; a second failure yields ``OUT_OF_SCOPE``.
-    The keyword guard runs regardless of the model's label. ``guard=False`` leaves it out:
-    the raw model intent of evaluation experiment A, which has no harness at all.
+    The model's fields are kept only where the question names them (``ground_intent``).
+    The keyword guard runs regardless of the model's label. ``guard=False`` leaves the
+    guard and the grounding out: the raw model intent of evaluation experiment A, which
+    has no harness at all.
     """
     found = keyword_guard(question) if guard else None
     messages = [
@@ -350,6 +594,8 @@ def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool =
                     "content": "That was not valid. Answer again with only the JSON object.",
                 },
             ]
+    if intent is not None and guard:
+        intent = ground_intent(intent, question)
     if intent is None:
         intent = Intent(
             scenario=found or "OUT_OF_SCOPE",
@@ -369,6 +615,7 @@ def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool =
             end=None,
             as_of=None,
             language=intent.language,
+            grounded=intent.grounded,
         )
     return _apply_default_period(intent, today)
 
@@ -392,6 +639,9 @@ def check_intent(intent: Intent, *, today: str) -> str | None:
         return "UNKNOWN_TICKER"
     if intent.ticker is None and intent.scenario in _NEEDS_TICKER and intent.sector is None:
         return "MISSING_TICKER"
+    # A sector question needs a group: its stock's or a sector the question names.
+    if intent.scenario == "SECTOR_LAGGARD" and intent.ticker is None and intent.sector is None:
+        return "UNKNOWN_SECTOR"
     if intent.sector is not None and not _sector_known(intent.sector):
         return "UNKNOWN_SECTOR"
     given = [d for d in (intent.start, intent.end, intent.as_of) if d is not None]

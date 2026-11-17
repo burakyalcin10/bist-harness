@@ -152,7 +152,8 @@ def test_schema_covers_every_scenario():
 
 def test_parse_intent_uses_schema_and_normalizes_ticker():
     client = FakeClient(payload(ticker="thyao.is", start="2026-01-01", end="2026-03-31"))
-    intent = parse_intent("THYAO nasıl gitti?", client, today=TODAY)
+    question = "THYAO 2026-01-01 ile 2026-03-31 arasında nasıl gitti?"  # Task 10: dates named
+    intent = parse_intent(question, client, today=TODAY)
     assert intent == Intent("PRICE_SUMMARY", "THYAO", None, "2026-01-01", "2026-03-31", None, "tr")
     assert client.calls[0]["response_format"] == INTENT_SCHEMA
     assert not intent.defaulted_period
@@ -260,3 +261,229 @@ def test_the_intent_check_and_the_machine_share_one_sector_resolver():
         accepted = check_intent(make(ticker=None, sector=name), today=TODAY) is None
         assert accepted == (peers.sector_group(name) is not None), name
         assert machine._sector_group(name) == peers.sector_group(name), name
+
+
+# --- Task 10: the model's intent is grounded in the question --------------------------------
+# Live run, experiment E (qwen3.5:2b): the model filled fields the question does not hold
+# (another ticker, an invented sector, dates around its own idea of "now"). Code keeps a
+# field only when the question names it; the default period is then built from `today`.
+def live_question(qid):
+    """The question text of the frozen set, read by id (the set must stay unseen: no copy
+    of its text may sit in a test file)."""
+    from bist_harness.eval import questions as qs
+
+    return {q["id"]: q for q in qs.load_questions()}[qid]["question"]
+
+
+def ask(question, **over):
+    client = FakeClient(payload(**over))
+    intent = parse_intent(question, client, today=TODAY)
+    return intent, check_intent(intent, today=TODAY)
+
+
+def test_live_sl01_takes_the_named_stock_and_drops_the_invented_fields():
+    intent, problem = ask(
+        live_question("SL-01"),
+        scenario="SECTOR_LAGGARD",
+        ticker="THYAO",
+        sector="HAVAYO",
+        start="2024-06-22",
+        end="2024-12-19",
+        as_of="2024-12-19",
+    )
+    assert problem is None
+    assert (intent.ticker, intent.sector, intent.as_of) == ("PGSUS", None, None)
+    assert (intent.start, intent.end) == ("2026-05-21", TODAY)  # 180 days before today
+    assert intent.defaulted_period
+    assert intent.grounded == {
+        "ticker": ["THYAO", "PGSUS"],
+        "sector": ["HAVAYO", None],
+        "start": ["2024-06-22", None],
+        "end": ["2024-12-19", None],
+        "as_of": ["2024-12-19", None],
+    }
+
+
+def test_live_cp01_takes_asels_and_defaults_the_period_from_today():
+    intent, problem = ask(
+        live_question("CP-01"),
+        scenario="CALENDAR_PATTERN",
+        ticker="THYAO",
+        sector="TELECOMS",
+        start="2023-10-05",
+        end="2023-10-12",
+    )
+    assert problem is None
+    assert (intent.ticker, intent.sector) == ("ASELS", None)
+    assert (intent.start, intent.end) == ("2024-11-17", TODAY)  # 730 days before today
+    assert intent.defaulted_period
+    assert intent.grounded["ticker"] == ["THYAO", "ASELS"]
+    assert intent.grounded["start"] == ["2023-10-05", None]
+
+
+@pytest.mark.parametrize(
+    ("qid", "scenario", "ticker", "sector", "as_of", "days"),
+    [
+        ("TR-01", "TECHNICAL_REVERSAL", "THYAO", "BIST 100", "2023-10-27", 365),
+        ("FR-01", "FUNDAMENTAL_REACTION", "BIMAS", "TELECOMS", "2024-01-15", 730),
+    ],
+)
+def test_live_tr01_and_fr01_drop_the_invented_sector_and_as_of(
+    qid, scenario, ticker, sector, as_of, days
+):
+    from datetime import date, timedelta
+
+    intent, problem = ask(
+        live_question(qid), scenario=scenario, ticker=ticker, sector=sector, as_of=as_of
+    )
+    assert problem is None  # no UNKNOWN_SECTOR any more
+    assert (intent.ticker, intent.sector, intent.as_of) == (ticker, None, None)
+    start = (date.fromisoformat(TODAY) - timedelta(days=days)).isoformat()
+    assert (intent.start, intent.end) == (start, TODAY)
+    assert intent.grounded == {"sector": [sector, None], "as_of": [as_of, None]}
+
+
+@pytest.mark.parametrize(
+    ("question", "dates"),
+    [
+        ("THYAO'nun 2025-04-30 tarihli kapanışı neydi?", {"as_of": "2025-04-30"}),
+        ("THYAO 12 Şubat 2025 itibarıyla ne durumdaydı?", {"as_of": "2025-02-12"}),
+        ("Where did THYAO stand on April 7, 2025?", {"as_of": "2025-04-07"}),
+        ("Where did THYAO stand on 7 April 2025?", {"as_of": "2025-04-07"}),
+        ("THYAO 07.04.2025 tarihinde ne durumdaydı?", {"as_of": "2025-04-07"}),
+        (
+            "THYAO 2024-02-01 ile 2024-05-31 arasında nasıl hareket etti?",
+            {"start": "2024-02-01", "end": "2024-05-31"},
+        ),
+        (
+            "How did THYAO trade between May 2, 2024 and 14 October 2024?",
+            {"start": "2024-05-02", "end": "2024-10-14"},
+        ),
+        (
+            "THYAO 2022 yılında nasıl bir seyir izledi?",
+            {"start": "2022-01-01", "end": "2022-12-31"},
+        ),
+        (
+            "How did THYAO trade in the first half of 2022?",
+            {"start": "2022-01-01", "end": "2022-06-30"},
+        ),
+    ],
+)
+def test_a_date_the_question_names_is_kept(question, dates):
+    intent, problem = ask(question, **dates)
+    assert problem is None
+    for key, value in dates.items():
+        assert getattr(intent, key) == value, key
+    assert intent.grounded == {}
+
+
+def test_a_named_date_is_kept_and_an_invented_one_dropped():
+    intent, _ = ask(
+        "THYAO 2024-02-01 tarihinden bu yana nasıl gitti?", start="2024-02-01", end="2024-09-30"
+    )
+    assert (intent.start, intent.end) == ("2024-02-01", TODAY)
+    assert intent.grounded == {"end": ["2024-09-30", None]}
+
+
+def test_a_malformed_date_in_the_question_still_reaches_the_check():
+    intent, problem = ask("THYAO 2025-02-30 günü ne yaptı?", as_of="2025-02-30")
+    assert intent.as_of == "2025-02-30"
+    assert problem == "INVALID_DATE"
+
+
+@pytest.mark.parametrize(
+    ("question", "model_ticker", "ticker"),
+    [
+        ("GARAN hissesi son çeyrekte nasıl gitti?", "GARAN", "GARAN"),  # a reference stock
+        ("GARAN hissesi son çeyrekte nasıl gitti?", "AKBNK", "GARAN"),
+        ("Summarize the daily moves of AAPL this year.", "AAPL", "AAPL"),
+        ("Summarize the daily moves of AAPL this year.", "THYAO", "AAPL"),
+        ("AKBMK son dönemde nasıl seyretti?", "AKBNK", "AKBMK"),  # misspelled
+    ],
+)
+def test_an_out_of_universe_ticker_in_the_question_still_gives_unknown_ticker(
+    question, model_ticker, ticker
+):
+    intent, problem = ask(question, ticker=model_ticker)
+    assert intent.ticker == ticker
+    assert problem == "UNKNOWN_TICKER"
+
+
+def test_a_ticker_named_by_its_company_name_is_kept():
+    intent, problem = ask("Pegasus son üç ayda nasıl gitti?", ticker="PGSUS")
+    assert (intent.ticker, problem) == ("PGSUS", None)
+    assert "ticker" not in intent.grounded
+
+
+@pytest.mark.parametrize(
+    ("model_ticker", "ticker"),
+    [("EREGL", "EREGL"), ("KRDMD", "KRDMD"), ("THYAO", None)],
+)
+def test_a_question_naming_two_stocks_keeps_the_models_choice_of_them(model_ticker, ticker):
+    question = "Compare how EREGL and KRDMD moved over the last month."
+    intent, _ = ask(question, scenario="SECTOR_LAGGARD", ticker=model_ticker)
+    assert intent.ticker == ticker
+    assert ("ticker" in intent.grounded) == (ticker is None)
+
+
+def test_a_sector_question_without_a_ticker_keeps_a_named_resolvable_sector():
+    intent, problem = ask(
+        "Bankacılık sektöründe en zayıf kalan hangisi?",
+        scenario="SECTOR_LAGGARD",
+        ticker=None,
+        sector="Banking",
+    )
+    assert (intent.sector, problem) == ("Banking", None)
+    assert intent.grounded == {}
+
+
+@pytest.mark.parametrize("sector", ["Steel", "Bankacılık"])
+def test_a_sector_question_without_ticker_or_named_sector_is_unknown_sector(sector):
+    intent, problem = ask(
+        "Hangi hisse sektörünün gerisinde kaldı?",
+        scenario="SECTOR_LAGGARD",
+        ticker=None,
+        sector=sector,
+    )
+    assert intent.sector is None
+    assert problem == "UNKNOWN_SECTOR"
+
+
+@pytest.mark.parametrize(("sector", "kept"), [("Telecom", "Telecom"), ("Banking", None)])
+def test_a_sector_is_grounded_by_the_stocks_the_question_names(sector, kept):
+    intent, _ = ask(
+        "Between TCELL and TTKOM, which one lags its group?",
+        scenario="SECTOR_LAGGARD",
+        ticker=None,
+        sector=sector,
+    )
+    assert intent.sector == kept
+
+
+def test_a_named_sector_is_kept_alongside_a_ticker():
+    intent, problem = ask(
+        "Did TUPRS trail its energy peers last quarter?",
+        scenario="SECTOR_LAGGARD",
+        ticker="TUPRS",
+        sector="Energy / Petrochemicals",
+    )
+    assert (intent.ticker, intent.sector, problem) == ("TUPRS", "Energy / Petrochemicals", None)
+
+
+def test_the_guard_path_keeps_its_shape_after_grounding():
+    intent, problem = ask("THYAO'yu alayım mı?", scenario="TECHNICAL_REVERSAL", as_of="2024-01-02")
+    assert intent.scenario == ADV
+    assert (intent.ticker, intent.start, intent.as_of) == ("THYAO", None, None)
+    assert not intent.defaulted_period and problem is None
+
+
+def test_experiment_a_without_the_harness_keeps_the_raw_intent():
+    client = FakeClient(payload(ticker="AKBNK", sector="TELECOMS", as_of="2024-01-15"))
+    intent = parse_intent("THYAO nasıl gitti?", client, today=TODAY, guard=False)
+    assert (intent.ticker, intent.sector, intent.as_of) == ("AKBNK", "TELECOMS", "2024-01-15")
+    assert intent.grounded == {}
+
+
+def test_a_sector_laggard_intent_with_neither_ticker_nor_sector_is_unknown_sector():
+    intent = make(scenario="SECTOR_LAGGARD", ticker=None, sector=None)
+    assert check_intent(intent, today=TODAY) == "UNKNOWN_SECTOR"

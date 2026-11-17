@@ -723,6 +723,11 @@ def test_a_model_error_is_not_swallowed():
 
 # --- the machine: the outcome is the chosen action label -----------------------------------
 PERIOD = {"start": "2025-01-02", "end": "2025-06-30"}
+# The machine keeps only the dates a question names (Task 10): the run questions name them.
+RUN_QUESTION = {
+    "en": "How did THYAO do from 2025-01-02 to 2025-06-30?",
+    "tr": "THYAO 2025-01-02 ile 2025-06-30 arasında nasıl gitti?",
+}
 
 
 class FakeTools:
@@ -767,7 +772,7 @@ def run_script(lang: str, *explanations):
 
 def run(lang: str, client, **kwargs):
     return machine.run_analysis(
-        QUESTION[lang],
+        RUN_QUESTION[lang],
         client,
         call_tool=FakeTools(),
         today=TODAY,
@@ -819,7 +824,7 @@ def test_two_rejected_explanations_end_in_investigate_with_the_evidence(lang, tm
 
 def test_with_the_default_hooks_and_no_evidence_the_run_ends_investigate():
     client = FakeClient(*run_script("en"))
-    analysis = machine.run_analysis(QUESTION["en"], client, call_tool=FakeTools(), today=TODAY)
+    analysis = machine.run_analysis(RUN_QUESTION["en"], client, call_tool=FakeTools(), today=TODAY)
     assert analysis.outcome == "INVESTIGATE"
     assert analysis.answer == f"INVESTIGATE\n{DISCLAIMER['en']}"
     assert len(client.requests) == 3  # no committed evidence: no explanation turn

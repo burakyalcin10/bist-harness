@@ -227,20 +227,31 @@ def test_a_refused_question_is_saved(conn):
 
 
 # --- G3: an unusable intent ends as ANALYSIS_UNSAFE -----------------------------------
+# The machine keeps only what the question names (Task 10): each question names its fields.
 @pytest.mark.parametrize(
-    ("over", "reason"),
+    ("question", "over", "reason"),
     [
-        ({"ticker": "XYZAB"}, "UNKNOWN_TICKER"),  # not one of the 30 stocks
-        ({"start": "2026-12-01", "end": "2027-01-15"}, "FUTURE_DATE"),
-        ({"start": "2025-06-30", "end": "2025-01-02"}, "INVALID_DATE_RANGE"),
+        (  # not one of the 30 stocks
+            "XYZAB 2025-01-02 ile 2025-06-30 arasında nasıl gitti?",
+            {"ticker": "XYZAB"},
+            "UNKNOWN_TICKER",
+        ),
+        (
+            "THYAO 2026-12-01 ile 2027-01-15 arasında nasıl gidecek?",
+            {"start": "2026-12-01", "end": "2027-01-15"},
+            "FUTURE_DATE",
+        ),
+        (
+            "THYAO 2025-06-30 ile 2025-01-02 arasında nasıl gitti?",
+            {"start": "2025-06-30", "end": "2025-01-02"},
+            "INVALID_DATE_RANGE",
+        ),
     ],
 )
-def test_unusable_intent_is_analysis_unsafe_and_recorded(over, reason, conn):
+def test_unusable_intent_is_analysis_unsafe_and_recorded(question, over, reason, conn):
     client = ScriptedClient(intent(language="tr", **over))
     tools = FakeTools()
-    analysis = machine.run_analysis(
-        "Hisse nasıl gitti?", client, call_tool=tools, today=TODAY, conn=conn
-    )
+    analysis = machine.run_analysis(question, client, call_tool=tools, today=TODAY, conn=conn)
     assert tools.calls == [] and len(client.requests) == 1
     assert analysis.outcome == "ANALYSIS_UNSAFE"
     assert record_of(analysis, "START").detail["reason"] == reason
@@ -269,7 +280,9 @@ def price_summary_script():
 def test_right_path_runs_the_route_and_records_every_call():
     client = ScriptedClient(*price_summary_script())
     tools = FakeTools()
-    analysis = machine.run_analysis("How did THYAO do?", client, call_tool=tools, today=TODAY)
+    analysis = machine.run_analysis(
+        "How did THYAO do from 2025-01-02 to 2025-06-30?", client, call_tool=tools, today=TODAY
+    )
     aid = analysis.analysis_id
     assert [(c.seq, c.state, c.tool, c.source, c.allowed) for c in analysis.tool_calls] == [
         (1, "LOAD_MARKET_DATA", "get_stock_history", "model", True),
@@ -292,7 +305,12 @@ def test_right_path_runs_the_route_and_records_every_call():
 
 def test_each_model_turn_offers_only_the_tools_of_its_state():
     client = ScriptedClient(*price_summary_script())
-    machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+    machine.run_analysis(
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+    )
     turns = client.tool_turns()
     # Harness-run states (CHECK_DATA_QUALITY, BUILD_EVIDENCE, RISK_GATE) have no model turn.
     assert len(client.requests) == 1 + len(turns) == 3
@@ -302,12 +320,17 @@ def test_each_model_turn_offers_only_the_tools_of_its_state():
         assert (turn["temperature"], turn["seed"]) == (0.0, 42)
         prompt = " ".join(m["content"] for m in turn["messages"])
         assert state in prompt and "THYAO" in prompt and "2025-01-02" in prompt
-        assert "How did THYAO do?" in prompt
+        assert "How did THYAO do from 2025-01-02 to 2025-06-30?" in prompt
 
 
 def test_analysis_records_ids_versions_model_and_settings():
     client = ScriptedClient(*price_summary_script())
-    analysis = machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+    analysis = machine.run_analysis(
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+    )
     assert analysis.analysis_id.startswith("AN-")
     assert analysis.snapshot_id == "test-snapshot" and analysis.adjustments_id
     assert analysis.model == "fake-model"
@@ -317,7 +340,12 @@ def test_analysis_records_ids_versions_model_and_settings():
 
 def test_every_state_is_recorded_in_order():
     client = ScriptedClient(*price_summary_script())
-    analysis = machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+    analysis = machine.run_analysis(
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+    )
     assert [r.state for r in analysis.trail] == list(STATES)
     route = ROUTES["PRICE_SUMMARY"]
     for record in analysis.trail:
@@ -353,7 +381,11 @@ def test_with_a_store_every_recorded_call_is_saved_at_once(conn):
     client = ScriptedClient(*price_summary_script())
     tools = StoreWatchingTools(conn)
     analysis = machine.run_analysis(
-        "How did THYAO do?", client, call_tool=tools, today=TODAY, conn=conn
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=tools,
+        today=TODAY,
+        conn=conn,
     )
     assert tools.stored == [0, 1, 2, 3, 4, 5]  # call n sees the n-1 calls before it
     loaded = session.load(analysis.analysis_id, conn)
@@ -372,7 +404,11 @@ def run_with_market_replies(*market_replies, max_attempts=2):
     )
     tools = FakeTools()
     analysis = machine.run_analysis(
-        "How did THYAO do?", client, call_tool=tools, today=TODAY, max_attempts=max_attempts
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=tools,
+        today=TODAY,
+        max_attempts=max_attempts,
     )
     return analysis, client, tools
 
@@ -722,12 +758,16 @@ def state_of_turn(turn) -> str:
     return next(s for s in STATES if f"Current state: {s}." in turn["messages"][0]["content"])
 
 
+# Names the stock, the sector and the period of the scripted intents (Task 10 grounding).
+ROUTE_QUESTION = "How did THYAO and the banking group move from 2025-01-02 to 2025-06-30?"
+
+
 @pytest.mark.parametrize("scenario", ANALYSIS_SCENARIOS)
 @pytest.mark.parametrize("over", [{}, {"ticker": None, "sector": "Banking"}])
 def test_state_order_is_the_route(scenario, over):
     client = TextOnlyClient(intent(scenario=scenario, **over))
     tools = FakeTools()
-    analysis = machine.run_analysis("q", client, call_tool=tools, today=TODAY)
+    analysis = machine.run_analysis(ROUTE_QUESTION, client, call_tool=tools, today=TODAY)
     route = ROUTES[scenario]
     assert [r.state for r in analysis.trail] == list(STATES)  # every state has a record
     assert visited(analysis) == list(route)
@@ -751,7 +791,7 @@ def test_state_order_is_the_route(scenario, over):
 
 def test_candidate_route_previews_the_variants_before_the_backtest():
     client = TextOnlyClient(intent(scenario="SECTOR_LAGGARD"))
-    analysis = machine.run_analysis("q", client, call_tool=FakeTools(), today=TODAY)
+    analysis = machine.run_analysis(ROUTE_QUESTION, client, call_tool=FakeTools(), today=TODAY)
     assert record_of(analysis, "PREVIEW_STRATEGIES").detail == {
         "variants": [
             "A_TECHNICAL",
@@ -782,7 +822,7 @@ def test_hard_block_skips_the_explanation_and_ends_unsafe(conn):
     client = ScriptedClient(*price_summary_script())
     explain = Spy()
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         client,
         call_tool=FakeTools(quality="HARD_BLOCK"),
         today=TODAY,
@@ -803,7 +843,7 @@ def test_hard_block_skips_the_explanation_and_ends_unsafe(conn):
 def test_warnings_do_not_block_the_explanation():
     explain = Spy()
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=FakeTools(quality="PASS_WITH_WARNINGS"),
         today=TODAY,
@@ -821,7 +861,7 @@ def test_hooks_receive_the_analysis_evidence_and_gate():
     gate_fn = Spy(gate_result)
     explain_fn = Spy(SimpleNamespace(action="WATCH"))
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         client,
         call_tool=FakeTools(),
         today=TODAY,
@@ -849,7 +889,7 @@ def test_hooks_run_after_the_call_of_their_state():
         return SimpleNamespace(status="PASS")
 
     machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=FakeTools(),
         today=TODAY,
@@ -864,7 +904,7 @@ def test_hooks_run_after_the_call_of_their_state():
 
 def test_the_gate_hook_overrules_a_passing_quality_tool():
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=FakeTools(quality="PASS"),
         today=TODAY,
@@ -883,7 +923,7 @@ def test_default_gate_blocks_when_the_quality_check_gives_no_status():
             return super().__call__(name, arguments)
 
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=BrokenQuality(),
         today=TODAY,
@@ -899,7 +939,7 @@ def test_a_raising_tool_is_recorded_as_an_error():
             return super().__call__(name, arguments)
 
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=Raising(),
         today=TODAY,
@@ -939,7 +979,7 @@ def test_model_failure_in_a_tool_state_ends_with_an_outcome(conn):
     client = FailingClient(2, unreachable(), *price_summary_script())
     explain = Spy()
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         client,
         call_tool=FakeTools(),
         today=TODAY,
@@ -972,7 +1012,12 @@ def test_model_failure_in_a_tool_state_ends_with_an_outcome(conn):
 
 def test_calls_made_before_the_failure_are_kept():
     client = FailingClient(3, unreachable(), *price_summary_script())
-    analysis = machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+    analysis = machine.run_analysis(
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+    )
     assert [c.tool for c in analysis.tool_calls][:2] == ["get_stock_history", "get_index_history"]
     assert record_of(analysis, "LOAD_MARKET_DATA").status == "RAN"
     assert record_of(analysis, "CALCULATE_TECHNICALS").status == "FAILED"
@@ -999,7 +1044,7 @@ def test_model_failure_in_the_explanation_ends_with_an_outcome():
         raise unreachable()
 
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=FakeTools(),
         today=TODAY,
@@ -1020,7 +1065,11 @@ def test_model_failure_in_the_explanation_ends_with_an_outcome():
 def test_the_server_address_is_never_recorded(error, conn):
     client = FailingClient(2, error, *price_summary_script())
     analysis = machine.run_analysis(
-        "How did THYAO do?", client, call_tool=FakeTools(), today=TODAY, conn=conn
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+        conn=conn,
     )
     assert analysis.outcome == "MODEL_UNAVAILABLE"
     stored = json.dumps(
@@ -1037,7 +1086,12 @@ def test_the_server_address_is_never_recorded(error, conn):
 def test_a_programming_error_in_the_client_is_not_swallowed():
     client = FailingClient(2, KeyError("bug"), *price_summary_script())
     with pytest.raises(KeyError):
-        machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+        machine.run_analysis(
+            "How did THYAO do from 2025-01-02 to 2025-06-30?",
+            client,
+            call_tool=FakeTools(),
+            today=TODAY,
+        )
 
 
 # --- Task 6: the final evidence feeds the gate; the default gate is the quality gate ------
@@ -1051,7 +1105,7 @@ def test_the_evidence_is_rebuilt_at_the_risk_gate_from_all_calls_so_far():
     gate_fn = Spy(SimpleNamespace(status="PASS", hard_blocks=()))
     explain_fn = Spy(SimpleNamespace(action="WATCH"))
     machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=FakeTools(),
         today=TODAY,
@@ -1077,7 +1131,7 @@ def test_the_default_gate_is_the_quality_gate():
 
     explain = Spy()
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=EmptyHistory(),
         today=TODAY,
@@ -1096,7 +1150,7 @@ def test_the_default_gate_warns_without_blocking():
             return output
 
     analysis = machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         ScriptedClient(*price_summary_script()),
         call_tool=Warned(),
         today=TODAY,

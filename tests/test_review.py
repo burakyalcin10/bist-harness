@@ -85,7 +85,7 @@ def conn(tmp_path):
 @pytest.fixture
 def completed(conn):
     return machine.run_analysis(
-        "How did THYAO do?",
+        "How did THYAO do from 2025-01-02 to 2025-06-30?",
         Client(),
         call_tool=tools,
         today="2026-11-17",
