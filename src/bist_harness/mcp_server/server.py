@@ -800,10 +800,17 @@ def _finding(code: str, severity: str, message: str, count: int, source: str) ->
 
 
 def _quality_findings(analysis: session.Analysis) -> tuple[list[dict], list[dict]]:
-    """Series checks for every stock and period of the analysis, plus tool warnings."""
+    """Series checks for every stock and period of the analysis, plus tool warnings.
+
+    Only calls that ran count: a rejected proposal (``allowed=False``, never executed) and a
+    call whose output is an error describe no data the analysis uses, the same rule as the
+    gate's ``_usable``.
+    """
     findings: list[dict] = []
     periods: dict[tuple[str, str], None] = {}
     for call in analysis.tool_calls:
+        if not call.allowed or (isinstance(call.output, dict) and "error" in call.output):
+            continue
         end = call.arguments.get("end") or call.arguments.get("as_of")
         if isinstance(end, str):
             for ticker in _tool_tickers(call.arguments):
