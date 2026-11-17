@@ -87,7 +87,8 @@ def test_the_test_run_holds_every_preregistered_question(monkeypatch, tmp_path):
 
     calls = []
     study = _stub_study(monkeypatch, tmp_path, calls)
-    assert study.main(["test"]) == 0
+    # the recorded test-period result of the repo would stop the run (the M1 guard)
+    assert study.main(["test"], results_file=tmp_path / "no-result.md") == 0
     saved = json.loads(next((tmp_path / "runs").glob("study-test-*.json")).read_text("utf-8"))
     assert {"backtests", "reactions", "scenario_1", "scenario_2", "scenario_3"} <= set(saved)
     assert calls == [True]
