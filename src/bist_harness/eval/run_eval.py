@@ -7,10 +7,14 @@ with one model on the frozen question set.
 | --- | --- |
 | A | Raw model. Its intent (no keyword guard) picks the data; the canonical calls of the
       route are made by code and their outputs are given to the model as text; the model
-      answers freely with a label from all eight. No tool requirement, states, checks. |
+      answers freely with a label from all eight or REFUSED_ADVICE / OUT_OF_SCOPE. When
+      its own intent says advice, prediction or out of scope, that is its outcome (no data
+      is loaded; its answer is still shown and checked). No tool requirement, states,
+      checks. |
 | B | Model + tools. All tool schemas are offered in a loop of up to ``MAX_TOOL_ROUNDS``
       turns; a call is checked against its schema only, then executed; the model answers
-      freely. No intent, states, permissions or gate. |
+      freely, a refusal (REFUSED_ADVICE / OUT_OF_SCOPE) included. No intent, states,
+      permissions or gate. |
 | C | B + the stateful harness: ``machine.run_analysis`` with intent, guards, routes and
       state permissions, but no evidence builder, a gate that always passes and a free,
       unvalidated explanation over the raw outputs. |
@@ -21,8 +25,11 @@ with one model on the frozen question set.
       from there (``harness.replay``). |
 
 Every run is recorded the same way (``eval.metrics`` describes the record): the evidence
-is built from the record's own allowed calls, and model-written text that was shown is
-checked by the output validator afterwards (for A-C this is measurement, not control).
+is built from the record's own allowed calls, model-written text that was shown as a
+conclusion is checked by the output validator afterwards (for A-C this is measurement,
+not control), and every answer the model wrote at the explanation step is kept in
+``attempts`` (rejected ones included), so the model's own hallucination rate is measured
+before the validator.
 
 Usage (the endpoint comes from the settings, ``BIST_LLM_BASE_URL``; it is never printed)::
 
@@ -77,6 +84,15 @@ _FINAL_REQUEST = (
     '{{"action": <one of {actions}>, "explanation": <text>}}.'
 )
 LANGUAGE_NAMES = {"tr": "Turkish", "en": "English"}
+REFUSALS = (machine.REFUSED_ADVICE, machine.OUT_OF_SCOPE)
+# A and B may refuse: their free answer offers the two refusals besides the eight labels.
+FREE_LABELS = (*ACTIONS, *REFUSALS)
+# A's own intent label that is a refusal.
+INTENT_REFUSAL = {
+    "ADVICE_REQUEST": machine.REFUSED_ADVICE,
+    "PREDICTION_REQUEST": machine.REFUSED_ADVICE,
+    "OUT_OF_SCOPE": machine.OUT_OF_SCOPE,
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,6 +105,24 @@ class FreeAnswer:
 
 
 # --- shared pieces -------------------------------------------------------------------------
+class AttemptRecorder:
+    """Passes every request to the client and keeps each answer the model wrote at an
+    explanation step (a request whose schema has an ``action``), rejected ones included."""
+
+    def __init__(self, client):
+        self.client = client
+        self.model = getattr(client, "model", "unknown")
+        self.attempts: list[dict] = []
+
+    def chat(self, messages, tools=None, **kwargs):
+        result = self.client.chat(messages, tools, **kwargs)
+        schema = kwargs.get("response_format") or {}
+        if "action" in (schema.get("properties") or {}):
+            answer = _parse_answer(result.content, FREE_LABELS)
+            self.attempts.append({"action": answer.action, "text": answer.text})
+        return result
+
+
 def _execute(analysis, call_tool: ToolCaller, state: str, name: str, arguments: dict, source):
     try:
         output = call_tool(name, arguments)
@@ -103,7 +137,7 @@ def _as_text(output: object) -> str:
     return json.dumps(output, ensure_ascii=False, sort_keys=True, default=str)[:OUTPUT_CHARS]
 
 
-def _parse_answer(content: str) -> FreeAnswer:
+def _parse_answer(content: str, labels: Sequence[str] = ACTIONS) -> FreeAnswer:
     try:
         data = json.loads(content)
     except (TypeError, ValueError):
@@ -112,29 +146,36 @@ def _parse_answer(content: str) -> FreeAnswer:
         return FreeAnswer(None, content)
     action, text = data.get("action"), data.get("explanation")
     return FreeAnswer(
-        action if action in ACTIONS else None, text if isinstance(text, str) else content
+        action if action in labels else None, text if isinstance(text, str) else content
     )
 
 
-def _free_answer(client, question: str, outputs: Sequence[object], language: str) -> FreeAnswer:
-    """One schema-constrained answer over raw outputs given as text (experiments A and C)."""
+def _free_answer(
+    client,
+    question: str,
+    outputs: Sequence[object],
+    language: str,
+    labels: Sequence[str] = ACTIONS,
+) -> FreeAnswer:
+    """One schema-constrained answer over raw outputs given as text (experiments A and C;
+    A also offers the two refusals)."""
     data = "\n".join(_as_text(o) for o in outputs) or "(no data)"
     messages = [
         {
             "role": "system",
             "content": _ANSWER_PROMPT.format(
-                language=LANGUAGE_NAMES[language], actions=", ".join(ACTIONS)
+                language=LANGUAGE_NAMES[language], actions=", ".join(labels)
             ),
         },
         {"role": "user", "content": _DATA_PROMPT.format(question=question, data=data)},
     ]
     result = client.chat(
         messages,
-        response_format=explanation_schema(ACTIONS),
+        response_format=explanation_schema(labels),
         temperature=session.TEMPERATURE,
         seed=session.SEED,
     )
-    return _parse_answer(result.content)
+    return _parse_answer(result.content, labels)
 
 
 def _allowed_outputs(analysis) -> list[object]:
@@ -165,10 +206,12 @@ def run_raw(question: str, client, *, call_tool: ToolCaller, today: str):
         for state in ROUTES.get(intent.scenario, ())[1:-1]:
             for name, arguments in machine.canonical_calls(state, intent):
                 _execute(analysis, call_tool, DATA_STATE, name, arguments, "harness")
-        answer = _free_answer(client, question, _allowed_outputs(analysis), language)
+        answer = _free_answer(client, question, _allowed_outputs(analysis), language, FREE_LABELS)
     except machine.MODEL_ERRORS as exc:
         return _unavailable(analysis, exc, language)
-    analysis.outcome = answer.action or machine.COMPLETED
+    # The model's own intent label is a model decision: a refusal there is A's outcome.
+    refusal = INTENT_REFUSAL.get(intent.scenario)
+    analysis.outcome = refusal or answer.action or machine.COMPLETED
     analysis.answer = answer.text
     return analysis
 
@@ -231,16 +274,16 @@ def run_tools(question: str, client, *, call_tool: ToolCaller, today: str):
                     output = record.output
                 messages.append({"role": "tool", "content": _as_text(output)})
         request = _FINAL_REQUEST.format(
-            language=LANGUAGE_NAMES[language], actions=", ".join(ACTIONS)
+            language=LANGUAGE_NAMES[language], actions=", ".join(FREE_LABELS)
         )
         result = client.chat(
             [*messages, {"role": "user", "content": request}],
-            response_format=explanation_schema(ACTIONS),
+            response_format=explanation_schema(FREE_LABELS),
             **options,
         )
     except machine.MODEL_ERRORS as exc:
         return _unavailable(analysis, exc, language)
-    answer = _parse_answer(result.content)
+    answer = _parse_answer(result.content, FREE_LABELS)
     analysis.outcome = answer.action or machine.COMPLETED
     analysis.answer = answer.text
     return analysis
@@ -296,6 +339,7 @@ def make_record(
     *,
     latency_s: float,
     replay_status: str | None = None,
+    attempts: Sequence[dict] = (),
 ) -> dict:
     """The JSON record of one run (fields in ``eval.metrics``)."""
     intent = analysis.intent
@@ -305,7 +349,8 @@ def make_record(
     evidence = build_evidence(scored, language=language)
     answer_by = _answer_by(experiment, analysis)
     validation: list[str] = []
-    if answer_by == "model":
+    concluded = analysis.outcome not in (*REFUSALS, machine.ANALYSIS_UNSAFE)
+    if answer_by == "model" and concluded:
         eligible = eligible_actions(scored, evidence, quality_gate(scored, evidence))
         validation = validate_explanation(
             analysis.answer,
@@ -347,6 +392,10 @@ def make_record(
         "latency_s": latency_s,
         "replay": replay_status,
         "error": None,
+        "attempts": list(attempts),
+        "data_shown": "committed_evidence" if experiment in ("D", "E") else "tool_outputs",
+        "real_gate": experiment in ("D", "E")
+        and any(r.state == "RISK_GATE" and r.status == "RAN" for r in analysis.trail),
     }
 
 
@@ -370,6 +419,9 @@ def _error_record(experiment: str, question: dict, repeat: int, exc: BaseExcepti
         "latency_s": None,
         "replay": None,
         "error": f"{failure['error']}: {failure['message']}",
+        "attempts": [],
+        "data_shown": "committed_evidence" if experiment in ("D", "E") else "tool_outputs",
+        "real_gate": False,
     }
 
 
@@ -388,6 +440,7 @@ def run_one(
 ) -> dict:
     """Run one question once under one experiment and return its record."""
     text = question["question"]
+    client = AttemptRecorder(client)
     started = time.perf_counter()
     if experiment == "A":
         analysis = run_raw(text, client, call_tool=call_tool, today=today)
@@ -414,7 +467,13 @@ def run_one(
         stored = session.load(analysis.analysis_id, memory)  # read back from the memory
         status = replay(stored, call_tool=call_tool, **(replay_options or {})).status
     return make_record(
-        experiment, question, repeat, analysis, latency_s=latency, replay_status=status
+        experiment,
+        question,
+        repeat,
+        analysis,
+        latency_s=latency,
+        replay_status=status,
+        attempts=client.attempts,
     )
 
 

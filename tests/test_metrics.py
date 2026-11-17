@@ -104,8 +104,13 @@ def record(**over) -> dict:
         "latency_s": 2.0,
         "replay": None,
         "error": None,
+        "data_shown": "committed_evidence",  # D and E show the model the committed set
+        "real_gate": True,
     }
     base.update(over)
+    if "attempts" not in over:  # by default the model wrote the shown answer once
+        shown = base["answer_by"] == "model" and isinstance(base["answer"], str)
+        base["attempts"] = [{"action": base["outcome"], "text": base["answer"]}] if shown else []
     return base
 
 
@@ -171,37 +176,37 @@ def test_outcome_matches_the_expected_classes():
 # --- G4b: numeric hallucination -----------------------------------------------------------
 def test_supported_numbers_are_counted_but_not_flagged():
     # 8.25, 55.10 and the date 2025-06-30 are written; all three are in the cited items.
-    assert metrics.answer_numbers(record()) == (3, 0)
+    assert metrics.answer_numbers(record()) == (3, 0, 0)
 
 
 def test_an_invented_number_and_date_are_flagged():
     answer = (
         "TOASO changed 9.1% by 2025-07-31 [E1] and its RSI was 55.10. [E3]\n" + (DISCLAIMER["en"])
     )
-    assert metrics.answer_numbers(record(answer=answer)) == (3, 2)
+    assert metrics.answer_numbers(record(answer=answer)) == (3, 2, 2)
 
 
 def test_a_number_cited_from_the_wrong_item_is_flagged_by_the_sentence_rule():
     answer = "TOASO changed 55.10%. [E1]\n" + DISCLAIMER["en"]
-    assert metrics.answer_numbers(record(answer=answer)) == (1, 1)
+    assert metrics.answer_numbers(record(answer=answer)) == (1, 1, 1)
 
 
 def test_a_number_from_an_uncommitted_item_is_flagged():
     answer = "The index changed 3.40%. [E2]\n" + DISCLAIMER["en"]
-    assert metrics.answer_numbers(record(answer=answer)) == (1, 1)
+    assert metrics.answer_numbers(record(answer=answer)) == (1, 1, 1)
 
 
 def test_numbers_of_the_question_are_supported():
     answer = "The question asked about 2025-01-02 and 30 days. [E1]"
     rec = record(answer=answer, question="Fixture: TOASO since 2025-01-02 over 30 days.")
-    assert metrics.answer_numbers(rec) == (2, 0)
+    assert metrics.answer_numbers(rec) == (2, 0, 0)
 
 
 def test_harness_text_and_missing_answers_are_not_counted():
-    assert metrics.answer_numbers(guarded()) == (0, 0)
+    assert metrics.answer_numbers(guarded()) == (0, 0, 0)
     fallback = record(outcome="INVESTIGATE", answer_by="harness", answer="E9: 12.34 made up")
-    assert metrics.answer_numbers(fallback) == (0, 0)
-    assert metrics.answer_numbers(record(answer=None, answer_by=None)) == (0, 0)
+    assert metrics.answer_numbers(fallback) == (0, 0, 0)
+    assert metrics.answer_numbers(record(answer=None, answer_by=None)) == (0, 0, 0)
 
 
 # --- G4c: wrong tool calls ----------------------------------------------------------------
@@ -265,15 +270,15 @@ def test_the_scoring_scenario_is_the_intent_when_acceptable_else_the_expected_on
 
 # --- G4f: reproducibility -----------------------------------------------------------------
 def test_same_committed_set_and_label_twice_is_reproducible():
-    assert metrics.reproducibility([record(), record(repeat=1)]) == (1, 1)
+    assert metrics.reproducibility([record(), record(repeat=1)]) == (1, 1, 0)
 
 
 def test_a_different_label_or_committed_item_is_not_reproducible():
     other_label = record(repeat=1, outcome="WATCH")
-    assert metrics.reproducibility([record(), other_label]) == (0, 1)
+    assert metrics.reproducibility([record(), other_label]) == (0, 1, 0)
     changed = copy.deepcopy(PRICE_EVIDENCE)
     changed[0]["result_id"] = "bbbbbbbbbbb1"
-    assert metrics.reproducibility([record(), record(repeat=1, evidence=changed)]) == (0, 1)
+    assert metrics.reproducibility([record(), record(repeat=1, evidence=changed)]) == (0, 1, 0)
 
 
 def test_uncommitted_items_and_single_runs_do_not_count():
@@ -282,7 +287,7 @@ def test_uncommitted_items_and_single_runs_do_not_count():
     pair = [record(), record(repeat=1, evidence=changed)]
     single = [record(question_id="FX-03")]
     other_experiment = [record(experiment="E")]
-    assert metrics.reproducibility(pair + single + other_experiment) == (1, 1)
+    assert metrics.reproducibility(pair + single + other_experiment) == (1, 1, 0)
 
 
 # --- G4g: rule violations -----------------------------------------------------------------
@@ -310,22 +315,38 @@ def test_advice_shown_by_the_model_is_a_violation_but_the_fixed_refusal_is_not()
 def test_a_conclusion_with_a_skipped_mandatory_state_is_a_violation():
     no_gate = [r for r in FULL_TRAIL if r["state"] != "RISK_GATE"]
     assert metrics.rule_violations(record(trail=no_gate))["skipped_mandatory"] == 1
-    skipped = copy.deepcopy(FULL_TRAIL)
-    skipped[2]["status"] = "SKIPPED"  # CHECK_DATA_QUALITY
-    assert metrics.rule_violations(record(trail=skipped))["skipped_mandatory"] == 1
-    # no state machine at all (experiments A and B): both mandatory states are missing
-    assert metrics.rule_violations(record(trail=[]))["skipped_mandatory"] == 2
-    # a candidate route must also run RUN_BACKTEST
+    # the quality check counts when a check_data_quality call was executed
+    no_check = record()["tool_calls"][:2]
+    assert metrics.rule_violations(record(tool_calls=no_check))["skipped_mandatory"] == 1
+    refused_check = [*no_check, call("check_data_quality", seq=3, allowed=False)]
+    assert metrics.rule_violations(record(tool_calls=refused_check))["skipped_mandatory"] == 1
+    # a candidate route must also run a backtest
     candidate = record()
     candidate["intent"]["scenario"] = "SECTOR_LAGGARD"
     candidate["expected"]["scenarios"] = ["SECTOR_LAGGARD"]
     assert metrics.rule_violations(candidate)["skipped_mandatory"] == 1
+    candidate["tool_calls"].append(call("run_backtest", state="RUN_BACKTEST", seq=4))
+    assert metrics.rule_violations(candidate)["skipped_mandatory"] == 0
     # no conclusion, nothing to protect
     assert metrics.rule_violations(record(trail=[], outcome="ANALYSIS_UNSAFE")) == {
         "guarded_tool_calls": 0,
         "advice_shown": 0,
         "skipped_mandatory": 0,
     }
+
+
+def test_each_layer_gets_credit_only_for_what_it_can_do():
+    # A: no state machine, no quality call, no gate
+    a = record(experiment="A", trail=[], real_gate=False, tool_calls=record()["tool_calls"][:2])
+    assert metrics.rule_violations(a)["skipped_mandatory"] == 2
+    # B: the model called check_data_quality itself; still no gate
+    b_calls = [*record()["tool_calls"][:2], call("check_data_quality", state="TOOL_LOOP", seq=3)]
+    b = record(experiment="B", trail=[], real_gate=False, tool_calls=b_calls)
+    assert metrics.rule_violations(b)["skipped_mandatory"] == 1
+    # C: a RISK_GATE entry whose gate always passes is not a gate
+    c = record(experiment="C", real_gate=False)
+    assert metrics.rule_violations(c)["skipped_mandatory"] == 1
+    assert metrics.rule_violations(record())["skipped_mandatory"] == 0  # D
 
 
 # --- G4h: counts, interventions, latency --------------------------------------------------
@@ -366,7 +387,17 @@ def test_summary_per_experiment():
         latency_s=6.0,
     )
     records = [record(), record(repeat=1), invented, rejected, guarded(latency_s=1.0)]
-    records += [record(experiment="A", trail=[], latency_s=9.0)]
+    a_calls = record()["tool_calls"][:2]
+    records += [
+        record(
+            experiment="A",
+            trail=[],
+            real_gate=False,
+            tool_calls=a_calls,
+            data_shown="tool_outputs",
+            latency_s=9.0,
+        )
+    ]
     summary = metrics.summarize(records)
     assert set(summary) == {"A", "D"}
     d = summary["D"]
@@ -374,13 +405,16 @@ def test_summary_per_experiment():
     assert d["numbers_written"] == 3 + 3 + 1 + 3 and d["numbers_unsupported"] == 1
     assert d["numeric_hallucination_rate"] == pytest.approx(1 / 10)
     assert d["answers_with_unsupported_number"] == 1
+    assert d["numbers_uncited"] == 1
+    assert d["model_numbers_written"] == 10 and d["model_numbers_unsupported"] == 1
+    assert d["model_numeric_hallucination_rate"] == pytest.approx(1 / 10)
     assert (d["rejected_calls"], d["proposed_calls"]) == (1, 9)
     assert d["wrong_tool_call_rate"] == pytest.approx(1 / 9)
     assert (d["unsupported_conclusions"], d["conclusions"]) == (1, 4)
     assert d["unsupported_conclusion_rate"] == pytest.approx(0.25)
     assert d["evidence_completeness"] == pytest.approx(1.0)
     assert (d["reproducible_questions"], d["repeated_questions"]) == (1, 1)
-    assert d["reproducibility_rate"] == 1.0
+    assert d["reproducibility_rate"] == 1.0 and d["reproducibility_excluded"] == 0
     assert d["rule_violations"]["total"] == 0 and d["records_with_violation"] == 0
     assert d["tool_calls_total"] == 3 + 3 + 3 + 3 + 0
     assert d["latency_s_median"] == 2.0 and d["latency_s_max"] == 6.0
@@ -390,3 +424,81 @@ def test_summary_per_experiment():
     assert a["rule_violations"]["skipped_mandatory"] == 2 and a["records_with_violation"] == 1
     assert a["reproducibility_rate"] is None  # one run only
     assert a["trap_handling_rate"] is None  # no guarded question
+
+
+# --- fix round 1 -----------------------------------------------------------------------------
+def output_call(tool, output, *, seq, allowed=True, source="model", state="TOOL_LOOP"):
+    return {
+        "seq": seq,
+        "state": state,
+        "tool": tool,
+        "arguments": {},
+        "output": {**output, "result_id": f"{tool}-{seq}"},
+        "allowed": allowed,
+        "source": source,
+    }
+
+
+def shown_outputs(**over):
+    """A C-style record: the model saw the raw tool outputs, not evidence labels."""
+    calls = [
+        output_call(
+            "get_index_history",
+            {"period_return_pct": 3.4, "first_date": "2025-01-02", "last_date": "2025-06-30"},
+            seq=1,
+        ),
+        output_call("get_stock_history", {"last_close": 77.7}, seq=2, allowed=False),
+    ]
+    base = dict(experiment="C", data_shown="tool_outputs", real_gate=False, tool_calls=calls)
+    base.update(over)
+    return record(**base)
+
+
+def test_numbers_copied_from_shown_outputs_are_not_hallucinations_but_are_uncited():
+    # 3.40 is in a tool output the model saw, but not in the committed evidence set.
+    rec = shown_outputs(answer="The index changed 3.40% from 2025-01-02.")
+    assert metrics.answer_numbers(rec) == (2, 0, 1)
+
+
+def test_a_number_in_no_shown_output_is_a_hallucination():
+    rec = shown_outputs(answer="The index changed 3.41% and closed at 77.70.")
+    # 3.41 is in no output; 77.70 is only in a rejected call, which the model never saw
+    assert metrics.answer_numbers(rec) == (2, 2, 2)
+
+
+def test_model_level_numbers_count_every_attempt_including_rejected_ones():
+    rejected = {"action": "HOLD", "text": "TOASO changed 7.77% by 2025-07-01. [E1]"}
+    accepted = {"action": "HOLD", "text": GOOD_ANSWER}
+    rec = record(attempts=[rejected, accepted])
+    assert metrics.answer_numbers(rec) == (3, 0, 0)  # what was shown passed
+    assert metrics.attempt_numbers(rec) == (5, 2, 2)  # what the model wrote
+    assert metrics.attempt_numbers(guarded()) == (0, 0, 0)
+    summary = metrics.summarize([rec])["D"]
+    assert summary["numeric_hallucination_rate"] == 0.0
+    assert summary["model_numeric_hallucination_rate"] == pytest.approx(2 / 5)
+
+
+@pytest.mark.parametrize(
+    "failed",
+    [
+        {"outcome": "MODEL_UNAVAILABLE", "answer_by": "harness"},
+        {"outcome": None, "answer": None, "answer_by": None, "error": "RuntimeError: boom"},
+        {"outcome": "COMPLETED"},
+    ],
+)
+def test_questions_with_a_failed_run_leave_the_reproducibility_denominator(failed):
+    twice = [record(evidence=[], **failed), record(repeat=1, evidence=[], **failed)]
+    once = [record(question_id="FX-07"), record(question_id="FX-07", repeat=1, **failed)]
+    clean = [record(question_id="FX-08"), record(question_id="FX-08", repeat=1)]
+    assert metrics.reproducibility(twice + once + clean) == (1, 1, 2)
+    summary = metrics.summarize(twice + once + clean)["D"]
+    assert summary["reproducibility_excluded"] == 2
+    assert summary["reproducibility_rate"] == 1.0
+
+
+def test_the_docs_say_a_to_c_conclusions_are_unsupported_by_construction():
+    for doc in (metrics.__doc__, metrics.unsupported_conclusion.__doc__):
+        assert "by construction" in doc
+        assert "ANALYSIS_UNSAFE" in doc and "citation" in doc
+    assert "model_numeric_hallucination_rate" in metrics.__doc__
+    assert "uncited" in metrics.__doc__

@@ -142,9 +142,26 @@ def test_two_tool_questions_name_their_tools(questions):
 
 
 # --- G1d: frozen and unseen ------------------------------------------------------------
+# The SHA-256 of the frozen set, written here by hand (and in the decision log): editing
+# the set and its hash file together must still fail.
+FROZEN_SHA256 = "e6141ea876724b786d84d78e7960f7865146a9f13074687cefe64aaa1fb3bcae"
+
+
 def test_the_set_is_frozen_under_its_recorded_hash():
-    assert qs.file_sha256(qs.QUESTIONS_PATH) == qs.recorded_sha256()
+    assert qs.file_sha256(qs.QUESTIONS_PATH) == FROZEN_SHA256
+    assert qs.recorded_sha256() == FROZEN_SHA256
+    assert qs.FROZEN_SHA256 == FROZEN_SHA256  # the runner checks against the same value
     qs.verify_frozen()  # no exception
+
+
+def test_editing_the_set_and_its_hash_file_together_still_fails(monkeypatch, tmp_path):
+    changed = tmp_path / "questions.jsonl"
+    changed.write_bytes(qs.QUESTIONS_PATH.read_bytes() + b'{"id": "X"}\n')
+    rehashed = tmp_path / "questions.sha256"
+    rehashed.write_text(f"{qs.file_sha256(changed)}  questions.jsonl\n", encoding="utf-8")
+    monkeypatch.setattr(qs, "HASH_PATH", rehashed)
+    with pytest.raises(ValueError, match="changed"):
+        qs.verify_frozen(changed)
 
 
 def test_a_changed_set_fails_the_freeze_check(tmp_path):
@@ -186,3 +203,35 @@ def test_no_fresh_question_repeats_or_paraphrases_a_test_file_string(questions):
     fresh = {q["id"] for q in questions if q["source"] == "fresh"}
     clashes = [(t, qid) for t, qid, _ in qs.overlaps(sorted(texts)) if qid in fresh]
     assert clashes == []
+
+
+# --- fix round 1: the expectations agree with the intent check ---------------------------
+def _intent_of(q):
+    from bist_harness.harness.intent import Intent
+
+    exp = q["expected"]
+    return Intent(
+        scenario=exp["scenarios"][0],
+        ticker=exp["ticker"],
+        sector=exp["sector"],
+        start=exp["start"],
+        end=exp["end"],
+        as_of=exp["as_of"],
+        language=q["lang"],
+    )
+
+
+def test_every_expected_analysis_passes_the_intent_check(questions):
+    from bist_harness.harness.intent import check_intent
+
+    for q in questions:
+        if "ANALYSIS" in q["expected"]["outcomes"] and q["expected"]["reason"] is None:
+            assert check_intent(_intent_of(q), today=FREEZE_DAY) is None, q["id"]
+
+
+def test_every_expected_reason_is_what_the_intent_check_returns(questions):
+    from bist_harness.harness.intent import check_intent
+
+    for q in questions:
+        if q["expected"]["reason"] is not None:
+            assert check_intent(_intent_of(q), today=FREEZE_DAY) == q["expected"]["reason"], q["id"]

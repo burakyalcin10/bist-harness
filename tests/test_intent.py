@@ -233,3 +233,30 @@ def make(**over):
 )
 def test_check_intent(over, expected):
     assert check_intent(make(**over), today=TODAY) == expected
+
+
+# --- fix round 1 (Task 9): the intent check accepts the machine's sector names ------------
+@pytest.mark.parametrize(
+    "sector",
+    ["Telecom", "telecom", "Airlines / Transport", "Airlines", "Telecommunications", "Steel"],
+)
+def test_check_intent_accepts_peer_group_names_as_the_machine_does(sector):
+    intent = make(scenario="SECTOR_LAGGARD", ticker=None, sector=sector)
+    assert check_intent(intent, today=TODAY) is None
+
+
+@pytest.mark.parametrize("sector", ["Spaceflight", "Tele", "Airlines / Banking", ""])
+def test_check_intent_still_rejects_an_unknown_sector(sector):
+    intent = make(scenario="SECTOR_LAGGARD", ticker=None, sector=sector or " ")
+    assert check_intent(intent, today=TODAY) == "UNKNOWN_SECTOR"
+
+
+def test_the_intent_check_and_the_machine_share_one_sector_resolver():
+    from bist_harness.data import peers
+    from bist_harness.harness import machine
+
+    names = ["Telecom", "Retail Trade", "Healthcare", "Petroleum", "Astrology", "Tele"]
+    for name in names:
+        accepted = check_intent(make(ticker=None, sector=name), today=TODAY) is None
+        assert accepted == (peers.sector_group(name) is not None), name
+        assert machine._sector_group(name) == peers.sector_group(name), name

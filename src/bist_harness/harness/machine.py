@@ -39,7 +39,7 @@ from bist_harness.harness.intent import (
 from bist_harness.harness.routes import ALLOWED_TOOLS, GUARDED_ROUTE, ROUTES, STATES
 from bist_harness.harness.validator import generate_explanation
 from bist_harness.tools.schemas import STRATEGY_VARIANTS, to_ollama_tools, validate_tool_call
-from bist_harness.universe import load_universe, normalize_ticker
+from bist_harness.universe import normalize_ticker
 
 ToolCaller = Callable[[str, dict], dict]
 
@@ -311,24 +311,8 @@ def _failure(exc: BaseException) -> dict:
 
 
 # --- call checks -----------------------------------------------------------------------
-def _parts(name: str) -> set[str]:
-    return {name.strip().casefold(), *(p.strip().casefold() for p in name.split("/"))}
-
-
-def _sector_group(name: str) -> str | None:
-    """The peer group a sector name means: a group name, a universe sector label or one
-    part of either ("Airlines"); ``None`` when it means no group or several."""
-    try:
-        return peers.resolve_sector(name).name
-    except KeyError:
-        pass
-    wanted = name.strip().casefold()
-    found = {g for g in peers.load_peer_groups() if wanted in _parts(g)}
-    universe = load_universe()
-    for ticker, sector in zip(universe["ticker"], universe["sector"], strict=True):
-        if wanted in _parts(sector):
-            found.add(peers.peer_group_of(ticker).name)
-    return found.pop() if len(found) == 1 else None
+# One resolver of sector names, shared with the intent check (harness.intent).
+_sector_group = peers.sector_group
 
 
 def _intent_group(intent: Intent) -> str | None:

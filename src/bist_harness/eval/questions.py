@@ -18,8 +18,10 @@ The unseen evaluation question set (card EC-060, design spec section 12).
   ``check_intent`` code a guarded question should end with) and ``tools`` (tools a
   two-tool question needs).
 
-The set is frozen: its SHA-256 (line endings normalised to LF) is recorded in
-``questions.sha256`` and ``verify_frozen`` refuses a set that changed. Fine-tuning data
+The set is frozen: its SHA-256 (line endings normalised to LF) is written in this module
+(``FROZEN_SHA256``, also in the decision log) and in ``questions.sha256``;
+``verify_frozen`` refuses a set that no longer has that hash, even when the hash file
+was edited along with it. Fine-tuning data
 (Sprint 5) must not share a question with it: ``overlaps`` finds near copies.
 """
 
@@ -45,6 +47,8 @@ CATEGORIES = (
 )
 # Outcome classes: ANALYSIS is any action label other than ANALYSIS_UNSAFE.
 OUTCOMES = ("ANALYSIS", "REFUSED_ADVICE", "OUT_OF_SCOPE", "ANALYSIS_UNSAFE")
+# The SHA-256 of the frozen set. A frozen set is not edited; this constant never changes.
+FROZEN_SHA256 = "e6141ea876724b786d84d78e7960f7865146a9f13074687cefe64aaa1fb3bcae"
 OVERLAP_THRESHOLD = 0.8  # SequenceMatcher ratio of the folded texts
 
 
@@ -65,11 +69,11 @@ def recorded_sha256() -> str:
 
 
 def verify_frozen(path: Path = QUESTIONS_PATH) -> None:
-    """Raise ``ValueError`` when the set no longer matches its recorded hash."""
+    """Raise ``ValueError`` when the set or its hash file no longer has the frozen hash."""
     found = file_sha256(path)
-    if found != recorded_sha256():
+    if found != FROZEN_SHA256 or recorded_sha256() != FROZEN_SHA256:
         raise ValueError(
-            f"the question set changed (sha256 {found}, recorded {recorded_sha256()}); "
+            f"the question set changed (sha256 {found}, frozen {FROZEN_SHA256}); "
             "a frozen set is not edited"
         )
 

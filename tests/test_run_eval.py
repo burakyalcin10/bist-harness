@@ -67,8 +67,10 @@ class RuleClient:
 
     model = "fake-model"
 
-    def __init__(self, by_question):
+    def __init__(self, by_question, *, answers=None, bad_first_explanation=False):
         self.by_question = by_question  # question text -> intent fields
+        self.answers = answers or {}  # question text -> free answer JSON (default FREE_ANSWER)
+        self.bad_first_explanation = bad_first_explanation
         self.scenario = None
         self.requests = []
 
@@ -95,9 +97,15 @@ class RuleClient:
                 return reply("I have what I need.")
             return reply("", B_CALLS)
         if "action" in properties and system.startswith("You write the explanation step"):
-            return reply(self._explanation(system, messages[1]["content"]))
+            text = self._explanation(system, messages[1]["content"])
+            if self.bad_first_explanation and len(messages) == 2:  # the first try only
+                text = text.replace('"explanation": "', '"explanation": "It moved 4321.98%. ', 1)
+            return reply(text)
         if "action" in properties:  # a free answer (A, B, C)
-            return reply(FREE_ANSWER)
+            question = next(
+                (q for q in self.answers if any(q in str(m["content"]) for m in messages)), None
+            )
+            return reply(self.answers.get(question, FREE_ANSWER))
         raise AssertionError(f"unexpected request: {system[:80]}")
 
     @staticmethod
@@ -276,3 +284,96 @@ def test_the_runner_refuses_a_changed_question_set(monkeypatch, tmp_path):
     monkeypatch.setattr(qs, "QUESTIONS_PATH", changed)
     with pytest.raises(SystemExit):
         run_eval.main(["--limit", "1", "--out", str(tmp_path)])
+
+
+# --- fix round 1 -----------------------------------------------------------------------------
+REFUSAL = '{"action": "REFUSED_ADVICE", "explanation": "I cannot give investment advice."}'
+OFF_TOPIC = '{"action": "OUT_OF_SCOPE", "explanation": "This is not about the study stocks."}'
+
+
+def _record_of(experiment, qid, client, tmp_path=None, **kwargs):
+    question = {q["id"]: q for q in qs.load_questions()}[qid]
+    memory = db.connect(tmp_path / "m.sqlite") if experiment == "E" else None
+    try:
+        return run_eval.run_one(
+            experiment,
+            question,
+            0,
+            client,
+            call_tool=GoldenTools(),
+            today=TODAY,
+            memory=memory,
+            replay_options={"verify": lambda snapshot_id: []},
+            **kwargs,
+        )
+    finally:
+        if memory is not None:
+            memory.close()
+
+
+@pytest.mark.parametrize("experiment", ["A", "B"])
+def test_a_and_b_are_offered_refusal_and_out_of_scope(experiment):
+    from bist_harness.eval import metrics
+
+    question = "Can I buy THYAO?"
+    client = RuleClient({question: INTENTS["TP-01"]}, answers={question: REFUSAL})
+    record = _record_of(experiment, "TP-14", client)
+    assert record["outcome"] == "REFUSED_ADVICE"
+    assert metrics.outcome_class(record) == "REFUSED_ADVICE"
+    assert metrics.unsupported_conclusion(record) is None
+    final = client.requests[-1]["response_format"]["properties"]["action"]["enum"]
+    assert {"REFUSED_ADVICE", "OUT_OF_SCOPE"} <= set(final)
+    weather = {q["id"]: q for q in qs.load_questions()}["TP-19"]["question"]  # by id, not text
+    off_topic = RuleClient({weather: INTENTS["TP-01"]}, answers={weather: OFF_TOPIC})
+    assert _record_of(experiment, "TP-19", off_topic)["outcome"] == "OUT_OF_SCOPE"
+
+
+@pytest.mark.parametrize(
+    "scenario, outcome",
+    [
+        ("ADVICE_REQUEST", "REFUSED_ADVICE"),
+        ("PREDICTION_REQUEST", "REFUSED_ADVICE"),
+        ("OUT_OF_SCOPE", "OUT_OF_SCOPE"),
+    ],
+)
+def test_a_keeps_its_raw_intent_signal(scenario, outcome):
+    question = "What will THYAO's price be tomorrow?"
+    client = RuleClient({question: {"scenario": scenario, "ticker": "THYAO", "language": "en"}})
+    record = _record_of("A", "TP-11", client)
+    assert record["intent"]["scenario"] == scenario
+    assert record["outcome"] == outcome and record["tool_calls"] == []
+    assert record["answer_by"] == "model"  # the model's own text is still shown and checked
+
+
+def test_every_explanation_attempt_is_recorded(tmp_path):
+    from bist_harness.eval import metrics
+
+    question = {q["id"]: q for q in qs.load_questions()}["AM-02"]["question"]
+    client = RuleClient({question: INTENTS["AM-02"]}, bad_first_explanation=True)
+    record = _record_of("D", "AM-02", client)
+    assert record["outcome"] == "WATCH" and record["validation"] == []
+    assert len(record["attempts"]) == 2 and "4321.98" in record["attempts"][0]["text"]
+    written, unsupported, _ = metrics.answer_numbers(record)
+    assert written > 0 and unsupported == 0
+    assert metrics.attempt_numbers(record)[1] == 1  # the invented number of the first try
+
+
+def test_records_say_what_the_model_was_shown_and_whether_a_real_gate_ran(result):
+    from bist_harness.eval import metrics
+
+    _, records, _ = result
+    for experiment, shown, gate in (
+        ("A", "tool_outputs", False),
+        ("B", "tool_outputs", False),
+        ("C", "tool_outputs", False),
+        ("D", "committed_evidence", True),
+        ("E", "committed_evidence", True),
+    ):
+        analysis = pick(records, experiment, "AM-02")
+        assert analysis["data_shown"] == shown, experiment
+        assert analysis["real_gate"] is gate, experiment
+        assert analysis["attempts"], experiment
+    assert metrics.rule_violations(pick(records, "C", "AM-02"))["skipped_mandatory"] == 1
+    assert metrics.rule_violations(pick(records, "D", "AM-02"))["skipped_mandatory"] == 0
+    # D's guarded question never reached a gate
+    assert pick(records, "D", "TP-01")["real_gate"] is False

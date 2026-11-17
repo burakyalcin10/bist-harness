@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Protocol
 
-from bist_harness.universe import is_in_universe, load_universe, normalize_ticker
+from bist_harness.data import peers
+from bist_harness.universe import is_in_universe, normalize_ticker
 
 SCENARIOS = (
     "SECTOR_LAGGARD",
@@ -374,12 +375,9 @@ def parse_intent(question: str, client: ChatClient, *, today: str, guard: bool =
 
 # --- code-side checks ------------------------------------------------------------------
 def _sector_known(sector: str) -> bool:
-    wanted = sector.strip().casefold()
-    for full in load_universe()["sector"].unique():
-        parts = [full, *(p.strip() for p in full.split("/"))]
-        if wanted in (p.casefold() for p in parts):
-            return True
-    return False
+    """A sector name the state machine can resolve: a universe sector label, a peer-group
+    name or one part of either (``peers.sector_group``, shared with the machine)."""
+    return peers.sector_group(sector) is not None
 
 
 def check_intent(intent: Intent, *, today: str) -> str | None:

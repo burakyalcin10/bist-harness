@@ -72,6 +72,30 @@ def resolve_sector(name: str) -> PeerGroup:
     return _groups()[found.pop()]
 
 
+def _parts(name: str) -> set[str]:
+    return {name.strip().casefold(), *(p.strip().casefold() for p in name.split("/"))}
+
+
+def sector_group(name: str) -> str | None:
+    """The peer group a sector name means: a group name, a universe sector label or one
+    part of either ("Airlines", "Telecom"); ``None`` when it means no group or several.
+
+    The one resolver of sector names: the intent check (``harness.intent``) and the call
+    checks of the state machine both use it, so they accept the same names.
+    """
+    try:
+        return resolve_sector(name).name
+    except KeyError:
+        pass
+    wanted = name.strip().casefold()
+    found = {g for g in _groups() if wanted in _parts(g)}
+    universe = load_universe()
+    for ticker, sector in zip(universe["ticker"], universe["sector"], strict=True):
+        if wanted in _parts(sector):
+            found.add(peer_group_of(ticker).name)
+    return found.pop() if len(found) == 1 else None
+
+
 def all_symbols() -> list[str]:
     """Universe and reference tickers, each once, universe stocks first."""
     groups = _groups().values()

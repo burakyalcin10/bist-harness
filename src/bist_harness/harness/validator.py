@@ -189,7 +189,10 @@ ADVICE_PATTERNS = (
     r"oner(?:iyor|ir|il(?:ir|mektedir))[a-z]*",  # "öneriyoruz", "öneririz", "önerilir"
     r"tavsiye ed[a-z]*",
     # "yatırım tavsiyesidir", but not "yatırım tavsiyesi değildir / vermez"
-    r"yatirim tavsiye[a-z]*(?= )(?! (?:degil|niteligi|icermez|vermez|sunmaz|yoktur))",
+    # (also "yatırım tavsiyesi ya da fiyat tahmini vermez": a negation up to three words
+    # after "ya da" / "veya", as in the system's own refusal sentence)
+    r"yatirim tavsiye[a-z]*(?= )(?! (?:(?:ya da|veya) (?:[a-z0-9]+ ){0,3})?"
+    r"(?:degil|niteligi|icermez|vermez|sunmaz|yoktur))",
     # "garanti", "garantilidir", but not the bank (Garanti BBVA, Garanti Bankası)
     r"garanti[a-z]*(?= )(?! bbva | bankasi )",
     r"(?:" + "|".join((*MOVE_AORIST_TR, "geriler")) + r")(?:dir|ler|lar)?",  # "yükselir"

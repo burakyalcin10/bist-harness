@@ -857,3 +857,59 @@ def test_unsupported_values_follow_the_whole_set_and_the_sentence_rule():
     assert unsupported_values(wrong_cite, committed, question) == ([41.27], [])
     # 4.10 is only in E3, which is not committed.
     assert unsupported_values("The index moved 4.10%. [E3]", committed, question) == ([4.1], [])
+
+
+# --- fix round 1: the system's own fixed answers are not advice ---------------------------
+def _fixed_answers():
+    reasons = (  # every code check_intent can return
+        "UNKNOWN_TICKER",
+        "MISSING_TICKER",
+        "UNKNOWN_SECTOR",
+        "INVALID_DATE",
+        "FUTURE_DATE",
+        "INVALID_DATE_RANGE",
+    )
+    found = []
+    for table in (
+        machine.REFUSAL_ANSWERS,
+        machine.OUT_OF_SCOPE_ANSWERS,
+        machine.MODEL_UNAVAILABLE_ANSWERS,
+    ):
+        found += [(lang, text) for lang, text in table.items()]
+    for lang, text in machine.UNSAFE_ANSWERS.items():
+        found += [(lang, text.format(reason=reason)) for reason in reasons]
+    return found
+
+
+@pytest.mark.parametrize("lang, text", _fixed_answers())
+def test_every_fixed_system_answer_passes_the_advice_check(lang, text):
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bu sistem yatırım tavsiyesi ya da fiyat tahmini vermez. [E1]",
+        "Bu cevap yatırım tavsiyesi veya kesin bir yorum içermez. [E1]",
+        "Bu metin yatırım tavsiyesi değildir. [E1]",
+    ],
+)
+def test_a_negated_investment_advice_phrase_is_not_advice(text):
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bu bir yatırım tavsiyesidir ve THYAO için geçerlidir. [E1]",
+        "Bu yatırım tavsiyesi ya da yorum olarak okunabilir. [E1]",
+    ],
+)
+def test_an_investment_advice_claim_is_still_advice(text):
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(text) != []
