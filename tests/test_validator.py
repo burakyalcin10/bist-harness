@@ -359,16 +359,29 @@ NOT_ADVICE = {
         "Fiyat dönem içinde yükseldi [E1].",
         "Fiyat artarak dönemi tamamladı [E1].",
         "RSI aşırı satım bölgesinde değildi [E1].",
+        # Fix round 2: ordinary passives with "alınmalı" / "tutulmalı" are not advice.
+        "Bu durum dikkate alınmalıdır [E1].",
+        "Riskler dikkate alınmalıdır [E1].",
+        "Bu fark hesaba katılmalıdır [E1].",
+        "Bu sonuç göz önüne alınmalıdır [E1].",
+        "Bu konu ayrıca ele alınmalıdır [E1].",
+        "Bu sınır akılda tutulmalıdır [E1].",
+        "Bu fark göz önünde tutulmalıdır [E1].",
     ],
 }
 
 
 @pytest.mark.parametrize("lang", LANGS)
-def test_saying_it_is_not_advice_and_the_disclaimer_itself_pass(lang):
+def test_the_disclaimer_itself_is_not_advice(lang):
     # The Turkish disclaimer contains "garanti"; the disclaimer line is not advice.
     assert check(GOOD[lang], lang) == []
-    for sentence in NOT_ADVICE[lang]:
-        assert check(with_sentence(lang, sentence), lang) == [], sentence
+
+
+@pytest.mark.parametrize(
+    ("lang", "sentence"), [(lang, s) for lang in LANGS for s in NOT_ADVICE[lang]]
+)
+def test_descriptive_sentences_are_not_advice(lang, sentence):
+    assert check(with_sentence(lang, sentence), lang) == []
 
 
 # --- Fix round 1, finding 1: suffixed stems and hedged forms ------------------------------
@@ -376,6 +389,8 @@ ADVICE_BYPASSES = {
     "tr": [
         "Hisse alınmalıdır",
         "Hisse satılmalıdır",
+        "Hisse elde tutulmalıdır",
+        "Hisse satın alınmalıdır",
         "Fiyat artacaktır",
         "Fiyat azalacaktır",
         "Bu bir yatırım tavsiyesidir",

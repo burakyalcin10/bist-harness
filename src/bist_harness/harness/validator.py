@@ -172,9 +172,14 @@ _MOVES_EN = "|".join(
 _FUTURE_TR = "|".join(
     verb[:-1] for verb in (*MOVE_FUTURE_TR, "azalacak", "gerileyecek", "toparlanacak")
 )
+# Words that turn "alınmalı" / "tutulmalı" into an ordinary passive ("should be taken into
+# account / kept in mind"); each is checked as the word right before the token.
+IDIOM_WORDS_TR = ("dikkate", "onune", "onunde", "hesaba", "ele", "isleme", "altina", "akilda")
+_NOT_AFTER_IDIOM = "".join(f"(?<! {word} )" for word in IDIOM_WORDS_TR)
 ADVICE_PATTERNS = (
-    # Turkish: "almalı", "alınmalıdır", "satılmalı", "tutulmalı", "tutmalısınız"
-    r"(?:al(?:in)?|sat(?:il)?|tut(?:ul)?)mali[a-z]*",
+    # Turkish: "almalı", "alınmalıdır", "satılmalı", "tutulmalı", "tutmalısınız"; not the
+    # idioms "dikkate / göz önüne / ele alınmalı", "akılda / göz önünde tutulmalı".
+    _NOT_AFTER_IDIOM + r"(?:al(?:in)?|sat(?:il)?|tut(?:ul)?)mali[a-z]*",
     r"(?:al|sat|tut)abilirsiniz",
     r"(?:almaya|satmaya|tutmaya) deger[a-z]*",
     r"(?:al|sat|tut) (?:sinyal|tavsiye|firsat|onerisi)[a-z]*",  # "al sinyalidir"
