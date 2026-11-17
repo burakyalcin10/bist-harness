@@ -272,7 +272,7 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `total_assets_mn`, `equity_mn` | Balance at the period end | mn TRY |
 | `net_debt_mn` | Short-term plus long-term financial debt minus cash and short-term financial investments | mn TRY |
 | `revenue_yoy_pct`, `ebitda_yoy_pct`, `net_profit_yoy_pct` | Cumulative value against the same period a year earlier, nominal; null when the earlier value is not positive | % |
-| `revenue_real_yoy_pct`, `ebitda_real_yoy_pct`, `net_profit_real_yoy_pct` | **Withheld (always null).** The source already shows last year's figure restated to the current price level, so a CPI adjustment would deflate twice | % |
+| `revenue_real_yoy_pct`, `ebitda_real_yoy_pct`, `net_profit_real_yoy_pct` | Against last year's figure on today's price level: the restated comparative column of the same KAP report, or, for a company that does not restate (banks, the insurer, THYAO), last year's published figure times the CPI ratio of the two period ends; null when the base is not positive or not comparable | % |
 | `ebitda_margin_pct`, `net_margin_pct` | EBITDA and net profit over revenue, cumulative | % |
 | `roe_pct` | Last-twelve-months net profit of the parent over the parent's equity at the period end | % |
 | `roa_pct` | Last-twelve-months net profit over total assets at the period end | % |
@@ -281,8 +281,9 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `current_ratio` | Current assets over short-term liabilities | ratio |
 | `quick_ratio` | Current assets minus inventories, over short-term liabilities | ratio |
 | `cash_conversion` | Operating cash flow over net profit, cumulative | ratio |
-| `market_cap_mn`, `pe`, `pb`, `ev_ebitda` | **Withheld (always null).** Prices in the snapshot are adjusted for dividends, so a past close times the share count understates the market value of the time | — |
-| `valuation_note` | `WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED` | — |
+| `market_cap_mn` | Unadjusted close on `as_of` (`prices_raw` layer) times the paid-in capital of the period (nominal 1 TL a share) | mn TRY |
+| `pe`, `pb`, `ev_ebitda` | Market value over last-twelve-months parent net profit, over parent equity; market value plus net debt over last-twelve-months EBITDA | ratio |
+| `valuation_note` | `UNADJUSTED_CLOSE_TIMES_PAID_IN_CAPITAL`; `WITHHELD_SHARE_COUNT_CHANGED` when a split (bonus issue) happened between the period end and `as_of`; `WITHHELD_NO_UNADJUSTED_PRICE` when the layer has no price | — |
 | `not_applicable` | Fields that do not exist for a bank or an insurer (EBITDA, net debt, liquidity ratios, cash flow) | — |
 | `periods` | `calculate_fundamental_change`: number of quarters requested (1 to 8) | count |
 | `compared_with` | Period a year before `period`, used for the changes below | — |
@@ -296,17 +297,17 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `reaction_1d_pct`, `reaction_5d_pct`, `reaction_20d_pct` | Per quarter: stock return from the close before the `known_from` day to the close 1, 5 and 20 trading days after it; null while the horizon is not complete on `as_of` | % |
 | `abnormal_vs_index_5d_pct`, `abnormal_vs_peers_5d_pct` | The 5-day reaction minus the XU100 return and minus the equal-weight return of the sector peers over the same two dates | % points |
 | `reaction_summary` | Over every period of the stock public on `as_of`: `events`, and under `horizons` for `1d`, `5d` and `20d` the number of completed events, `mean_return_pct`, `median_return_pct`, `positive_rate_pct`, `mean_abnormal_vs_index_pct`, `mean_abnormal_vs_peers_pct` | — |
-| `improvement_flags` | Checks that are positive against a year earlier: `REVENUE_UP`, `PROFIT_UP` (real growth when CPI is available), `MARGIN_UP`, `RETURN_ON_EQUITY_UP`, and for industrial companies `LEVERAGE_DOWN`, `CASH_FLOW_UP` | — |
+| `improvement_flags` | Checks that are positive against a year earlier: `REVENUE_UP`, `PROFIT_UP` and, for industrial companies, `CASH_FLOW_UP` compare the cumulative figure with last year's on the same price level (a loss turned into a profit counts as up); `MARGIN_UP`, `RETURN_ON_EQUITY_UP` and, for industrial companies, `LEVERAGE_DOWN` compare the ratios | — |
 | `fundamental_trend` | `Improving` when at least two thirds of the applicable checks are positive, `Deteriorating` when at most one third, otherwise `Mixed`; null with fewer than three applicable checks | — |
 
-**Limits (found by the Sprint 3 review).** The statement source is not point-in-time
-for companies under inflation accounting: once the following year's report is out, a
-period's figures are shown as restated in that report, at the later price level. So
-amounts of earlier periods are not the published ones, twelve-month sums and
-balance-sheet ratios can mix price levels, and for the latest year the year-over-year
-change is close to real growth while for earlier years it is not. Every output carries a
-`RESTATED_SOURCE` warning. Rebuilding this layer from as-published figures is planned as
-the first task of Sprint 4; until then these fields are indicative only.
+**As published (Sprint 4, K-055).** Every figure is the one in the period's own KAP
+report; `period_end` is that report's own date (MAVI: January, April, July, October).
+Twelve-month sums and a quarter's own value bring the earlier cumulative figure to the
+period's price level with the CPI when the company restates; a quarter's own value is
+taken from the report's three-month column where there is one. Warnings:
+`COMPARATIVE_NOT_RESTATED` (the company does not restate; real growth uses the CPI),
+`NO_COMPARABLE_YEAR` (last year's published figure is not in the data),
+`COMPARATIVE_BEFORE_TMS29` (the comparison reaches back before the 2023 year end).
 
 ## 13. News and event layer — `get_news_events`
 
