@@ -324,9 +324,9 @@ def _apply_default_period(intent: Intent, today: str) -> Intent:
 # Upper-case ticker-like tokens of the raw question ("PGSUS'un" gives PGSUS).
 _UPPER_TOKEN = re.compile(r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])[A-ZÇĞİÖŞÜ]{4,6}(?![A-Za-z0-9çğıöşü])")
 _UPPER_FOLD = str.maketrans("ÇĞİÖŞÜ", "CGIOSU")
-# A code written with a Turkish suffix after an apostrophe, in any case: "thyao'nun".
-_SUFFIXED_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])([A-Za-zÇĞİÖŞÜçğıöşü]{4,6})['’](?=[a-zçğıöşü])"
+# Code-like words of the raw question in any case ("thyao", "thyao'nun" gives thyao).
+_ANY_TOKEN = re.compile(
+    r"(?<![A-Za-z0-9ÇĞİÖŞÜçğıöşü])[A-Za-zÇĞİÖŞÜçğıöşü]{4,6}(?![A-Za-z0-9çğıöşü])"
 )
 # Stock codes that are also ordinary words ("mavi" is blue, "deva" a cure): they name the
 # stock only when written upper-case.
@@ -460,12 +460,12 @@ def _upper_tokens(question: str) -> list[str]:
 
 
 def _written_codes(question: str) -> set[str]:
-    """The stock codes a question writes: upper-case ("THYAO", "THYAO'nun") or, in any
-    case, with a suffix after an apostrophe ("thyao'nun"). A code that is also an ordinary
-    word counts upper-case only ("Mavi bir gökyüzü" does not name MAVI)."""
+    """The stock codes a question writes, in any case, with or without a suffix after an
+    apostrophe ("THYAO", "THYAO'nun", "thyao", "thyao'nun"). A code that is also an
+    ordinary word counts upper-case only ("Mavi bir gökyüzü" does not name MAVI)."""
     codes = set(_upper_tokens(question))
-    for match in _SUFFIXED_TOKEN.finditer(question):
-        code = fold_text(match[1]).strip().upper()
+    for match in _ANY_TOKEN.finditer(question):
+        code = fold_text(match[0]).strip().upper()
         if code not in _WORD_CODES:
             codes.add(code)
     return codes

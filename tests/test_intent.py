@@ -464,9 +464,9 @@ def test_an_acronym_in_a_market_question_is_not_taken_for_a_ticker(question, sce
 
 
 # Fix round 1: one rule for "the question names ticker X", used to keep the model's ticker
-# and to find a replacement. A code counts written upper-case (a Turkish suffix after an
-# apostrophe allowed) or lower-case with an apostrophe suffix ("thyao'nun"); a code that is
-# also an ordinary word ("mavi") counts upper-case only.
+# and to find a replacement. A code counts in any case, with or without a Turkish suffix
+# after an apostrophe ("THYAO", "THYAO'nun", "thyao", "thyao'nun"); a code that is also an
+# ordinary word ("mavi") counts upper-case only (fix round 1b).
 @pytest.mark.parametrize(
     ("question", "model_ticker", "ticker"),
     [
@@ -476,7 +476,9 @@ def test_an_acronym_in_a_market_question_is_not_taken_for_a_ticker(question, sce
         ("MAVI'nin son çeyrekteki grafiği nasıldı?", "MAVI", "MAVI"),
         ("MAVI'nin son çeyrekteki grafiği nasıldı?", "THYAO", "MAVI"),
         ("mavi'nin son çeyrekteki grafiği nasıldı?", "MAVI", None),
-        ("thyao son çeyrekte nasıl gitti?", "THYAO", None),
+        ("thyao son çeyrekte nasıl gitti?", "THYAO", "THYAO"),
+        ("thyao son çeyrekte nasıl gitti?", "AKBNK", "THYAO"),
+        ("Mavi son çeyrekte nasıl gitti?", "MAVI", None),
     ],
 )
 def test_keeping_and_replacing_a_ticker_read_the_question_alike(question, model_ticker, ticker):
