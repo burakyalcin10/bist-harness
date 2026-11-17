@@ -270,3 +270,70 @@ def test_support_resistance_tolerance_must_be_a_small_positive_share():
     for bad in (0, -0.1, 0.5):
         out = srv.find_support_resistance("ASELS", "2021-01-01", "2022-06-30", bad)
         assert out["error"]["code"] == "INVALID_ARGUMENT"
+
+
+@pytest.fixture
+def sector_histories(monkeypatch):
+    """A different random walk per symbol, so sector members have different returns."""
+    frames: dict[str, pd.DataFrame] = {}
+
+    def load(symbol):
+        if symbol not in frames:
+            frames[symbol] = _history(seed=sum(map(ord, symbol)))
+        return frames[symbol]
+
+    monkeypatch.setattr(srv, "load_history", load)
+    return load
+
+
+def test_sector_tool_ranks_the_peer_group_against_xu100(sector_histories):
+    from bist_harness.data.peers import resolve_sector
+    from bist_harness.tools.sector import rank_sector_relative_strength
+
+    out = srv.rank_sector_relative_strength("Banking", 20, "2022-06-30")
+    group = resolve_sector("Banking")
+    expected = rank_sector_relative_strength(
+        {t: sector_histories(t)["Close"] for t in group.members},
+        group,
+        horizon_days=20,
+        as_of="2022-06-30",
+        benchmark=sector_histories("XU100")["Close"],
+    )
+    for key, value in expected.items():
+        assert out[key] == value
+    assert len(out["members"]) == 6 and out["sector_strong"] in (True, False)
+    assert out["snapshot_id"] and len(out["result_id"]) == 12
+
+
+def test_sector_tool_accepts_a_universe_sector_label(sector_histories):
+    out = srv.rank_sector_relative_strength("Basic Metals / Steel", 60, "2022-06-30")
+    assert out["sector"] == "Steel"
+
+
+def test_sector_tool_reports_members_missing_from_the_snapshot(sector_histories, monkeypatch):
+    from bist_harness.errors import DataUnavailableError
+
+    def load(symbol):
+        if symbol == "GARAN":
+            raise DataUnavailableError("Snapshot s has no data for GARAN.")
+        return sector_histories(symbol)
+
+    monkeypatch.setattr(srv, "load_history", load)
+    out = srv.rank_sector_relative_strength("Banking", 20, "2022-06-30")
+    assert len(out["members"]) == 5
+    assert any("GARAN" in w for w in out["warnings"])
+
+
+@pytest.mark.parametrize(
+    "args,code",
+    [
+        (("Crypto", 20, "2022-06-30"), "UNKNOWN_SECTOR"),
+        (("Banking", 7, "2022-06-30"), "INVALID_ARGUMENT"),
+        (("Banking", 20, "30.06.2022"), "INVALID_DATE"),
+        (("Banking", 20, "2999-01-01"), "FUTURE_DATE"),
+        (("Banking", 20, "2019-06-30"), "DATA_UNAVAILABLE"),
+    ],
+)
+def test_sector_tool_bad_input(args, code, sector_histories):
+    out = srv.rank_sector_relative_strength(*args)
+    assert out["error"]["code"] == code

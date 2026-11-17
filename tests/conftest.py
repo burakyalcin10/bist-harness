@@ -12,6 +12,7 @@ IMPLEMENTED_TOOLS = {
     "get_index_history",
     "calculate_indicators",
     "find_support_resistance",
+    "rank_sector_relative_strength",
     "detect_reversal_events",
 }
 

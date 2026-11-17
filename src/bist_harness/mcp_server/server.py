@@ -21,15 +21,18 @@ from datetime import date, timedelta
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
 
-from bist_harness.data import snapshot
+from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
 from bist_harness.tools import events, support_resistance
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.schemas import INDICATORS, REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
+from bist_harness.tools.sector import rank_sector_relative_strength as rank_sector
 from bist_harness.universe import is_in_universe, normalize_ticker
 
 FORWARD_DAYS = (1, 3, 5, 10)
+SECTOR_HORIZONS = (5, 10, 20, 60)
+BENCHMARK = "XU100"
 COVERAGE_SLACK_DAYS = 7
 
 server = MCPServer(
@@ -232,6 +235,54 @@ def detect_reversal_events(
         "direction": result["direction"],
     }
     return _with_result_id("detect_reversal_events", args, {**args, **result, **meta})
+
+
+def _check_as_of(as_of: str) -> dict | None:
+    try:
+        day = date.fromisoformat(as_of)
+    except ValueError:
+        return _error("INVALID_DATE", "Dates must be written as YYYY-MM-DD.")
+    if day > date.today():
+        return _error("FUTURE_DATE", "as_of is in the future; tools only report history.")
+    return None
+
+
+@server.tool(description=TOOL_SCHEMAS["rank_sector_relative_strength"]["description"])
+def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) -> dict:
+    problem = _check_as_of(as_of)
+    if problem:
+        return problem
+    if horizon_days not in SECTOR_HORIZONS:
+        return _error("INVALID_ARGUMENT", f"horizon_days must be one of {list(SECTOR_HORIZONS)}.")
+    try:
+        group = peers.resolve_sector(sector)
+    except KeyError:
+        names = ", ".join(peers.load_peer_groups())
+        return _error("UNKNOWN_SECTOR", f"{sector!r} is not a sector of the universe: {names}.")
+    try:
+        snapshot_id = current_snapshot_id()
+    except DataUnavailableError as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+
+    closes: dict[str, pd.Series] = {}
+    for symbol in (*group.members, BENCHMARK):
+        try:
+            closes[symbol] = load_history(symbol)["Close"]
+        except DataUnavailableError:
+            continue
+    result = rank_sector(
+        closes, group, horizon_days=horizon_days, as_of=as_of, benchmark=closes.get(BENCHMARK)
+    )
+    if not result["members"]:
+        return _error("DATA_UNAVAILABLE", f"No market data for the {group.name} group on {as_of}.")
+    args = {"sector": group.name, "horizon_days": horizon_days, "as_of": as_of}
+    output = {
+        **result,
+        "benchmark": BENCHMARK,
+        "snapshot_id": snapshot_id,
+        "data_source": DATA_SOURCE,
+    }
+    return _with_result_id("rank_sector_relative_strength", args, output)
 
 
 def unwrap_tool_result(result) -> dict:
