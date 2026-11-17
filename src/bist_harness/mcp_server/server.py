@@ -24,11 +24,13 @@ from mcp.server.mcpserver import MCPServer
 
 from bist_harness.backtest.runner import run_variant
 from bist_harness.backtest.strategies import StrategyContext
+from bist_harness.data import fundamentals as fundamentals_data
 from bist_harness.data import macro as macro_data
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
 from bist_harness.tools import calendar_patterns, events, support_resistance
+from bist_harness.tools.fundamentals import fundamental_change, fundamental_metrics
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.macro import macro_context
 from bist_harness.tools.schemas import (
@@ -333,6 +335,90 @@ def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) ->
     args = {"sector": group.name, "horizon_days": horizon_days, "as_of": as_of}
     output = {**result, "benchmark": BENCHMARK, **versions}
     return _with_result_id("rank_sector_relative_strength", args, output)
+
+
+def load_statements() -> pd.DataFrame:
+    """Statement items of every stock from the active snapshot."""
+    return fundamentals_data.load_statements()
+
+
+def load_disclosure_calendar() -> pd.DataFrame:
+    return fundamentals_data.load_disclosure_calendar()
+
+
+FUNDAMENTAL_SOURCES = (
+    "Statements: İş Yatırım public financial-statement service (cumulative values per "
+    "reporting period). Publication times: KAP financial-report disclosures. A period is "
+    "used from the first trading day whose close follows its publication."
+)
+MAX_QUARTERS = 8
+
+
+def _fundamental_inputs(ticker: str, as_of: str) -> dict | tuple:
+    """Validate and load what both fundamental tools need, or return an error object."""
+    if not is_in_universe(ticker):
+        return _error("UNKNOWN_TICKER", f"{ticker!r} is not one of the 30 study-universe stocks.")
+    problem = _check_as_of(as_of)
+    if problem:
+        return problem
+    name = normalize_ticker(ticker)
+    try:
+        statements, calendar = load_statements(), load_disclosure_calendar()
+        versions = _versions()
+    except (DataUnavailableError, ValueError) as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    try:
+        cpi = macro_data.cpi_index(load_macro("cpi"))
+    except DataUnavailableError:
+        cpi = None
+    try:
+        close = load_history(name)["Close"]
+    except (DataUnavailableError, ValueError):
+        close = None
+    versions["data_source"] = FUNDAMENTAL_SOURCES
+    return name, statements, calendar, cpi, close, versions
+
+
+def _no_statement(name: str, as_of: str) -> dict:
+    return _error("DATA_UNAVAILABLE", f"No financial statement of {name} was public on {as_of}.")
+
+
+@server.tool(description=TOOL_SCHEMAS["get_fundamental_metrics"]["description"])
+def get_fundamental_metrics(ticker: str, as_of: str) -> dict:
+    loaded = _fundamental_inputs(ticker, as_of)
+    if isinstance(loaded, dict):
+        return loaded
+    name, statements, calendar, cpi, close, versions = loaded
+    result = fundamental_metrics(
+        statements, calendar, ticker=name, as_of=as_of, close=close, cpi=cpi
+    )
+    if result is None:
+        return _no_statement(name, as_of)
+    args = {"ticker": name, "as_of": as_of}
+    return _with_result_id("get_fundamental_metrics", args, {**result, **versions})
+
+
+@server.tool(description=TOOL_SCHEMAS["calculate_fundamental_change"]["description"])
+def calculate_fundamental_change(ticker: str, as_of: str, periods: int = 4) -> dict:
+    loaded = _fundamental_inputs(ticker, as_of)
+    if isinstance(loaded, dict):
+        return loaded
+    name, statements, calendar, cpi, _, versions = loaded
+    if (
+        isinstance(periods, bool)
+        or not isinstance(periods, int)
+        or not 1 <= periods <= MAX_QUARTERS
+    ):
+        return _error(
+            "INVALID_ARGUMENT", f"periods must be a whole number from 1 to {MAX_QUARTERS}."
+        )
+    result = fundamental_change(
+        statements, calendar, ticker=name, as_of=as_of, periods=periods, cpi=cpi
+    )
+    if result is None:
+        return _no_statement(name, as_of)
+    args = {"ticker": name, "as_of": as_of, "periods": periods}
+    return _with_result_id("calculate_fundamental_change", args, {**args, **result, **versions})
 
 
 def _period_problem(start: str, end: str) -> dict | None:

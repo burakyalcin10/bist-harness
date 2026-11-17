@@ -249,10 +249,61 @@ Produced by `data/macro.py` and `tools/macro.py`. Sources and publication rules 
 | `cpi_annual_pct`, `cpi_monthly_pct` | That month's consumer-price change against a year and a month earlier | % | Release day |
 | `cpi_published` | Release day of that figure: the 3rd of the next month or the next working day | date | — |
 
-## 12. Layers not built yet
+## 12. Fundamental layer — `get_fundamental_metrics`, `calculate_fundamental_change`
+
+Produced by `data/fundamentals.py` and `tools/fundamentals.py`. Statement values are
+cumulative within the fiscal year. Amounts are in million TRY. **Known when:** a
+reporting period is used from its `known_from` day, the first trading day whose close
+follows the KAP publication (before 18:00 on a trading day: that day; otherwise the next
+trading day). A ratio whose base is missing, zero or negative is null.
+
+| Name | Definition | Unit |
+| --- | --- | --- |
+| `period`, `period_end` | Latest reporting period public on `as_of` (for example `2025Q3`) and its last day | — |
+| `published_at` | KAP timestamp of the first financial-report disclosure of that period | timestamp |
+| `known_from` | First trading day on which the period may be used | date |
+| `financial_group` | `industrial`, `bank` or `insurance`: which statement layout applies | — |
+| `revenue_meaning` | What `revenue_mn` is for that group: net sales, net interest income or gross written premiums | — |
+| `revenue_mn`, `net_profit_mn`, `operating_cash_flow_mn` | Cumulative value of the period | mn TRY |
+| `ebitda_mn` | Operating profit plus depreciation and amortisation, cumulative | mn TRY |
+| `total_assets_mn`, `equity_mn` | Balance at the period end | mn TRY |
+| `net_debt_mn` | Short-term plus long-term financial debt minus cash and short-term financial investments | mn TRY |
+| `revenue_yoy_pct`, `ebitda_yoy_pct`, `net_profit_yoy_pct` | Cumulative value against the same period a year earlier, nominal; null when the earlier value is not positive | % |
+| `revenue_real_yoy_pct`, `ebitda_real_yoy_pct`, `net_profit_real_yoy_pct` | The same after bringing the earlier value to the later period's price level with the CPI index | % |
+| `ebitda_margin_pct`, `net_margin_pct` | EBITDA and net profit over revenue, cumulative | % |
+| `roe_pct` | Last-twelve-months net profit of the parent over the parent's equity at the period end | % |
+| `roa_pct` | Last-twelve-months net profit over total assets at the period end | % |
+| `net_debt_to_ebitda` | `net_debt_mn` over last-twelve-months EBITDA | ratio |
+| `debt_to_equity` | Financial debt over equity | ratio |
+| `current_ratio` | Current assets over short-term liabilities | ratio |
+| `quick_ratio` | Current assets minus inventories, over short-term liabilities | ratio |
+| `cash_conversion` | Operating cash flow over net profit, cumulative | ratio |
+| `market_cap_mn` | Close on `as_of` times the share count of the period (paid-in capital, 1 TRY nominal) | mn TRY |
+| `pe` | `market_cap_mn` over last-twelve-months net profit of the parent | ratio |
+| `pb` | `market_cap_mn` over the parent's equity | ratio |
+| `ev_ebitda` | `market_cap_mn` plus `net_debt_mn`, over last-twelve-months EBITDA | ratio |
+| `valuation_note` | Why the valuation ratios are null: `SHARE_COUNT_CHANGED_AFTER_THE_PERIOD` (prices in the snapshot assume the later share count) or `NO_PRICE_OR_SHARE_COUNT` | — |
+| `not_applicable` | Fields that do not exist for a bank or an insurer (EBITDA, net debt, liquidity ratios, cash flow) | — |
+| `periods` | `calculate_fundamental_change`: number of quarters requested (1 to 8) | count |
+| `compared_with` | Period a year before `period`, used for the changes below | — |
+| `quarters` | One row per public quarter, latest first | — |
+| `revenue_q_mn`, `ebitda_q_mn`, `net_profit_q_mn` | The quarter's own value: cumulative minus the previous cumulative | mn TRY |
+| `ebitda_margin_q_pct`, `net_margin_q_pct` | Margins of the quarter alone | % |
+| `revenue_qoq_pct` | Quarter's revenue against the previous quarter | % |
+| `revenue_q_yoy_pct`, `net_profit_q_yoy_pct` | Quarter's value against the same quarter a year earlier, nominal | % |
+| `ebitda_margin_change_pp`, `net_margin_change_pp`, `roe_change_pp` | Latest period minus a year earlier | % points |
+| `net_debt_to_ebitda_change`, `current_ratio_change` | Latest period minus a year earlier | ratio |
+| `improvement_flags` | Checks that are positive against a year earlier: `REVENUE_UP`, `PROFIT_UP` (real growth when CPI is available), `MARGIN_UP`, `RETURN_ON_EQUITY_UP`, and for industrial companies `LEVERAGE_DOWN`, `CASH_FLOW_UP` | — |
+| `fundamental_trend` | `Improving` when at least two thirds of the applicable checks are positive, `Deteriorating` when at most one third, otherwise `Mixed`; null with fewer than three applicable checks | — |
+
+Limits: values are those the source holds today (a later restatement of a period is not
+tracked); under inflation accounting each period is stated at its own price level, so a
+quarter's own value (a difference of two cumulative values) is approximate; statements
+before the 2023 year end are not inflation-adjusted (`COMPARATIVE_BEFORE_TMS29`).
+
+## 13. Layers not built yet
 
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
-| Fundamental | Statement items by publication date, quarterly and annual changes, ratios | 3 |
 | News and events | Timestamped disclosure and news metadata | 3 |
 | Speech | Topics, claims and stance from approved public videos | 7 |

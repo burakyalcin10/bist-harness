@@ -16,6 +16,8 @@ IMPLEMENTED_TOOLS = {
     "test_weekday_pattern",
     "run_backtest",
     "get_macro_context",
+    "get_fundamental_metrics",
+    "calculate_fundamental_change",
     "detect_reversal_events",
 }
 
