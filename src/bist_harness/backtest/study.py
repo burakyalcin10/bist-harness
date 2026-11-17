@@ -7,7 +7,9 @@ Runs strategy variants A to E on the whole universe, the Scenario 1 to 3 studies
 (``backtest/scenarios.py``) and, for the test period, the Scenario 4 reaction study and
 the test half of Scenario 2. The rules are those of ``docs/preregistration.md``; this
 module only calls the tools and writes what they return to ``runs/``. The test period
-is meant to be run once.
+is run once: ``study test`` refuses to run again when its result is already recorded
+(``docs/results/2026-11-17-test-period.md`` or a ``runs/study-test-*.json``), unless
+``--i-know-this-reruns-the-test-period`` is given, which breaks the pre-registration.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import pandas as pd
 
 from bist_harness.backtest import scenarios
 from bist_harness.backtest.periods import PERIODS
+from bist_harness.config import REPO_ROOT
 from bist_harness.data import fundamentals, macro, peers, snapshot
 from bist_harness.errors import DataUnavailableError
 from bist_harness.mcp_server import server
@@ -28,6 +31,14 @@ from bist_harness.tools.disclosure import reaction_study
 from bist_harness.tools.schemas import STRATEGY_VARIANTS
 from bist_harness.tools.sector import lag_score_series
 from bist_harness.universe import load_universe
+
+TEST_RESULTS_FILE = REPO_ROOT / "docs" / "results" / "2026-11-17-test-period.md"
+RERUN_FLAG = "--i-know-this-reruns-the-test-period"
+USAGE = (
+    "usage: python -m bist_harness.backtest.study test | discovery\n"
+    f"  {RERUN_FLAG}  run the test period again although its result is recorded; this "
+    "breaks the pre-registration (docs/preregistration.md: the test period is run once)"
+)
 
 SUMMARY_KEYS = (
     "signals",
@@ -146,12 +157,31 @@ def scenario_3(start: str, end: str) -> dict:
     return scenarios.event_study(_universe_histories(), benchmark, start=start, end=end)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _recorded_test_run(results_file: Path, runs_dir: Path) -> Path | None:
+    """The file that shows the test period has already been run, or ``None``."""
+    if results_file.is_file():
+        return results_file
+    return next(iter(sorted(runs_dir.glob("study-test-*.json"))), None)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    results_file: Path = TEST_RESULTS_FILE,
+    runs_dir: Path = Path("runs"),
+) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if args[:1] not in (["test"], ["discovery"]):
-        print("usage: python -m bist_harness.backtest.study test | discovery")
+    if args[:1] not in (["test"], ["discovery"]) or set(args[1:]) - {RERUN_FLAG}:
+        print(USAGE)
         return 2
     name = args[0]
+    recorded = _recorded_test_run(results_file, runs_dir) if name == "test" else None
+    if recorded is not None and RERUN_FLAG not in args:
+        print(
+            f"The test period has already been run ({recorded}). It is run once under the "
+            f"pre-registration; nothing was run. Pass {RERUN_FLAG} to run it again anyway."
+        )
+        return 3
     start, end = PERIODS[name]
     result: dict = {"period": name, "start": start, "end": end, "backtests": backtests(start, end)}
     if name == "test":
@@ -159,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     result["scenario_1"] = scenario_1(start, end)
     result["scenario_2"] = scenario_2(name == "test")
     result["scenario_3"] = scenario_3(start, end)
-    runs = Path("runs")
+    runs = runs_dir
     runs.mkdir(exist_ok=True)
     path = runs / f"study-{name}-{datetime.now():%Y%m%d-%H%M%S}.json"
     path.write_text(json.dumps(result, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
