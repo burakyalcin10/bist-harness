@@ -22,6 +22,8 @@ from datetime import date, timedelta
 import pandas as pd
 from mcp.server.mcpserver import MCPServer
 
+from bist_harness.backtest.runner import run_variant
+from bist_harness.backtest.strategies import StrategyContext
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
@@ -30,16 +32,18 @@ from bist_harness.tools.indicators import add_all_indicators, indicator_state
 from bist_harness.tools.schemas import (
     INDICATORS,
     REVERSAL_EVENT_TYPES,
+    STRATEGY_VARIANTS,
     TOOL_SCHEMAS,
     WEEKDAY_PATTERNS,
 )
 from bist_harness.tools.sector import rank_sector_relative_strength as rank_sector
-from bist_harness.universe import is_in_universe, normalize_ticker
+from bist_harness.universe import is_in_universe, load_universe, normalize_ticker
 
 FORWARD_DAYS = (1, 3, 5, 10)
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SECTOR_HORIZONS = (5, 10, 20, 60)
 BENCHMARK = "XU100"
+BACKTEST_READY = ("A_TECHNICAL", "B_TECH_SECTOR")  # C to E need the Sprint 3 data layers
 COVERAGE_SLACK_DAYS = 7
 
 server = MCPServer(
@@ -327,6 +331,70 @@ def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) ->
     args = {"sector": group.name, "horizon_days": horizon_days, "as_of": as_of}
     output = {**result, "benchmark": BENCHMARK, **versions}
     return _with_result_id("rank_sector_relative_strength", args, output)
+
+
+def _period_problem(start: str, end: str) -> dict | None:
+    """Error object for a bad period, or ``None``."""
+    start_date, end_date = _parse_date(start), _parse_date(end)
+    if start_date is None or end_date is None:
+        return _error("INVALID_DATE", "Dates must be written as YYYY-MM-DD.")
+    if start_date >= end_date:
+        return _error("INVALID_DATE_RANGE", "start must be earlier than end.")
+    if end_date > date.today():
+        return _error("FUTURE_DATE", "end is in the future; tools only report history.")
+    return None
+
+
+@server.tool(description=TOOL_SCHEMAS["run_backtest"]["description"])
+def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> dict:
+    problem = _period_problem(start, end)
+    if problem:
+        return problem
+    if strategy not in STRATEGY_VARIANTS:
+        return _error("INVALID_ARGUMENT", f"strategy must be one of {STRATEGY_VARIANTS}.")
+    if not isinstance(universe, list) or not all(isinstance(t, str) for t in universe):
+        return _error("INVALID_ARGUMENT", "universe must be a list of tickers (empty for all).")
+    unknown = [t for t in universe if not is_in_universe(t)]
+    if unknown:
+        return _error("UNKNOWN_TICKER", f"{unknown} are not among the 30 study-universe stocks.")
+    if strategy not in BACKTEST_READY:
+        return _error("NOT_IMPLEMENTED", f"{strategy} is not available yet.")
+    tickers = [normalize_ticker(t) for t in universe] or list(load_universe()["ticker"])
+    tickers = list(dict.fromkeys(tickers))
+
+    try:
+        versions = _versions()
+        benchmark = load_history(BENCHMARK)["Close"].loc[: pd.Timestamp(end)]
+    except (DataUnavailableError, ValueError) as exc:
+        return _error("DATA_UNAVAILABLE", str(exc))
+    warnings: list[str] = []
+    histories: dict[str, pd.DataFrame] = {}
+    peer_closes: dict[str, pd.Series] = {}
+    for ticker in tickers:
+        try:
+            histories[ticker] = load_history(ticker).loc[: pd.Timestamp(end)]
+        except DataUnavailableError:
+            warnings.append(f"NO_DATA: {ticker} is not in the snapshot and was left out.")
+            continue
+        except ValueError as exc:
+            return _error("DATA_UNAVAILABLE", str(exc))
+        for member in peers.peer_group_of(ticker).members:
+            if member not in peer_closes:
+                try:
+                    peer_closes[member] = load_history(member)["Close"].loc[: pd.Timestamp(end)]
+                except (DataUnavailableError, ValueError):
+                    continue
+    in_period = [t for t, h in histories.items() if not h.loc[pd.Timestamp(start) :].empty]
+    if not in_period or benchmark.loc[pd.Timestamp(start) :].empty:
+        return _error("DATA_UNAVAILABLE", f"No market data between {start} and {end}.")
+
+    context = StrategyContext(
+        histories={t: histories[t] for t in in_period}, peer_closes=peer_closes, benchmark=benchmark
+    )
+    result = run_variant(strategy, context, start=start, end=end)
+    args = {"strategy": strategy, "universe": tickers, "start": start, "end": end}
+    output = {**args, **result, "benchmark": BENCHMARK, "warnings": warnings, **versions}
+    return _with_result_id("run_backtest", args, output)
 
 
 def unwrap_tool_result(result) -> dict:

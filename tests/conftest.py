@@ -14,6 +14,7 @@ IMPLEMENTED_TOOLS = {
     "find_support_resistance",
     "rank_sector_relative_strength",
     "test_weekday_pattern",
+    "run_backtest",
     "detect_reversal_events",
 }
 

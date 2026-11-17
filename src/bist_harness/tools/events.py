@@ -178,6 +178,13 @@ def event_mask(df: pd.DataFrame, event_type: str, direction: str = "BULLISH") ->
     return mask.fillna(False).astype(bool)
 
 
+def counted_mask(df: pd.DataFrame, event_type: str, direction: str = "BULLISH") -> pd.Series:
+    """``event_mask`` without the events inside the warm-up of the indicator behind them."""
+    mask = event_mask(df, event_type, direction)
+    mask.iloc[: FIRST_EVENT_BAR.get(event_type, 0)] = False
+    return mask
+
+
 def _labels(condition_labels: list[tuple[pd.Series, str]], known: pd.Series, default: str):
     """Label series: the first matching condition wins; ``None`` where the input is unknown."""
     out = pd.Series(default, index=known.index, dtype=object)
@@ -354,8 +361,7 @@ def detect_events(
     """Detect one event family on raw OHLCV and summarise what followed."""
     actual = effective_direction(event_type, direction)
     frame = add_all_indicators(df)
-    mask = event_mask(frame, event_type, actual)
-    mask.iloc[: FIRST_EVENT_BAR.get(event_type, 0)] = False
+    mask = counted_mask(frame, event_type, actual)
     in_period = mask if since is None else mask & (frame.index >= pd.Timestamp(since))
     summary = summarize_events(
         frame, mask, direction=actual, forward_days=forward_days, since=since

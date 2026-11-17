@@ -18,6 +18,7 @@ from bist_harness.quality.checks import JUMP_LIMIT
 
 MAX_ROWS = 12
 STALE_AFTER_CALENDAR_DAYS = 7
+STALE_AFTER_BARS = 5  # the same tolerance counted in trading days
 
 
 def _window(series: pd.Series | None, as_of: pd.Timestamp, horizon_days: int) -> pd.Series | None:
@@ -30,6 +31,47 @@ def _window(series: pd.Series | None, as_of: pd.Timestamp, horizon_days: int) ->
 
 def _return(window: pd.Series) -> float:
     return float(window.iloc[-1] / window.iloc[0] - 1)
+
+
+def lag_score_series(
+    closes: dict[str, pd.Series],
+    group: PeerGroup,
+    ticker: str,
+    *,
+    horizon_days: int,
+    benchmark: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Daily lag score of one stock: the ranking of every day at once.
+
+    Columns: ``lag_score`` and ``sector_median`` (fractions) and ``sector_strong``.
+    Same rules as ``rank_sector_relative_strength``: a member counts on a day only with
+    a full window, no corporate-action jump inside it and a bar no more than a few days
+    old; with fewer than ``MIN_PEERS`` such members the lag score is undefined and the
+    sector is not called strong. Each value uses closes up to its own day only.
+    """
+    index = closes[ticker].index
+
+    def window_return(series: pd.Series) -> pd.Series:
+        own = series.dropna()
+        value = own / own.shift(horizon_days) - 1
+        jump = own.pct_change().abs().rolling(horizon_days).max() > JUMP_LIMIT
+        return value.where(~jump).reindex(index, method="ffill", limit=STALE_AFTER_BARS)
+
+    returns = pd.DataFrame(
+        {m: window_return(closes[m]) for m in group.members if m in closes}, index=index
+    )
+    enough = returns.notna().sum(axis=1) >= MIN_PEERS
+    median = returns.median(axis=1).where(enough)
+    strong = pd.Series(False, index=index)
+    if benchmark is not None:
+        strong = (median > window_return(benchmark)).fillna(False)
+    return pd.DataFrame(
+        {
+            "lag_score": returns[ticker] - median,
+            "sector_median": median,
+            "sector_strong": strong.astype(bool),
+        }
+    )
 
 
 def rank_sector_relative_strength(

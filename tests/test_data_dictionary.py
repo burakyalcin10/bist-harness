@@ -28,6 +28,21 @@ def _keys(value) -> set[str]:
     return set()
 
 
+PLAIN_TYPES = {"str", "int", "float", "bool", "NoneType"}
+
+
+def _leaves(value):
+    """Every value in a tool output that is not a container."""
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _leaves(item)
+    else:
+        yield value
+
+
 @pytest.fixture
 def histories(monkeypatch):
     frames: dict[str, pd.DataFrame] = {}
@@ -58,9 +73,13 @@ def test_every_tool_output_field_is_in_the_dictionary(histories):
         srv.rank_sector_relative_strength("Banking", 20, "2023-12-29"),
         srv.test_weekday_pattern("ASELS", "WEEKDAY_MEANS", *period),
         srv.test_weekday_pattern("ASELS", "THREE_DOWN_TWO_UP", *period),
+        srv.run_backtest("B_TECH_SECTOR", ["AKBNK", "THYAO"], *period),
         srv.get_stock_history("GARAN", *period),
     ]
     assert not any(np.isnan(v) for o in outputs for v in o.values() if isinstance(v, float))
+    for output in outputs:
+        odd = sorted({type(v).__name__ for v in _leaves(output)} - PLAIN_TYPES)
+        assert not odd, f"{output.get('result_id')}: values of type {odd} in a tool output"
     fields = {key for output in outputs for key in _keys(output)}
     missing = sorted(fields - _documented())
     assert not missing, f"not documented: {missing}"

@@ -196,11 +196,44 @@ is measured against.
 | `weekdays` | `WEEKDAY_MEANS` only: one row per `weekday` with `observations`, `average_return_pct`, `median_return_pct`, `positive_rate_pct` | — |
 | `best_day`, `worst_day`, `spread_pct` | `WEEKDAY_MEANS` only: weekdays with the highest and lowest mean return and the gap between them | — / % |
 
-## 10. Layers not built yet
+## 10. Backtest layer — `run_backtest`
+
+Produced by `backtest/engine.py`, `backtest/strategies.py` and `backtest/runner.py`. The
+rules are fixed in `docs/preregistration.md`. A signal is decided at the close of day t
+and filled at the **open of day t+1**; nothing is filled at the price of the bar that
+produced the signal.
+
+| Name | Definition | Unit |
+| --- | --- | --- |
+| `strategy` | Variant: `A_TECHNICAL` … `E_FULL_CONTEXTUAL` | — |
+| `universe` | Stocks the variant was run on | — |
+| `rule`, `execution` | Entry rule of the variant and the timing rules, in words | — |
+| `holding_days` | Trading days from the signal to the exit close (10) | days |
+| `cost_per_side_pct` | Commission plus slippage, charged on entry and on exit (0.15) | % |
+| `signals` | Signal days in the period, over all stocks | count |
+| `trades` | Signals that became a trade | count |
+| `skipped_overlapping` | Signals ignored because the stock already had an open trade | count |
+| `skipped_incomplete` | Signals without a full holding window in the data | count |
+| `win_rate_pct` | Share of trades with a return above 0 after cost | % |
+| `average_trade_return_pct`, `median_trade_return_pct` | Return per trade after cost | % |
+| `cumulative_return_pct` | Compound return of the portfolio over the period (equal weight across open trades, 0 while none is open) | % |
+| `cagr_pct` | `cumulative_return_pct` annualised with 252 trading days | % a year |
+| `sharpe` | Mean daily portfolio return over its standard deviation, times √252; risk-free rate 0; null without variation | ratio |
+| `max_drawdown_pct` | Deepest fall of the portfolio value below its earlier peak (0 or negative) | % |
+| `exposure_pct` | Share of days with at least one open trade | % |
+| `benchmark_buy_and_hold_return_pct` | Compound return of holding the same stocks with equal weight, rebalanced daily | % |
+| `benchmark_xu100_return_pct` | Compound return of XU100 over the period | % |
+| `benchmark_sector_peers_return_pct` | Variants B to E: compound return of the stocks' peer groups, equal weight | % |
+| `excess_vs_buy_and_hold_pct`, `excess_vs_xu100_pct`, `excess_vs_sector_peers_pct` | `cumulative_return_pct` minus that benchmark | % points |
+| `by_period` | Trades, win rate and mean trade return for signals in the `discovery` and in the `test` period | — |
+| `by_regime` | The same for signals on days when XU100 closed above (`Uptrend`) or below (`Downtrend`) its 200-day average; `Undefined` before 200 closes exist | — |
+| `flags` | `FEW_TRADES` (fewer than 5), `NEGATIVE_AFTER_COST` (mean trade return at or below 0), `UNDERPERFORMS_<BENCHMARK>` | — |
+| `trade_sample` | The 12 latest trades: `signal_date`, `entry_date`, `exit_date`, `entry_price`, `exit_price`, `return_pct` | — |
+
+## 11. Layers not built yet
 
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
-| Backtest | Trade log, CAGR, Sharpe, maximum drawdown, benchmark difference per strategy variant | 3 |
 | Fundamental | Statement items by publication date, quarterly and annual changes, ratios | 3 |
 | Macro | USD/TRY, CBRT policy rate, Fed funds target, CPI by publication date | 3 |
 | News and events | Timestamped disclosure and news metadata | 3 |
