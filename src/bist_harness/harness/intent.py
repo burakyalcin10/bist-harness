@@ -109,6 +109,9 @@ ADVICE_PHRASES = (
     "alsam mi",
     "satsam mi",
     "eklesem mi",
+    "almaliyim",
+    "satmaliyim",
+    "tutmaliyim",
     "tutayim mi",
     "tutmali miyim",
     "elimde tutmali",
@@ -163,6 +166,10 @@ PREDICTION_PHRASES = (
     "hedef fiyat",
     "fiyat tahmini",
     "fiyat hedefi",
+    "fiyati ne olur",
+    "fiyati kac olur",
+    "fiyati ne olacak",
+    "fiyati kac olacak",
     "ne kadar olur",
     "ne kadar olacak",
     "kac tl olur",
@@ -199,8 +206,17 @@ PREDICTION_PHRASES = (
 )
 
 # Patterns for wordings a fixed phrase cannot cover; they run on the folded text.
-ADVICE_PATTERNS = (re.compile(r" (is|are) [a-z]{3,5} an? (buy|sell|hold) "),)
+ADVICE_PATTERNS = (
+    re.compile(r" (is|are) [a-z]{3,5} an? (buy|sell|hold) "),
+    # "recommend a stock", "which stock would you recommend / should I pick"
+    re.compile(r" recommend(ing)? (me )?(an? |any |some |the )?(stock|share|hisse)"),
+    re.compile(r" (which|what) (stock|share)s? (would|should|do|can) (you|i) "),
+    # "hisse onerir misin", "hangi hisseyi onerirsin", "hisse tavsiye eder misin"
+    re.compile(r" hisse\w* (onerir|oneri|tavsiye)"),
+)
 PREDICTION_PATTERNS = (
+    # "what will THYAO price be", "what will the price of AKBNK be"
+    re.compile(r" what will (the )?(price of )?[a-z]{4,5} (price )?be "),
     re.compile(
         r" will (it|they|the stock|the price|the share|[a-z]{4,5}) "
         r"(go up|go down|rise|fall|drop|increase|decrease|reach|hit|climb) "
@@ -213,6 +229,7 @@ _FOLD = str.maketrans("ıİşŞğĞüÜöÖçÇ", "iissgguuoocc")
 def fold_text(text: str) -> str:
     """Lower-case, drop Turkish diacritics and collapse punctuation to single spaces."""
     t = text.translate(_FOLD).lower()
+    t = re.sub(r"(?<=[a-z])-and-(?=[a-z])", "and", t)  # "buy-and-hold" stays one token
     t = re.sub(r"[^a-z0-9]+", " ", t)
     return f" {t.strip()} "
 
