@@ -3,7 +3,6 @@
 import asyncio
 import sys
 
-import numpy as np
 import pandas as pd
 import pytest
 from mcp import Client, StdioServerParameters
@@ -12,15 +11,12 @@ from bist_harness.mcp_server import server as srv
 from bist_harness.tools.schemas import REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
 
 from .conftest import IMPLEMENTED_TOOLS as IMPLEMENTED
+from .synth import ohlcv
 
 
 def _history(days: int = 1200, seed: int = 4) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    close = 100 * np.exp(np.cumsum(rng.normal(0.0005, 0.025, days)))
-    index = pd.date_range("2020-01-02", periods=days, freq="B")
-    return pd.DataFrame(
-        {"Open": close, "High": close, "Low": close, "Close": close, "Volume": 1.0}, index=index
-    )
+    """Random-walk bars with real highs, lows and volumes."""
+    return ohlcv(days, seed)
 
 
 @pytest.fixture(autouse=True)

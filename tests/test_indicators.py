@@ -140,7 +140,8 @@ def _frame(**columns):
     ],
 )
 def test_rsi_state_uses_the_instructor_trough_and_its_mirror(rsi, expected):
-    df = _frame(Close=[10.0, 10.0, 10.0], RSI=[float(v) for v in rsi])
+    padded = [50.0] * 12 + [float(v) for v in rsi]  # 15 rows: the RSI warm-up is over
+    df = _frame(Close=[10.0] * 15, RSI=padded)
     assert ind.indicator_state(df, ["RSI"])["rsi_state"] == expected
 
 
@@ -157,7 +158,15 @@ def test_kama_slope_is_flat_below_five_hundredths_of_a_percent_of_the_close(slop
     "close,expected", [(12.0, "Above Cloud"), (10.5, "In Cloud"), (9.0, "Below Cloud")]
 )
 def test_ichimoku_state_compares_the_close_with_todays_cloud(close, expected):
-    df = _frame(Close=[close], Tenkan=[10.0], Kijun=[10.0], Cloud_Top=[11.0], Cloud_Bottom=[10.0])
+    df = _frame(
+        Close=[close],
+        Tenkan=[10.0],
+        Kijun=[10.0],
+        Senkou_A=[11.0],
+        Senkou_B=[10.0],
+        Cloud_Top=[11.0],
+        Cloud_Bottom=[10.0],
+    )
     assert ind.indicator_state(df, ["ICHIMOKU"])["ichimoku_state"] == expected
 
 

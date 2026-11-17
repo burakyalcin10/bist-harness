@@ -32,6 +32,7 @@ SEED = 42
 ALPHA = 0.05
 VOLATILITY_WINDOW = 60
 LARGE_DROP_SIGMAS = 2.0
+MIN_GROUP = 3  # observations needed on each side for a studentized test
 
 DEFINITIONS = {
     "WEEKDAY_MEANS": (
@@ -80,7 +81,8 @@ def split_by_time(prepared: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 def weekly_table(prepared: pd.DataFrame) -> pd.DataFrame:
     """One row per ISO week: the five daily returns, the week's last date, completeness."""
     if prepared.empty:
-        return pd.DataFrame(columns=[*WEEKDAYS, "date", "complete"])
+        empty = pd.DataFrame(columns=[*WEEKDAYS, "date"], dtype=float)
+        return empty.assign(complete=pd.Series(dtype=bool))
     keys = ["ISO_Year", "ISO_Week"]
     weekly = prepared.pivot_table(index=keys, columns="Weekday", values="Return", aggfunc="first")
     weekly = weekly.reindex(columns=WEEKDAYS)
@@ -92,7 +94,7 @@ def weekly_table(prepared: pd.DataFrame) -> pd.DataFrame:
 
 def _week_units(weekly: pd.DataFrame, pattern: str) -> pd.DataFrame:
     """Units of a weekly pattern: weight (condition or direction), outcome and date."""
-    complete = weekly[weekly["complete"]]
+    complete = weekly[weekly["complete"].astype(bool)]
     mon, tue, wed, thu, fri = (complete[d].astype(float) for d in WEEKDAYS)
     if pattern == "MON_WEAK_FRI_STRONG":
         weight, outcome = (mon < 0).astype(float), fri
@@ -149,14 +151,33 @@ def _summary(units: pd.DataFrame, signed: bool) -> dict:
     }
 
 
+def two_sided_p_value(observed: float, simulated: np.ndarray) -> float:
+    """Share of shuffles at least as far from the shuffles' own mean as the observed value.
+
+    Centring on the permutation mean matters when that mean is not zero, as for a
+    direction pattern in a market that mostly rises.
+    """
+    centre = float(simulated.mean())
+    extreme = int((np.abs(simulated - centre) >= abs(observed - centre) - 1e-15).sum())
+    return round((1 + extreme) / (len(simulated) + 1), 4)
+
+
 def _permutation_p_value(units: pd.DataFrame, signed: bool) -> float | None:
     """Two-sided permutation test: outcomes are shuffled against the conditions.
 
-    Statistic: for a condition, the mean outcome under the condition minus the overall
-    mean; for a direction pattern, the mean outcome in the direction of the week.
+    Direction pattern: the statistic is the mean outcome in the direction of the week.
+
+    Condition pattern: the statistic is the Welch t-statistic between the outcomes under
+    the condition and the others (difference of means over its own standard error).
+    Studentizing matters because the condition often selects volatile days: after a
+    large drop the next day's return varies more, and a plain difference of means would
+    then look significant far too often. It needs at least three observations on each
+    side; with fewer there is no p-value.
     """
     weight = units["weight"].to_numpy(dtype=float)
     outcome = units["outcome"].to_numpy(dtype=float)
+    if not signed:
+        return _studentized_p_value(weight, outcome)
     used = len(outcome) if signed else int(weight.sum())
     if used == 0 or len(outcome) < 2 or (not signed and used == len(outcome)):
         return None
@@ -165,31 +186,68 @@ def _permutation_p_value(units: pd.DataFrame, signed: bool) -> float | None:
     rng = np.random.default_rng(SEED)
     shuffled = rng.permuted(np.tile(outcome, (PERMUTATIONS, 1)), axis=1)
     simulated = shuffled @ weight / used - baseline
-    extreme = int((np.abs(simulated) >= abs(observed) - 1e-15).sum())
-    return round((1 + extreme) / (PERMUTATIONS + 1), 4)
+    return two_sided_p_value(observed, simulated)
+
+
+def _studentized_p_value(weight: np.ndarray, outcome: np.ndarray) -> float | None:
+    inside, outside = int(weight.sum()), int(len(weight) - weight.sum())
+    if inside < MIN_GROUP or outside < MIN_GROUP:
+        return None
+    total, total_squares = float(outcome.sum()), float((outcome**2).sum())
+
+    def welch(sums, squares):
+        mean_in, mean_out = sums / inside, (total - sums) / outside
+        var_in = (squares - inside * mean_in**2) / (inside - 1)
+        var_out = (total_squares - squares - outside * mean_out**2) / (outside - 1)
+        spread = np.sqrt(np.clip(var_in, 0, None) / inside + np.clip(var_out, 0, None) / outside)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return (mean_in - mean_out) / spread
+
+    observed = float(welch(weight @ outcome, weight @ outcome**2))
+    if not np.isfinite(observed):
+        return None
+    rng = np.random.default_rng(SEED)
+    shuffled = rng.permuted(np.tile(outcome, (PERMUTATIONS, 1)), axis=1)
+    simulated = welch(shuffled @ weight, shuffled**2 @ weight)
+    simulated = simulated[np.isfinite(simulated)]
+    return two_sided_p_value(observed, simulated) if len(simulated) else None
 
 
 def _bonferroni(p_value: float | None) -> float | None:
     return None if p_value is None else min(1.0, round(p_value * len(PATTERNS), 4))
 
 
-def _excess(summary: dict) -> float | None:
+def _edge(summary: dict, signed: bool) -> float | None:
+    """What the pattern claims: the signed mean for a direction pattern, otherwise the
+    conditional mean in excess of the unconditional one."""
     if summary["conditional_mean_return_pct"] is None:
         return None
+    if signed:
+        return summary["conditional_mean_return_pct"]
     return summary["conditional_mean_return_pct"] - summary["unconditional_mean_return_pct"]
 
 
-def _conditional_pattern(prepared: pd.DataFrame, pattern: str) -> dict:
+def is_unstable(train: dict, test: dict, *, signed: bool) -> bool:
+    """True when the edge changes sign between train and test, or one part has none."""
+    train_edge, test_edge = _edge(train, signed), _edge(test, signed)
+    if train_edge is None or test_edge is None:
+        return True
+    return (train_edge > 0) != (test_edge > 0)
+
+
+def _conditional_pattern(prepared: pd.DataFrame, pattern: str, full: pd.DataFrame) -> dict:
+    """``prepared`` is the requested period; ``full`` also holds the rows before it, so
+    the volatility of the large-drop pattern is warmed up when the period starts."""
     signed = pattern == "END_OF_WEEK_CONTINUATION"
     weekly = weekly_table(prepared)
-    units = (
-        _day_units(prepared)
-        if pattern == "POST_LARGE_DOWN_REVERSION"
-        else _week_units(weekly, pattern)
-    )
+    if pattern == "POST_LARGE_DOWN_REVERSION":
+        units = _day_units(full)
+        units = units[units.index >= prepared.index[0]] if len(prepared) else units.iloc[:0]
+    else:
+        units = _week_units(weekly, pattern)
     train_rows, _ = split_by_time(prepared)
     last_train_day = train_rows.index[-1] if len(train_rows) else pd.Timestamp.min
-    in_train = units["date"] <= last_train_day
+    in_train = pd.to_datetime(units["date"]) <= last_train_day
     train, test = _summary(units[in_train], signed), _summary(units[~in_train], signed)
 
     chosen = _selected(units, signed)
@@ -203,10 +261,7 @@ def _conditional_pattern(prepared: pd.DataFrame, pattern: str) -> dict:
     flags = []
     if p_adjusted is None or p_adjusted >= ALPHA:
         flags.append("NOT_SIGNIFICANT")
-    train_excess, test_excess = _excess(train), _excess(test)
-    if summary["occurrences"] and (
-        train_excess is None or test_excess is None or (train_excess > 0) != (test_excess > 0)
-    ):
+    if summary["occurrences"] and is_unstable(train, test, signed=signed):
         flags.append("UNSTABLE_OUT_OF_SAMPLE")
     if mean_after_cost is not None and mean_after_cost <= 0:
         flags.append("NEGATIVE_AFTER_COST")
@@ -326,12 +381,10 @@ def evaluate_pattern(df: pd.DataFrame, pattern: str, *, since: str | None = None
     """Test one pattern on daily closes; ``since`` drops earlier returns."""
     if pattern not in PATTERNS:
         raise ValueError(f"unknown pattern: {pattern}")
-    prepared = prepare(df)
-    if since is not None:
-        prepared = prepared.loc[pd.Timestamp(since) :]
-    result = (
-        _weekday_means(prepared)
-        if pattern == "WEEKDAY_MEANS"
-        else _conditional_pattern(prepared, pattern)
-    )
+    full = prepare(df)
+    prepared = full if since is None else full.loc[pd.Timestamp(since) :]
+    if pattern == "WEEKDAY_MEANS":
+        result = _weekday_means(prepared)
+    else:
+        result = _conditional_pattern(prepared, pattern, full)
     return {"pattern": pattern, **result, "definition": DEFINITIONS[pattern]}

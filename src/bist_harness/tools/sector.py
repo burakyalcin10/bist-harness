@@ -65,17 +65,23 @@ def rank_sector_relative_strength(
         else:
             returns[ticker] = _return(window)
 
-    median = float(pd.Series(returns).median()) if returns else None
-    if len(returns) < MIN_PEERS:
+    if effective is not None and (day - effective).days > STALE_AFTER_CALENDAR_DAYS:
         warnings.append(
-            f"PEER_GROUP_TOO_SMALL: {len(returns)} member(s) with data; "
-            f"the median needs at least {MIN_PEERS}."
+            f"DATA_ENDS_BEFORE_AS_OF: the latest bar is {effective.date()}; "
+            f"the ranking describes that day, not {as_of}."
+        )
+    median = float(pd.Series(returns).median()) if returns else None
+    large_enough = len(returns) >= MIN_PEERS
+    if not large_enough:
+        warnings.append(
+            f"PEER_GROUP_TOO_SMALL: {len(returns)} member(s) with data; a median, a lag "
+            f"score and leaders or laggards need at least {MIN_PEERS}."
         )
 
     benchmark_window = _window(benchmark, day, horizon_days)
     benchmark_return = None if benchmark_window is None else _return(benchmark_window)
     sector_strong = None
-    if median is not None and benchmark_return is not None and len(returns) >= MIN_PEERS:
+    if median is not None and benchmark_return is not None and large_enough:
         sector_strong = median > benchmark_return
 
     ordered = sorted(returns, key=lambda t: (-returns[t], t))
@@ -84,7 +90,7 @@ def rank_sector_relative_strength(
             "ticker": ticker,
             "role": "universe" if ticker in group.universe else "reference",
             "return_pct": round(returns[ticker] * 100, 2),
-            "lag_score_pct": round((returns[ticker] - median) * 100, 2),
+            "lag_score_pct": (round((returns[ticker] - median) * 100, 2) if large_enough else None),
             "rank": rank,
         }
         for rank, ticker in enumerate(ordered, start=1)
@@ -101,7 +107,9 @@ def rank_sector_relative_strength(
         else round(benchmark_return * 100, 2),
         "sector_strong": sector_strong,
         "members": members[:MAX_ROWS],
-        "leaders": [row["ticker"] for row in own if row["lag_score_pct"] > 0],
-        "laggards": [row["ticker"] for row in reversed(own) if row["lag_score_pct"] < 0],
+        "leaders": [row["ticker"] for row in own if large_enough and row["lag_score_pct"] > 0],
+        "laggards": [
+            row["ticker"] for row in reversed(own) if large_enough and row["lag_score_pct"] < 0
+        ],
         "warnings": warnings,
     }

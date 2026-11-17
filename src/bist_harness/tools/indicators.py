@@ -34,6 +34,11 @@ HIGH_VOLUME_RATIO = 1.5
 LOW_VOLUME_RATIO = 0.5
 RSI_TROUGH_LEVEL = 40
 RSI_PEAK_LEVEL = 60
+# Rows a series needs before a value is reported. The exponential averages produce a
+# number from the second row on; without enough history that number means nothing.
+RSI_MIN_ROWS = 15  # 14 daily changes
+EMA_MIN_ROWS = 20
+MACD_MIN_ROWS = 35  # slow average (26) plus signal line (9)
 
 
 def add_sma(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
@@ -219,7 +224,7 @@ def _raw(row: pd.Series, column: str) -> float:
 
 def _rsi_state(rsi: pd.Series) -> str | None:
     """Local low: yesterday's RSI below both neighbours and below 40 (the script's trough)."""
-    if rsi.empty or pd.isna(rsi.iloc[-1]):
+    if len(rsi) < RSI_MIN_ROWS or pd.isna(rsi.iloc[-1]):
         return None
     if len(rsi) < 3:
         return "Neutral"
@@ -242,7 +247,7 @@ def _state_sma(df: pd.DataFrame, row: pd.Series) -> dict:
 
 
 def _state_ema(df: pd.DataFrame, row: pd.Series) -> dict:
-    return {"ema_20": _value(row, "EMA_20")}
+    return {"ema_20": _value(row, "EMA_20") if len(df) >= EMA_MIN_ROWS else None}
 
 
 def _state_kama(df: pd.DataFrame, row: pd.Series) -> dict:
@@ -261,10 +266,14 @@ def _state_kama(df: pd.DataFrame, row: pd.Series) -> dict:
 
 
 def _state_rsi(df: pd.DataFrame, row: pd.Series) -> dict:
+    if len(df) < RSI_MIN_ROWS:
+        return {"rsi": None, "rsi_state": None}
     return {"rsi": _value(row, "RSI"), "rsi_state": _rsi_state(df["RSI"])}
 
 
 def _state_macd(df: pd.DataFrame, row: pd.Series) -> dict:
+    if len(df) < MACD_MIN_ROWS:
+        return {"macd": None, "macd_signal": None, "macd_hist": None, "macd_state": None}
     macd, signal = _raw(row, "MACD"), _raw(row, "MACD_Signal")
     state = (
         None if np.isnan(macd) or np.isnan(signal) else ("Bullish" if macd > signal else "Bearish")
@@ -314,9 +323,17 @@ def _state_supertrend(df: pd.DataFrame, row: pd.Series) -> dict:
 
 def _state_ichimoku(df: pd.DataFrame, row: pd.Series) -> dict:
     close, top, bottom = (_raw(row, c) for c in ("Close", "Cloud_Top", "Cloud_Bottom"))
-    if np.isnan(top) or np.isnan(bottom):
-        state = None
-    elif close > top:
+    # The cloud exists only when both spans do (78 rows); one span alone is not a cloud.
+    complete = not (np.isnan(_raw(row, "Senkou_A")) or np.isnan(_raw(row, "Senkou_B")))
+    if not complete:
+        return {
+            "tenkan": _value(row, "Tenkan"),
+            "kijun": _value(row, "Kijun"),
+            "cloud_top": None,
+            "cloud_bottom": None,
+            "ichimoku_state": None,
+        }
+    if close > top:
         state = "Above Cloud"
     elif close < bottom:
         state = "Below Cloud"

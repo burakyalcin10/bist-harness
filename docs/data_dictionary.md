@@ -61,6 +61,7 @@ instructor's Scenario 3 script unless noted.
 | `start`, `end` | Requested period, both inclusive |
 | `as_of` | Analysis date; nothing after it is used. In `calculate_indicators` it is the date of the last bar used |
 | `snapshot_id` | Identifier of the market-data snapshot the tool read |
+| `adjustments_id` | Short hash of `data/reference/price_adjustments.csv`, the corrections applied when a series is read; a change to that file changes every `result_id` |
 | `data_source` | Where the prices come from |
 | `data_first_date`, `data_last_date` | First and last bar the snapshot holds for the symbol |
 | `coverage_warning` | Text when the requested period reaches more than 7 days beyond the data; otherwise null |
@@ -81,7 +82,8 @@ instructor's Scenario 3 script unless noted.
 
 ## 5. `calculate_indicators` — values of the last day and state labels
 
-Produced by `tools.indicators.indicator_state`. A value that cannot be computed yet is null.
+Produced by `tools.indicators.indicator_state`. A value that cannot be computed yet is null: RSI needs 15 bars, EMA 20, MACD 35, the
+Ichimoku cloud 78 (both spans), SMA its window.
 
 | Name | Definition |
 | --- | --- |
@@ -115,15 +117,16 @@ window, so it is **known 5 trading days after it happens**; only known pivots ar
 | --- | --- |
 | `tolerance` | Relative distance within which pivots form one level (default 0.015) |
 | `last_close` | Close of the last day of the period |
-| `levels` | Up to 6 levels, strongest first |
+| `levels_found` | Number of levels found in the period |
+| `levels` | The 6 strongest of them, strongest first |
 | `level` | Mean price of the pivots in the level |
 | `kind` | "support" below `last_close`, "resistance" above |
 | `touches` | Pivots in the level |
 | `recent_touches` | Pivots in the last 60 trading days |
 | `high_volume_reactions` | Pivots on a day with volume above 1.5 × its 20-day mean |
 | `last_touch_date` | Date of the latest pivot in the level |
-| `strength` | `touches` + 1.5 × `recent_touches` + 1.2 × `high_volume_reactions` + average percentage move away from the level in the 5 days after each touch |
-| `nearest_support`, `nearest_resistance` | Closest level below / above `last_close`, or null |
+| `strength` | `touches` + 1.5 × `recent_touches` + 1.2 × `high_volume_reactions` + one point per 5% of average move away from the level in the 5 days after each touch (at most 3 points) |
+| `nearest_support`, `nearest_resistance` | Closest level below / above `last_close` among **all** levels found (it may be a weak one that is not in `levels`), or null |
 
 ## 7. `detect_reversal_events`
 
@@ -163,11 +166,11 @@ Produced by `tools.sector`. Peer groups are in `data/reference/peer_groups.csv`.
 | `role` | "universe" (study stock) or "reference" (used for the median only) | — |
 | `return_pct` | Close on `effective_date` against the close `horizon_days` trading days earlier | % |
 | `sector_median_return_pct` | Median `return_pct` of the members with usable data | % |
-| `lag_score_pct` | `return_pct` minus `sector_median_return_pct`; negative means lagging | % points |
+| `lag_score_pct` | `return_pct` minus `sector_median_return_pct`; negative means lagging. Null when fewer than 3 members have data | % points |
 | `rank` | 1 is the best return in the group | — |
 | `benchmark_return_pct` | Same return for the benchmark | % |
 | `sector_strong` | True when the sector median is above the benchmark return; null when it cannot be judged | bool |
-| `leaders`, `laggards` | Universe stocks with a positive / negative lag score | — |
+| `leaders`, `laggards` | Universe stocks with a positive / negative lag score; empty when the group has fewer than 3 members with data | — |
 
 ## 9. Calendar layer — `test_weekday_pattern`
 
@@ -184,10 +187,10 @@ is measured against.
 | `transaction_cost_pct` | Cost charged once per occurrence (0.10) | % |
 | `mean_after_cost_pct` | Conditional mean minus the cost; for `WEEKDAY_MEANS` the best weekday's mean minus the cost | % |
 | `train`, `test` | The same summary on the first 70% and the last 30% of the period | — |
-| `p_value` | Permutation test, 2,000 shuffles, seed 42: share of shuffles at least as extreme as the observed result | 0–1 |
+| `p_value` | Permutation test, 2,000 shuffles, seed 42, two-sided around the shuffles' own mean. Condition patterns use a studentized (Welch) statistic, so that volatile days selected by the condition do not look significant by themselves; null with fewer than 3 occurrences | 0–1 |
 | `patterns_in_family` | Patterns tested together (5) | count |
 | `p_value_bonferroni` | `p_value` × `patterns_in_family`, capped at 1 | 0–1 |
-| `interpretation_flags` | `NOT_SIGNIFICANT` (Bonferroni p at or above 0.05), `UNSTABLE_OUT_OF_SAMPLE` (the edge changes sign between train and test), `NEGATIVE_AFTER_COST` | — |
+| `interpretation_flags` | `NOT_SIGNIFICANT` (Bonferroni p at or above 0.05 or no p-value), `UNSTABLE_OUT_OF_SAMPLE` (the edge changes sign between train and test, or one part has no occurrence; the edge is the conditional mean minus the unconditional one, or the signed mean for the direction pattern), `NEGATIVE_AFTER_COST` | — |
 | `complete_weeks`, `incomplete_weeks_skipped` | Weeks with all five trading days, and weeks left out because a day is missing | count |
 | `instructor_full_pattern_count` | `THREE_DOWN_TWO_UP` only: weeks that also had a positive Thursday and Friday, as counted by the instructor's script | count |
 | `weekdays` | `WEEKDAY_MEANS` only: one row per `weekday` with `observations`, `average_return_pct`, `median_return_pct`, `positive_rate_pct` | — |

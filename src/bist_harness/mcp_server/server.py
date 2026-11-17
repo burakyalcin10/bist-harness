@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, timedelta
 
 import pandas as pd
@@ -36,6 +37,7 @@ from bist_harness.tools.sector import rank_sector_relative_strength as rank_sect
 from bist_harness.universe import is_in_universe, normalize_ticker
 
 FORWARD_DAYS = (1, 3, 5, 10)
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SECTOR_HORIZONS = (5, 10, 20, 60)
 BENCHMARK = "XU100"
 COVERAGE_SLACK_DAYS = 7
@@ -56,6 +58,29 @@ def load_history(symbol: str) -> pd.DataFrame:
 
 def current_snapshot_id() -> str:
     return snapshot.active_snapshot_id()
+
+
+def current_adjustments_id() -> str:
+    return snapshot.adjustments_id()
+
+
+def _parse_date(text: str) -> date | None:
+    """A date written exactly as YYYY-MM-DD, or ``None``."""
+    if not isinstance(text, str) or not _ISO_DATE.fullmatch(text):
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _versions() -> dict:
+    """What identifies the data behind a result: snapshot, corrections file and source."""
+    return {
+        "snapshot_id": current_snapshot_id(),
+        "adjustments_id": current_adjustments_id(),
+        "data_source": DATA_SOURCE,
+    }
 
 
 def _error(code: str, message: str) -> dict:
@@ -103,9 +128,8 @@ def _load_window(
             return _error("UNKNOWN_INDEX", f"{symbol!r} is not available; indices: {known}.")
     elif not is_in_universe(symbol):
         return _error("UNKNOWN_TICKER", f"{symbol!r} is not one of the 30 study-universe stocks.")
-    try:
-        start_date, end_date = date.fromisoformat(start), date.fromisoformat(end)
-    except ValueError:
+    start_date, end_date = _parse_date(start), _parse_date(end)
+    if start_date is None or end_date is None:
         return _error("INVALID_DATE", "Dates must be written as YYYY-MM-DD.")
     if start_date >= end_date:
         return _error("INVALID_DATE_RANGE", "start must be earlier than end.")
@@ -114,14 +138,10 @@ def _load_window(
     name = normalize_ticker(symbol)
     try:
         history = load_history(name)
-        snapshot_id = current_snapshot_id()
-    except DataUnavailableError as exc:
+        versions = _versions()
+    except (DataUnavailableError, ValueError) as exc:  # ValueError: a broken corrections file
         return _error("DATA_UNAVAILABLE", str(exc))
-    meta = {
-        **_coverage(history, start, end),
-        "snapshot_id": snapshot_id,
-        "data_source": DATA_SOURCE,
-    }
+    meta = {**_coverage(history, start, end), **versions}
     history = history.loc[: pd.Timestamp(end)]
     if history.loc[pd.Timestamp(start) :].empty:
         return _error("DATA_UNAVAILABLE", f"No market data for {name} between {start} and {end}.")
@@ -177,10 +197,12 @@ def calculate_indicators(ticker: str, start: str, end: str, indicators: list[str
 SUPPORT_RESISTANCE_METHOD = (
     "Pivot highs and lows of an 11-day centred window, known 5 trading days after they "
     "happen; pivots within the tolerance form one level. Strength = touches + 1.5 x "
-    "touches in the last 60 trading days + 1.2 x high-volume reactions + average move "
-    "away from the level in percent."
+    "touches in the last 60 trading days + 1.2 x high-volume reactions + one point per 5% "
+    "of average move away from the level (at most 3). The list holds the strongest levels; "
+    "the nearest support and resistance are taken from all levels found."
 )
 MAX_TOLERANCE = 0.10
+MAX_LEVELS = 6
 
 
 @server.tool(description=TOOL_SCHEMAS["find_support_resistance"]["description"])
@@ -192,16 +214,24 @@ def find_support_resistance(ticker: str, start: str, end: str, tolerance: float 
     if not 0 < tolerance <= MAX_TOLERANCE:
         return _error("INVALID_ARGUMENT", f"tolerance must be above 0 and at most {MAX_TOLERANCE}.")
     window = history.loc[pd.Timestamp(start) :]
-    levels = support_resistance.find_support_resistance(window, tolerance=tolerance)
-    supports = [lv["level"] for lv in levels if lv["kind"] == "support"]
-    resistances = [lv["level"] for lv in levels if lv["kind"] == "resistance"]
+    found = support_resistance.find_support_resistance(window, tolerance=tolerance, max_levels=None)
+    supports = [lv["level"] for lv in found if lv["kind"] == "support"]
+    resistances = [lv["level"] for lv in found if lv["kind"] == "resistance"]
+    warnings = []
+    if len(window) < support_resistance.MIN_ROWS:
+        warnings.append(
+            f"TOO_FEW_BARS: the period has {len(window)} trading days; levels need at "
+            f"least {support_resistance.MIN_ROWS}."
+        )
     args = {"ticker": name, "start": start, "end": end, "tolerance": tolerance}
     output = {
         **args,
         "last_close": round(float(window["Close"].iloc[-1]), 2),
-        "levels": levels,
+        "levels_found": len(found),
+        "levels": found[:MAX_LEVELS],
         "nearest_support": max(supports) if supports else None,
         "nearest_resistance": min(resistances) if resistances else None,
+        "warnings": warnings,
         "method": SUPPORT_RESISTANCE_METHOD,
         **meta,
     }
@@ -256,9 +286,8 @@ def test_weekday_pattern(ticker: str, pattern: str, start: str, end: str) -> dic
 
 
 def _check_as_of(as_of: str) -> dict | None:
-    try:
-        day = date.fromisoformat(as_of)
-    except ValueError:
+    day = _parse_date(as_of)
+    if day is None:
         return _error("INVALID_DATE", "Dates must be written as YYYY-MM-DD.")
     if day > date.today():
         return _error("FUTURE_DATE", "as_of is in the future; tools only report history.")
@@ -278,7 +307,7 @@ def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) ->
         names = ", ".join(peers.load_peer_groups())
         return _error("UNKNOWN_SECTOR", f"{sector!r} is not a sector of the universe: {names}.")
     try:
-        snapshot_id = current_snapshot_id()
+        versions = _versions()
     except DataUnavailableError as exc:
         return _error("DATA_UNAVAILABLE", str(exc))
 
@@ -288,18 +317,15 @@ def rank_sector_relative_strength(sector: str, horizon_days: int, as_of: str) ->
             closes[symbol] = load_history(symbol)["Close"]
         except DataUnavailableError:
             continue
+        except ValueError as exc:  # a broken corrections file must not pass silently
+            return _error("DATA_UNAVAILABLE", str(exc))
     result = rank_sector(
         closes, group, horizon_days=horizon_days, as_of=as_of, benchmark=closes.get(BENCHMARK)
     )
     if not result["members"]:
         return _error("DATA_UNAVAILABLE", f"No market data for the {group.name} group on {as_of}.")
     args = {"sector": group.name, "horizon_days": horizon_days, "as_of": as_of}
-    output = {
-        **result,
-        "benchmark": BENCHMARK,
-        "snapshot_id": snapshot_id,
-        "data_source": DATA_SOURCE,
-    }
+    output = {**result, "benchmark": BENCHMARK, **versions}
     return _with_result_id("rank_sector_relative_strength", args, output)
 
 

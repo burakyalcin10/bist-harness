@@ -21,6 +21,7 @@ from bist_harness.tools.indicators import (
     HIGH_VOLUME_RATIO,
     KAMA_FLAT_SHARE,
     LOW_VOLUME_RATIO,
+    RSI_MIN_ROWS,
     RSI_PEAK_LEVEL,
     RSI_TROUGH_LEVEL,
     add_all_indicators,
@@ -40,6 +41,10 @@ MIDDLE_TEST_DAYS = 5
 LEVEL_TOLERANCE = 0.015
 LEVEL_PIVOT_WINDOW = 5
 LEVEL_LOOKBACK_DAYS = 250
+# First bar position on which an event of the family may be counted: the indicator
+# behind it has no meaning before that (RSI needs 14 changes and the trough is confirmed
+# a day later; the Ichimoku cloud needs both spans: 52 + 26 bars).
+FIRST_EVENT_BAR = {"RSI_LOCAL_TROUGH": 16, "RSI_LOCAL_PEAK": 16, "ICHIMOKU_BREAKOUT": 78}
 VERY_SMALL_SAMPLE = "Very small sample size"
 LIMITED_SAMPLE = "Limited sample size"
 
@@ -192,12 +197,14 @@ def state_frame(df: pd.DataFrame) -> pd.DataFrame:
     slope = df["KAMA_Slope"]
     flat = slope.abs() < KAMA_FLAT_SHARE * close
     top, bottom = df["Cloud_Top"], df["Cloud_Bottom"]
+    cloud_known = df["Senkou_A"].notna() & df["Senkou_B"].notna()
+    rsi_known = rsi.notna() & (np.arange(len(df)) >= RSI_MIN_ROWS - 1)
     ratio = df["Volume"] / df["Volume_MA"].where(df["Volume_MA"] != 0)
     direction = df["Supertrend_Direction"]
     return pd.DataFrame(
         {
             "rsi_state": _labels(
-                [(trough, "Local Low"), (peak, "Local High")], rsi.notna(), "Neutral"
+                [(trough, "Local Low"), (peak, "Local High")], rsi_known, "Neutral"
             ),
             "supertrend_state": _labels(
                 [(direction == 1, "Bullish"), (direction == -1, "Bearish")],
@@ -209,7 +216,7 @@ def state_frame(df: pd.DataFrame) -> pd.DataFrame:
             ),
             "ichimoku_state": _labels(
                 [(close > top, "Above Cloud"), (close < bottom, "Below Cloud")],
-                top.notna() & bottom.notna(),
+                cloud_known,
                 "In Cloud",
             ),
             "volume_regime": _labels(
@@ -348,6 +355,7 @@ def detect_events(
     actual = effective_direction(event_type, direction)
     frame = add_all_indicators(df)
     mask = event_mask(frame, event_type, actual)
+    mask.iloc[: FIRST_EVENT_BAR.get(event_type, 0)] = False
     in_period = mask if since is None else mask & (frame.index >= pd.Timestamp(since))
     summary = summarize_events(
         frame, mask, direction=actual, forward_days=forward_days, since=since

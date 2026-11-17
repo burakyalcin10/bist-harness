@@ -101,6 +101,7 @@ def test_group_with_too_few_members_warns_and_does_not_judge_strength():
     assert any(w.startswith("PEER_GROUP_TOO_SMALL") for w in out["warnings"])
     assert out["sector_strong"] is None
     assert len(out["members"]) == 2 and out["sector_median_return_pct"] == 7.0
+    assert out["leaders"] == [] and out["laggards"] == []
 
 
 def test_member_with_a_corporate_action_jump_in_the_window_is_left_out():

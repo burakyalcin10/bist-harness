@@ -219,6 +219,7 @@ def test_event_records_carry_the_market_state_and_forward_returns():
     raw = ohlcv(600, 2)
     df = add_all_indicators(raw)
     mask = ev.event_mask(df, "RSI_LOCAL_TROUGH")
+    mask.iloc[:16] = False  # the RSI warm-up, as in detect_events
     records = ev.event_records(
         df, mask, ticker="ASELS", event_type="RSI_LOCAL_TROUGH", direction="BULLISH"
     )

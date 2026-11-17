@@ -82,7 +82,8 @@ def test_high_volume_reactions_and_reversal_strength_raise_the_score():
     loud_110 = next(lv for lv in loud if lv["level"] == 110.2)
     assert loud_110["strength"] == round(quiet_110["strength"] + 1.2, 2)
     # 2 touches, both recent, no volume reaction, 4.72% average move away within 5 days
-    assert quiet_110["strength"] == round(2 * 1.0 + 2 * 1.5 + 0 * 1.2 + 4.72, 2)
+    # (one strength point per 5% of move)
+    assert quiet_110["strength"] == round(2 * 1.0 + 2 * 1.5 + 0 * 1.2 + 4.72 / 5, 2)
 
 
 def test_short_series_gives_no_levels():

@@ -7,8 +7,9 @@ known by then. Pivots within ``tolerance`` of each other form one level.
 
 Strength (week 1 slides):
     touches * 1.0 + recent_touches * 1.5 + high_volume_reactions * 1.2 + reversal_strength
-where ``reversal_strength`` is the average move away from the level, in percent, over
-the ``window`` days after each touch.
+where ``reversal_strength`` is one point for every 5% of average move away from the level
+over the ``window`` days after each touch, at most 3 points. The cap keeps one violent
+move from outweighing several touches.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ MIN_ROWS = 30
 RECENT_DAYS = 60
 VOLUME_WINDOW = 20
 HIGH_VOLUME_RATIO = 1.5
+REVERSAL_POINT_PCT = 5.0  # one strength point per 5% of average move away
+REVERSAL_CAP = 3.0
 
 
 def find_pivots(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
@@ -59,9 +62,12 @@ def find_support_resistance(
     window: int = 5,
     tolerance: float = 0.015,
     as_of: str | None = None,
-    max_levels: int = 6,
+    max_levels: int | None = 6,
 ) -> list[dict]:
-    """Levels known on ``as_of`` (default: the last day), strongest first."""
+    """Levels known on ``as_of`` (default: the last day), strongest first.
+
+    ``max_levels=None`` returns every level.
+    """
     if as_of is not None:
         df = df.loc[: pd.Timestamp(as_of)]
     if len(df) < MIN_ROWS:
@@ -92,7 +98,8 @@ def find_support_resistance(
         level = float(np.mean([t[0] for t in touches]))
         recent = sum(1 for t in touches if t[1] >= recent_start)
         loud = sum(1 for t in touches if t[3])
-        reversal = float(np.mean([t[2] for t in touches])) * 100
+        move_pct = float(np.mean([t[2] for t in touches])) * 100
+        reversal = min(max(move_pct, 0.0) / REVERSAL_POINT_PCT, REVERSAL_CAP)
         levels.append(
             {
                 "level": round(level, 2),
@@ -105,4 +112,4 @@ def find_support_resistance(
             }
         )
     levels.sort(key=lambda lv: (-lv["strength"], lv["level"]))
-    return levels[:max_levels]
+    return levels if max_levels is None else levels[:max_levels]
