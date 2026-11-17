@@ -29,48 +29,12 @@ import math
 
 import pandas as pd
 
-from bist_harness.data.fundamentals import Period, financial_group
+from bist_harness.data.fundamentals import CONCEPTS, Period, financial_group
 from bist_harness.universe import normalize_ticker
 
-ITEMS = {
-    "industrial": {
-        "current_assets": "1A",
-        "cash": "1AA",
-        "short_term_investments": "1AB",
-        "inventories": "1AF",
-        "total_assets": "1BL",
-        "short_term_liabilities": "2A",
-        "short_term_debt": "2AA",
-        "long_term_debt": "2BA",
-        "equity": "2N",
-        "parent_equity": "2O",
-        "paid_in_capital": "2OA",
-        "revenue": "3C",
-        "operating_profit": "3DF",
-        "net_profit": "3L",
-        "parent_net_profit": "3Z",
-        "depreciation": "4B",
-        "operating_cash_flow": "4C",
-    },
-    "bank": {
-        "total_assets": "1Z",
-        "equity": "2O",
-        "parent_equity": "2O",
-        "paid_in_capital": "2OA",
-        "revenue": "3C",  # net interest income
-        "net_profit": "3Z",
-        "parent_net_profit": "3ZA",
-    },
-    "insurance": {
-        "total_assets": "1Z",
-        "equity": "2O",
-        "parent_equity": "2O",
-        "paid_in_capital": "2MEA",
-        "revenue": "3AAAA",  # gross written premiums
-        "net_profit": "3NJA",
-        "parent_net_profit": "3NJA",
-    },
-}
+# Field names of each statement layout. The stored item code is the field name itself;
+# which XBRL concepts a field is read from is in ``data/fundamentals.py`` (CONCEPTS).
+ITEMS = {group: {key: key for key in fields} for group, fields in CONCEPTS.items()}
 FLOWS = {
     "revenue",
     "operating_profit",

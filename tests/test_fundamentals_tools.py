@@ -22,8 +22,26 @@ BALANCES = {
     (2024, 3): (250, 40, 0, 50, 900, 210, 100, 130, 500, 480),
     (2025, 3): (300, 50, 10, 60, 1000, 200, 80, 120, 650, 600),
 }
-FLOW_CODES = ["3C", "3DF", "4B", "3L", "3Z", "4C"]
-BALANCE_CODES = ["1A", "1AA", "1AB", "1AF", "1BL", "2A", "2AA", "2BA", "2N", "2O"]
+FLOW_CODES = [
+    "revenue",
+    "operating_profit",
+    "depreciation",
+    "net_profit",
+    "parent_net_profit",
+    "operating_cash_flow",
+]
+BALANCE_CODES = [
+    "current_assets",
+    "cash",
+    "short_term_investments",
+    "inventories",
+    "total_assets",
+    "short_term_liabilities",
+    "short_term_debt",
+    "long_term_debt",
+    "equity",
+    "parent_equity",
+]
 KNOWN = {
     (2024, 2): "2024-08-12",
     (2024, 3): "2024-11-05",
@@ -42,7 +60,7 @@ def _statements(ticker="TUPRS", shares=100.0, shares_before=None) -> pd.DataFram
         count = (
             shares_before if shares_before is not None and (year, quarter) < (2025, 3) else shares
         )
-        rows.append((ticker, year, quarter, "2OA", "Share Capital", count * M))
+        rows.append((ticker, year, quarter, "paid_in_capital", "Share Capital", count * M))
     for (year, quarter), values in BALANCES.items():
         rows += [
             (ticker, year, quarter, c, c, v * M) for c, v in zip(BALANCE_CODES, values, strict=True)
@@ -170,9 +188,11 @@ def test_a_period_without_a_publication_time_is_never_used():
 
 def test_a_ratio_with_a_zero_or_negative_base_is_none():
     statements = _statements()
-    loss = statements["item_code"].isin(["3L", "3Z"]) & (statements["year"] == 2025)
+    loss = statements["item_code"].isin(["net_profit", "net_profit"]) & (statements["year"] == 2025)
     statements.loc[loss, "value"] = -5 * M
-    equity = statements["item_code"].isin(["2N", "2O"]) & (statements["year"] == 2025)
+    equity = statements["item_code"].isin(["equity", "parent_equity"]) & (
+        statements["year"] == 2025
+    )
     statements.loc[equity, "value"] = -10 * M
     out = fn.fundamental_metrics(
         statements, _calendar(), ticker="TUPRS", as_of="2025-11-10", close=CLOSE, cpi=CPI
@@ -197,9 +217,33 @@ def test_comparative_before_inflation_accounting_is_flagged():
 def _bank_statements() -> pd.DataFrame:
     rows = []
     data = {
-        (2024, 3): {"1Z": 2000, "2O": 200, "2OA": 52, "3C": 60, "3Z": 30, "3ZA": 30},
-        (2024, 4): {"1Z": 2200, "2O": 215, "2OA": 52, "3C": 85, "3Z": 42, "3ZA": 42},
-        (2025, 3): {"1Z": 3000, "2O": 280, "2OA": 52, "3C": 75, "3Z": 39, "3ZA": 39},
+        (2024, 3): {
+            "total_assets": 2000,
+            "equity": 200,
+            "parent_equity": 200,
+            "paid_in_capital": 52,
+            "revenue": 60,
+            "net_profit": 30,
+            "parent_net_profit": 30,
+        },
+        (2024, 4): {
+            "total_assets": 2200,
+            "equity": 215,
+            "parent_equity": 215,
+            "paid_in_capital": 52,
+            "revenue": 85,
+            "net_profit": 42,
+            "parent_net_profit": 42,
+        },
+        (2025, 3): {
+            "total_assets": 3000,
+            "equity": 280,
+            "parent_equity": 280,
+            "paid_in_capital": 52,
+            "revenue": 75,
+            "net_profit": 39,
+            "parent_net_profit": 39,
+        },
     }
     for (year, quarter), items in data.items():
         rows += [("AKBNK", year, quarter, code, code, value * M) for code, value in items.items()]
@@ -276,7 +320,13 @@ def test_trend_is_improving_when_most_checks_are_positive():
 def test_trend_is_deteriorating_when_most_checks_are_negative():
     statements = _statements()
     latest = (statements["year"] == 2025) & (statements["quarter"] == 3)
-    scale = {"3C": 0.6, "3DF": 0.3, "3L": 0.3, "3Z": 0.3, "4C": 0.2}
+    scale = {
+        "revenue": 0.6,
+        "operating_profit": 0.3,
+        "net_profit": 0.3,
+        "parent_net_profit": 0.3,
+        "operating_cash_flow": 0.2,
+    }
     for code, factor in scale.items():
         statements.loc[latest & (statements["item_code"] == code), "value"] *= factor
     out = fn.fundamental_change(
