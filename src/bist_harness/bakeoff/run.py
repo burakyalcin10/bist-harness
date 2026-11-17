@@ -18,7 +18,13 @@ from datetime import datetime
 from pathlib import Path
 
 from bist_harness.bakeoff.prompt import system_prompt
-from bist_harness.bakeoff.score import CaseScore, load_cases, score_case, summarize
+from bist_harness.bakeoff.score import (
+    CaseScore,
+    failed_case,
+    load_cases,
+    score_case,
+    summarize,
+)
 from bist_harness.config import Settings
 from bist_harness.errors import LLMUnavailableError
 from bist_harness.llm.client import OllamaClient
@@ -65,12 +71,12 @@ def run_model(client: OllamaClient, cases: list[dict], *, num_ctx: int = NUM_CTX
                 row.update(reachable=False, notes=str(exc))
                 return row
             details.append({"id": case["id"], "error": str(exc)})
-            scores.append(score_case(case, []))
+            scores.append(failed_case(case))  # a failed request never counts as a pass
             continue
         latencies.append(time.perf_counter() - started)
         if result.eval_tokens_per_s:
             speeds.append(result.eval_tokens_per_s)
-        score = score_case(case, result.tool_calls)
+        score = score_case(case, result.tool_calls, malformed=result.malformed_tool_call)
         scores.append(score)
         details.append(
             {
@@ -78,6 +84,7 @@ def run_model(client: OllamaClient, cases: list[dict], *, num_ctx: int = NUM_CTX
                 "tool_ok": score.tool_ok,
                 "args_ok": score.args_ok,
                 "no_tool_ok": score.no_tool_ok,
+                "malformed": score.malformed,
                 "calls": [{"name": c.name, "arguments": c.arguments} for c in result.tool_calls],
                 "content": result.content[:300],
             }

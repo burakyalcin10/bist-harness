@@ -16,9 +16,6 @@ import httpx
 
 from bist_harness.errors import LLMUnavailableError
 
-_TOOL_CALL_TAG = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
-_JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-
 
 class _NoRequestUrls(logging.Filter):
     """Drop httpx's per-request log lines: they contain the full endpoint URL.
@@ -53,15 +50,24 @@ class ChatResult:
     total_duration_s: float
     eval_tokens_per_s: float | None
     raw: dict = field(repr=False, compare=False)
+    # True when the text looks like a tool-call attempt that could not be parsed. Such a
+    # message is neither an answer nor a call; callers count it as an invalid tool call.
+    malformed_tool_call: bool = False
 
 
-def _as_tool_call(obj: object) -> ToolCall | None:
+_WRAPPERS = ("<tool_call>", "[TOOL_CALLS]", "<|python_tag|>")
+_CALL_KEYS = re.compile(r'"name"\s*:.*"(?:arguments|parameters)"\s*:', re.DOTALL)
+
+
+def _as_tool_call(obj: object, *, allow_missing_args: bool = False) -> ToolCall | None:
     """Accept {"name": ..., "arguments"|"parameters": {...}}; reject anything else."""
     if not isinstance(obj, dict):
         return None
     obj = obj.get("function", obj) if isinstance(obj.get("function"), dict) else obj
     name = obj.get("name")
     args = obj.get("arguments", obj.get("parameters"))
+    if args is None and allow_missing_args:
+        args = {}
     if isinstance(args, str):
         try:
             args = json.loads(args)
@@ -72,32 +78,56 @@ def _as_tool_call(obj: object) -> ToolCall | None:
     return ToolCall(name, args)
 
 
-def _loads(text: str) -> object:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
+def _json_values(text: str):
+    """Yield every JSON object or array embedded anywhere in ``text``."""
+    decoder = json.JSONDecoder()
+    position = 0
+    while True:
+        starts = [i for i in (text.find("{", position), text.find("[", position)) if i != -1]
+        if not starts:
+            return
+        start = min(starts)
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            position = start + 1
+            continue
+        yield value
+        position = end
 
 
 def parse_tool_calls(message: dict) -> tuple[ToolCall, ...]:
     """Extract tool calls from a chat message.
 
     Native ``tool_calls`` win. Small models sometimes write the call into the text
-    instead, so ``<tool_call>`` tags, a fenced JSON block and a bare JSON object are
-    also recognised. Text that is not shaped like a call yields no calls.
+    instead: inside ``<tool_call>`` tags, after ``[TOOL_CALLS]`` or ``<|python_tag|>``,
+    in a fenced block, as a list, or as a bare object surrounded by prose. Every JSON
+    value in the text is examined. Text that is not shaped like a call yields no calls.
     """
-    native = [c for c in map(_as_tool_call, message.get("tool_calls") or []) if c]
-    if native:
-        return tuple(native)
+    native = message.get("tool_calls") or []
+    parsed = [c for c in (_as_tool_call(c, allow_missing_args=True) for c in native) if c]
+    if parsed:
+        return tuple(parsed)
 
-    content = (message.get("content") or "").strip()
-    if not content:
-        return ()
-    candidates = _TOOL_CALL_TAG.findall(content) or _JSON_FENCE.findall(content)
-    if not candidates and content.startswith("{"):
-        candidates = [content]
-    calls = [c for c in (_as_tool_call(_loads(text.strip())) for text in candidates) if c]
+    content = message.get("content") or ""
+    wrapped = any(marker in content for marker in _WRAPPERS)
+    calls: list[ToolCall] = []
+    for value in _json_values(content):
+        for item in value if isinstance(value, list) else [value]:
+            call = _as_tool_call(item, allow_missing_args=wrapped)
+            if call:
+                calls.append(call)
     return tuple(calls)
+
+
+def looks_like_tool_call(message: dict) -> bool:
+    """True when a message tries to call a tool but nothing could be parsed from it."""
+    if parse_tool_calls(message):
+        return False
+    if message.get("tool_calls"):
+        return True
+    content = message.get("content") or ""
+    return any(marker in content for marker in _WRAPPERS) or bool(_CALL_KEYS.search(content))
 
 
 class OllamaClient:
@@ -112,23 +142,28 @@ class OllamaClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.model = model
-        self._http = httpx.Client(
-            base_url=base_url.rstrip("/"), timeout=timeout_s, transport=transport
-        )
+        try:
+            self._http = httpx.Client(
+                base_url=base_url.rstrip("/"), timeout=timeout_s, transport=transport
+            )
+        except (httpx.InvalidURL, ValueError):
+            raise LLMUnavailableError("the LLM endpoint address is not a valid URL") from None
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
+        # Error messages name the failure, never the address or the server's own text:
+        # a proxy error body can contain the private host name.
         try:
             response = self._http.request(method, path, **kwargs)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise LLMUnavailableError(
                 f"cannot reach the LLM endpoint ({type(exc).__name__})"
             ) from None
         if response.status_code >= 400:
-            detail = response.text.strip().replace("\n", " ")[:200]
-            raise LLMUnavailableError(
-                f"LLM endpoint returned HTTP {response.status_code}: {detail}"
-            )
-        return response.json()
+            raise LLMUnavailableError(f"LLM endpoint returned HTTP {response.status_code}")
+        try:
+            return response.json()
+        except ValueError:
+            raise LLMUnavailableError("LLM endpoint returned a non-JSON response") from None
 
     def list_models(self) -> list[str]:
         return [m["name"] for m in self._request("GET", "/api/tags").get("models", [])]
@@ -171,4 +206,5 @@ class OllamaClient:
             total_duration_s=int(raw.get("total_duration") or 0) / 1e9,
             eval_tokens_per_s=(eval_count / (eval_ns / 1e9)) if eval_ns else None,
             raw=raw,
+            malformed_tool_call=looks_like_tool_call(message),
         )

@@ -300,3 +300,51 @@ def to_ollama_tools(names: Iterable[str] | None = None) -> list[dict]:
             }
         )
     return tools
+
+
+_JSON_TYPES = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, int | float) and not isinstance(v, bool),
+    "array": lambda v: isinstance(v, list),
+}
+
+
+def _value_problem(name: str, value: object, spec: dict) -> str | None:
+    kind = spec.get("type")
+    if kind in _JSON_TYPES and not _JSON_TYPES[kind](value):
+        return f"{name} must be of type {kind}"
+    if "enum" in spec and value not in spec["enum"]:
+        return f"{name} must be one of {spec['enum']}"
+    if kind == "array" and "items" in spec:
+        for item in value:  # type: ignore[union-attr]
+            problem = _value_problem(f"{name} item", item, spec["items"])
+            if problem:
+                return problem
+    return None
+
+
+def validate_tool_call(name: str, arguments: object) -> str | None:
+    """Check a tool call against its schema; return ``None`` or a description of the problem.
+
+    The harness runs this before a tool is executed, so an unknown tool, a missing or
+    unexpected argument, a wrong type or a value outside an enum is reported back to
+    the model (and counted as an invalid tool call) instead of being silently ignored.
+    """
+    if name not in TOOL_SCHEMAS:
+        return f"unknown tool: {name}"
+    if not isinstance(arguments, dict):
+        return "arguments must be a JSON object"
+    params = TOOL_SCHEMAS[name]["parameters"]
+    properties = params["properties"]
+    unexpected = sorted(set(arguments) - set(properties))
+    if unexpected:
+        return f"unexpected argument(s): {', '.join(unexpected)}"
+    missing = [key for key in params["required"] if key not in arguments]
+    if missing:
+        return f"missing argument(s): {', '.join(missing)}"
+    for key, value in arguments.items():
+        problem = _value_problem(key, value, properties[key])
+        if problem:
+            return problem
+    return None

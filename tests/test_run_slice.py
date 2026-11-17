@@ -44,7 +44,13 @@ def _result(content="", calls=()):
     return ChatResult(content, tuple(calls), 0, 0, 0.0, None, {})
 
 
-ARGS = {"ticker": "ASELS", "start": "2021-01-01", "end": "2023-12-31", "forward_days": 5}
+ARGS = {
+    "ticker": "ASELS",
+    "start": "2021-01-01",
+    "end": "2023-12-31",
+    "event_type": "BOLLINGER_LOWER_TOUCH",
+    "forward_days": 5,
+}
 QUESTION = "ASELS'te 2021-01-01 ile 2023-12-31 arasında alt Bollinger dokunuşlarından sonra 5 günlük getiri nasıl?"
 
 

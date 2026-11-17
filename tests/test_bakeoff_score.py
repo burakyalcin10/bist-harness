@@ -77,6 +77,7 @@ def test_summary_percentages_use_the_right_denominators():
         "no_tool_ok_pct": 100.0,
         "tool_cases": 2,
         "no_tool_cases": 1,
+        "malformed_calls": 0,
     }
 
 

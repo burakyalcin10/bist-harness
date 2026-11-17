@@ -65,10 +65,17 @@ def test_reversal_events_summary_matches_the_tool_function(offline_history):
 
 
 def test_events_never_use_prices_after_the_requested_end(offline_history, monkeypatch):
+    def analysis(output):
+        # Coverage fields describe the snapshot itself, so they differ by design.
+        skip = {"data_last_date", "coverage_warning", "result_id"}
+        return {k: v for k, v in output.items() if k not in skip}
+
     out_full = srv.detect_reversal_events("ASELS", "2020-06-01", "2022-06-30")
     truncated = offline_history.loc[:"2022-06-30"]
     monkeypatch.setattr(srv, "load_history", lambda ticker: truncated)
-    assert srv.detect_reversal_events("ASELS", "2020-06-01", "2022-06-30") == out_full
+    out_cut = srv.detect_reversal_events("ASELS", "2020-06-01", "2022-06-30")
+    assert analysis(out_cut) == analysis(out_full)
+    assert out_full["event_count"] > 0
 
 
 def test_same_input_gives_same_result_id_and_different_input_differs():

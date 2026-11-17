@@ -28,9 +28,14 @@ def test_extract_numbers(text, expected):
     assert extract_numbers(text) == expected
 
 
-def test_identifiers_with_digits_are_not_numbers():
-    text = "Tools: get_stock_history; model qwen3.5:4b; ids E12 and A1B2; ticker ISMEN"
+def test_known_identifier_shapes_are_not_numbers():
+    text = "Tool get_stock_history; evidence E12; result 9f3a1c0b7e2d; index XU100; BIST 100; ticker ISMEN"
     assert extract_numbers(text) == []
+
+
+def test_digits_glued_to_other_words_are_still_numbers():
+    # Skipping every letter-adjacent digit would let "TL62.5" or "7x" through unchecked.
+    assert extract_numbers("model qwen3.5 and code A1B2") == [3.5, 1.0, 2.0]
 
 
 # Decision K-008 (docs/decision-log.md): two numbers are the same only when they are
@@ -64,9 +69,9 @@ def test_collect_numbers_walks_nested_tool_output_and_skips_booleans():
     assert sorted(collect_numbers(output)) == [-2.0, 1.5, 24.0, 62.5]
 
 
-def test_numbers_inside_tool_output_strings_count_as_supported():
+def test_numbers_inside_tool_output_strings_do_not_count_as_support():
     output = {"first_date": "2020-01-02", "note": "window 20, 2 std"}
-    assert find_unsupported_numbers("Window 20 with 2 std.", [output]) == []
+    assert find_unsupported_numbers("Window 20 with 2 std.", [output]) == [20.0, 2.0]
 
 
 def test_invented_number_is_flagged():

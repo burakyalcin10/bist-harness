@@ -296,4 +296,22 @@ seti ince ayar verisinden önce dondurulur ve eğitimle çakışmaz.
   endeksleri Sprint 2'de belirlenir.
 - **Nihai temel model** RTX 5070 ölçümünden sonra seçilecek.
 - **QLoRA'nın 12 GB'de ve Windows'ta çalışması** Sprint 2'de denenecek (EC-006).
-- Sprint 1 ince hat sonuçları ve orada görülen sorunlar bu bölüme eklenir.
+
+**Sprint 1 ince hattından çıkanlar** (ayrıntı: `docs/results/2026-11-17-model-bakeoff.md`)
+
+- **Desteklenen bir sayı yanlış etikete bağlanabiliyor.** `qwen3.5:2b`, 26 olan olay
+  sayısını "26 başarılı olay" diye yazdı; sayı araç çıktısında bulunduğu için sayı
+  denetimi geçti. Sayı denetimi gerekli ama yeterli değil. §7'deki şablonlu kanıt
+  cümleleri ve açıklamanın kanıt numarasına atıf yapması bu hatayı hedefler; çıktı
+  doğrulayıcıya "sayı ile alan adı aynı cümlede mi" denetimi eklenmesi Sprint 4'te
+  değerlendirilecek.
+- **Temel modeller yatırım tavsiyesi isteğinde reddetmek yerine veri aracı çağırıyor.**
+  Dört modelin dördü "TUPRS alayım mı?" sorusunda araç çağırdı. Sistem istemi bu kuralı
+  tek başına tutmuyor; §6'daki niyet denetimi (araçlar sunulmadan önce) zorunlu, ince
+  ayar verisinde de olumsuz örnekler gerekli.
+- **Ölçüm soruları 2B ve 4B modellerini ayırmıyor** (ikisi de %100). Model seçimi için
+  daha zor sorular gerekiyor; bu, EC-060 değerlendirme setinin işi.
+- **Günlük sızıntısı:** MCP SDK'sı günlükleri INFO düzeyine açınca `httpx` her isteğin
+  adresini yazıyordu. `llm/client.py` içindeki süzgeç bunu engelliyor; testle korunuyor.
+- **Hız:** dizüstünde 4B model 4 GB'ye sığmıyor ve yarı yarıya işlemcide çalışıyor
+  (medyan 11,9 sn); 2B 4,4 sn. Canlı testte kullanılacak makine RTX 5070 olmalı.

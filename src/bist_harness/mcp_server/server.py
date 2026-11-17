@@ -60,8 +60,24 @@ def _with_result_id(tool: str, args: dict, output: dict) -> dict:
     return {**output, "result_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]}
 
 
-def _load_window(ticker: str, start: str, end: str) -> tuple[str, pd.DataFrame] | dict:
-    """Validate the request and return (ticker, history up to ``end``) or an error object."""
+def _coverage(history: pd.DataFrame, start: str, end: str) -> dict:
+    """Say which dates the cached data really covers, and warn if the request goes beyond.
+
+    The snapshot is only refreshed on purpose, so a request can ask for days it does not
+    hold. The output must show that instead of silently answering for a shorter period.
+    """
+    first, last = str(history.index[0].date()), str(history.index[-1].date())
+    warning = None
+    if start < first or end > last:
+        warning = (
+            f"Requested period {start} to {end} extends beyond the available data "
+            f"({first} to {last}); results cover the available part only."
+        )
+    return {"data_first_date": first, "data_last_date": last, "coverage_warning": warning}
+
+
+def _load_window(ticker: str, start: str, end: str) -> tuple[str, pd.DataFrame, dict] | dict:
+    """Validate the request; return (ticker, history up to ``end``, coverage) or an error."""
     if not is_in_universe(ticker):
         return _error("UNKNOWN_TICKER", f"{ticker!r} is not one of the 30 study-universe stocks.")
     try:
@@ -77,10 +93,11 @@ def _load_window(ticker: str, start: str, end: str) -> tuple[str, pd.DataFrame] 
         history = load_history(name)
     except DataUnavailableError as exc:
         return _error("DATA_UNAVAILABLE", str(exc))
+    coverage = _coverage(history, start, end)
     history = history.loc[: pd.Timestamp(end)]
     if history.loc[pd.Timestamp(start) :].empty:
         return _error("DATA_UNAVAILABLE", f"No market data for {name} between {start} and {end}.")
-    return name, history
+    return name, history, coverage
 
 
 @server.tool(description=TOOL_SCHEMAS["get_stock_history"]["description"])
@@ -88,7 +105,7 @@ def get_stock_history(ticker: str, start: str, end: str) -> dict:
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
         return loaded
-    name, history = loaded
+    name, history, coverage = loaded
     close = history.loc[pd.Timestamp(start) :, "Close"]
     first, last = float(close.iloc[0]), float(close.iloc[-1])
     output = {
@@ -101,6 +118,7 @@ def get_stock_history(ticker: str, start: str, end: str) -> dict:
         "first_close": round(first, 2),
         "last_close": round(last, 2),
         "period_return_pct": round((last / first - 1) * 100, 2),
+        **coverage,
         "data_source": DATA_SOURCE,
     }
     return _with_result_id(
@@ -119,7 +137,7 @@ def detect_reversal_events(
     loaded = _load_window(ticker, start, end)
     if isinstance(loaded, dict):
         return loaded
-    name, history = loaded
+    name, history, coverage = loaded
     if event_type not in REVERSAL_EVENT_TYPES:
         return _error("INVALID_ARGUMENT", f"event_type must be one of {REVERSAL_EVENT_TYPES}.")
     if forward_days not in FORWARD_DAYS:
@@ -138,6 +156,7 @@ def detect_reversal_events(
     output = {
         **args,
         **summary,
+        **coverage,
         "definition": BOLLINGER_LOWER_TOUCH_DEFINITION,
         "data_source": DATA_SOURCE,
     }
@@ -145,16 +164,30 @@ def detect_reversal_events(
 
 
 def unwrap_tool_result(result) -> dict:
-    """Turn an MCP ``CallToolResult`` back into the tool's own dictionary."""
+    """Turn an MCP ``CallToolResult`` back into the tool's own dictionary.
+
+    When MCP itself rejects the call (arguments that do not fit the tool's signature),
+    the result carries an error text instead of JSON. That becomes an ``INVALID_ARGUMENT``
+    error object, so a bad call from the model is reported back rather than crashing.
+    """
+    texts = [
+        t for t in (getattr(b, "text", None) for b in getattr(result, "content", None) or []) if t
+    ]
+    if getattr(result, "is_error", False):
+        detail = texts[0].strip().splitlines()[0][:200] if texts else "the call was rejected"
+        return _error("INVALID_ARGUMENT", f"The tool rejected the call: {detail}")
     structured = getattr(result, "structured_content", None)
     if isinstance(structured, dict):
         if set(structured) == {"result"} and isinstance(structured["result"], dict):
             return structured["result"]
         return structured
-    for block in getattr(result, "content", None) or []:
-        text = getattr(block, "text", None)
-        if text:
-            return json.loads(text)
+    for text in texts:
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            return _error("INVALID_ARGUMENT", "The tool returned a reply that is not JSON.")
+        if isinstance(value, dict):
+            return value
     return _error("EMPTY_RESULT", "The tool returned no content.")
 
 
