@@ -106,6 +106,9 @@ ADVICE_PHRASES = (
     "satmam mi",
     "satilir mi",
     "satilmali mi",
+    "alsam mi",
+    "satsam mi",
+    "eklesem mi",
     "tutayim mi",
     "tutmali miyim",
     "elimde tutmali",
@@ -133,8 +136,16 @@ ADVICE_PHRASES = (
     "good investment",
     "investment advice",
     "financial advice",
+    "can i buy",
+    "can i sell",
+    "would you buy",
+    "would you sell",
+    "wise to buy",
+    "wise to sell",
+    "good time to buy",
+    "good time to sell",
     "recommend buying",
-    "do you recommend",
+    "recommend selling",
     "add to my portfolio",
     "open a position",
 )
@@ -173,19 +184,27 @@ PREDICTION_PHRASES = (
     "will it drop",
     "will it increase",
     "will it reach",
-    "will the price",
-    "will the stock",
     "price target",
     "price prediction",
     "predict the price",
     "forecast the price",
     "price forecast",
-    "where will",
+    "going to go up",
+    "going to go down",
     "going to rise",
     "going to fall",
     "going up tomorrow",
     "next week price",
     "next month price",
+)
+
+# Patterns for wordings a fixed phrase cannot cover; they run on the folded text.
+ADVICE_PATTERNS = (re.compile(r" (is|are) [a-z]{3,5} an? (buy|sell|hold) "),)
+PREDICTION_PATTERNS = (
+    re.compile(
+        r" will (it|they|the stock|the price|the share|[a-z]{4,5}) "
+        r"(go up|go down|rise|fall|drop|increase|decrease|reach|hit|climb) "
+    ),
 )
 
 _FOLD = str.maketrans("ıİşŞğĞüÜöÖçÇ", "iissgguuoocc")
@@ -201,9 +220,13 @@ def fold_text(text: str) -> str:
 def keyword_guard(question: str) -> str | None:
     """Return ``ADVICE_REQUEST`` or ``PREDICTION_REQUEST`` when a guarded phrase appears."""
     folded = fold_text(question)
-    if any(f" {p} " in folded for p in ADVICE_PHRASES):
+    if any(f" {p} " in folded for p in ADVICE_PHRASES) or any(
+        r.search(folded) for r in ADVICE_PATTERNS
+    ):
         return "ADVICE_REQUEST"
-    if any(f" {p} " in folded for p in PREDICTION_PHRASES):
+    if any(f" {p} " in folded for p in PREDICTION_PHRASES) or any(
+        r.search(folded) for r in PREDICTION_PATTERNS
+    ):
         return "PREDICTION_REQUEST"
     return None
 

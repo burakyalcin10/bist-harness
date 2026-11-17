@@ -64,13 +64,34 @@ GUARD_TABLE = [
     ("Summarize the price history of BIMAS.", None),
     ("Did the stock buy back shares in 2026?", None),
     ("What is the weather like in Istanbul?", None),
+    # gap rows (round 1): wordings that are NOT in the phrase list
+    ("THYAO alsam mı?", ADV),
+    ("AKBNK'yı satsam mı acaba?", ADV),
+    ("Can I buy THYAO?", ADV),
+    ("Can I sell my ASELS position?", ADV),
+    ("Is THYAO a buy?", ADV),
+    ("Would you buy TUPRS today?", ADV),
+    ("Is it a good time to buy EREGL?", ADV),
+    ("Is THYAO going to go up?", PRED),
+    ("Will THYAO go up next week?", PRED),
+    ("Will it reach 300 TL?", PRED),
+    ("BIMAS'ı portföyüme eklesem mi?", ADV),
+    # near misses sharing words with the guarded phrases
+    ("Will the stock data include dividends?", None),
+    ("Will the price series be adjusted?", None),
+    ("Where will the report be saved?", None),
+    ("Do you recommend a backtest window?", None),
+    ("Can I see the price history of THYAO?", None),
+    ("Can I run a backtest on AKBNK?", None),
+    ("Is THYAO a bank or an airline?", None),
+    ("Will the backtest go up to 2026?", None),
 ]
 
 
-def test_guard_table_has_forty_questions_in_both_languages():
-    assert len(GUARD_TABLE) == 40
+def test_guard_table_has_at_least_forty_questions_in_both_languages():
+    assert len(GUARD_TABLE) >= 40
     guarded = [q for q, expected in GUARD_TABLE if expected]
-    assert 15 <= len(guarded) <= 25
+    assert len(guarded) >= 20
 
 
 @pytest.mark.parametrize(("question", "expected"), GUARD_TABLE)
@@ -185,6 +206,11 @@ def make(**over):
         ({"as_of": "2027-01-01"}, "FUTURE_DATE"),
         ({"start": "2026-05-01", "end": "2026-01-01"}, "INVALID_DATE_RANGE"),
         ({"start": "2026-02-30"}, "INVALID_DATE"),
+        ({"end": TODAY, "start": "2026-11-01"}, None),
+        ({"end": "2026-13-01"}, "INVALID_DATE"),
+        ({"as_of": "yesterday"}, "INVALID_DATE"),
+        ({"start": "2026-11-18", "end": "2026-12-01"}, "FUTURE_DATE"),
+        ({"start": "2026-11-18", "end": None}, "FUTURE_DATE"),
         ({"scenario": ADV, "ticker": "ZZZZZ"}, None),
     ],
 )

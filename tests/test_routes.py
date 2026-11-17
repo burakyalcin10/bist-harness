@@ -3,7 +3,6 @@ import pytest
 from bist_harness.harness.intent import GUARDED_SCENARIOS, SCENARIOS
 from bist_harness.harness.routes import (
     ALLOWED_TOOLS,
-    CANDIDATE_SCENARIOS,
     MANDATORY,
     ROUTES,
     STATES,
@@ -41,15 +40,24 @@ def test_mandatory_is_the_brief_value():
     assert MANDATORY == ("CHECK_DATA_QUALITY", "RISK_GATE", "LOG_AND_CLOSE")
 
 
-@pytest.mark.parametrize("scenario", CANDIDATE_SCENARIOS)
+CANDIDATE_CAPABLE = [
+    "SECTOR_LAGGARD",
+    "CALENDAR_PATTERN",
+    "TECHNICAL_REVERSAL",
+    "FUNDAMENTAL_REACTION",
+    "BACKTEST",
+]
+
+
+@pytest.mark.parametrize("scenario", CANDIDATE_CAPABLE)
 def test_candidate_capable_routes_preview_and_backtest(scenario):
     assert {"PREVIEW_STRATEGIES", "RUN_BACKTEST"} <= set(ROUTES[scenario])
 
 
-def test_candidate_scenarios_cover_the_candidate_labels():
-    assert {"SECTOR_LAGGARD", "TECHNICAL_REVERSAL", "FUNDAMENTAL_REACTION"} <= set(
-        CANDIDATE_SCENARIOS
-    )
+def test_production_candidate_list_matches_the_hard_coded_one():
+    from bist_harness.harness.routes import CANDIDATE_SCENARIOS
+
+    assert sorted(CANDIDATE_SCENARIOS) == sorted(CANDIDATE_CAPABLE)
 
 
 @pytest.mark.parametrize("scenario", GUARDED_SCENARIOS)
@@ -71,3 +79,46 @@ def test_data_states_only_in_matching_routes():
     assert "LOAD_MACRO_CONTEXT" in ROUTES["MACRO_CONTEXT"]
     assert "LOAD_NEWS_AND_SPEECH_CONTEXT" in ROUTES["NEWS_CONTEXT"]
     assert "RUN_SECTOR_RELATIVE_ANALYSIS" in ROUTES["SECTOR_LAGGARD"]
+
+
+SPEC_SECTION_6_TOOLS = {
+    "START": (),
+    "SELECT_UNIVERSE": (),
+    "LOAD_MARKET_DATA": ("get_stock_history", "get_index_history"),
+    "CHECK_DATA_QUALITY": ("check_data_quality",),
+    "CALCULATE_TECHNICALS": ("calculate_indicators", "find_support_resistance"),
+    "RUN_SECTOR_RELATIVE_ANALYSIS": ("rank_sector_relative_strength",),
+    "RUN_PATTERN_AND_REVERSAL_ANALYSIS": ("detect_reversal_events", "test_weekday_pattern"),
+    "LOAD_FUNDAMENTALS": ("get_fundamental_metrics", "calculate_fundamental_change"),
+    "LOAD_MACRO_CONTEXT": ("get_macro_context",),
+    "LOAD_NEWS_AND_SPEECH_CONTEXT": ("get_news_events", "get_speech_features"),
+    "BUILD_EVIDENCE": ("build_evidence_bundle",),
+    "PREVIEW_STRATEGIES": (),
+    "RUN_BACKTEST": ("run_backtest",),
+    "RISK_GATE": ("check_data_quality",),
+    "GENERATE_EXPLANATION": (),
+    "HUMAN_REVIEW": (),
+    "LOG_AND_CLOSE": (),
+}
+
+
+def test_allowed_tools_equal_the_spec_table():
+    assert ALLOWED_TOOLS == SPEC_SECTION_6_TOOLS
+
+
+def test_quality_states_expose_check_data_quality():
+    assert "check_data_quality" in ALLOWED_TOOLS["RISK_GATE"]
+    assert "check_data_quality" in ALLOWED_TOOLS["CHECK_DATA_QUALITY"]
+
+
+@pytest.mark.parametrize(
+    ("state", "owners"),
+    [
+        ("LOAD_FUNDAMENTALS", {"FUNDAMENTAL_REACTION"}),
+        ("LOAD_MACRO_CONTEXT", {"MACRO_CONTEXT"}),
+        ("LOAD_NEWS_AND_SPEECH_CONTEXT", {"NEWS_CONTEXT"}),
+        ("RUN_SECTOR_RELATIVE_ANALYSIS", {"SECTOR_LAGGARD"}),
+    ],
+)
+def test_data_states_are_absent_from_unrelated_routes(state, owners):
+    assert {s for s, route in ROUTES.items() if state in route} == owners
