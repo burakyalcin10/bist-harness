@@ -23,11 +23,13 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from bist_harness.config import REPO_ROOT
 from bist_harness.data import snapshot
 from bist_harness.errors import DataUnavailableError
 from bist_harness.universe import load_universe, normalize_ticker
@@ -40,6 +42,7 @@ KAP_QUERY_URL = "https://www.kap.org.tr/tr/api/disclosure/members/byCriteria"
 STATEMENT_LAYOUT = {"industrial": "XI_29", "bank": "UFRS_K", "insurance": "UFRS_K"}
 REPORT_SUBJECT = "Finansal Rapor"
 MARKET_CLOSE_HOUR = 18
+HALF_DAYS_PATH = REPO_ROOT / "data" / "reference" / "half_day_sessions.csv"
 FIRST_PERIOD_YEAR, FIRST_PERIOD_QUARTER = 2022, 4
 BUILD_HINT = "Run `uv run python -m bist_harness.data.fundamentals build` first."
 STATEMENT_COLUMNS = ["ticker", "year", "quarter", "item_code", "item_name", "value"]
@@ -217,12 +220,28 @@ def fetch_report_disclosures(
     return table.sort_values("published_at").reset_index(drop=True)
 
 
+@lru_cache(maxsize=1)
+def half_day_closes() -> dict[pd.Timestamp, tuple[int, int]]:
+    """Closing time of each half-day session (``data/reference/half_day_sessions.csv``)."""
+    if not HALF_DAYS_PATH.is_file():
+        return {}
+    table = pd.read_csv(HALF_DAYS_PATH, dtype=str)
+    return {
+        pd.Timestamp(day): (int(close[:2]), int(close[3:5]))
+        for day, close in zip(table["date"], table["close"], strict=True)
+    }
+
+
 def known_from(published_at: pd.Timestamp, calendar: pd.DatetimeIndex) -> pd.Timestamp:
-    """First trading day whose close comes after the publication (``NaT`` if none)."""
+    """First trading day whose close comes after the publication (``NaT`` if none).
+
+    The session closes at 18:00, or at the time given for a half-day session (12:30 on
+    the eves of the religious holidays and of Republic Day)."""
     if pd.isna(published_at):
         return pd.NaT
     day = published_at.normalize()
-    after_close = published_at.hour >= MARKET_CLOSE_HOUR
+    close = half_day_closes().get(day, (MARKET_CLOSE_HOUR, 0))
+    after_close = (published_at.hour, published_at.minute) >= close
     later = calendar[calendar > day] if after_close else calendar[calendar >= day]
     return later[0] if len(later) else pd.NaT
 
