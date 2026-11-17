@@ -286,3 +286,23 @@ def test_feature_table_cache_is_bounded_and_shared_frames_hash_once(monkeypatch)
         ft.build_feature_table(f"T{n}", history, disclosures=shared)
     assert len(ft._CACHE) == 3
     assert len(hashed) == 2  # history and the shared frame, once each
+
+
+def test_resolve_from_the_store_sees_calls_saved_after_an_earlier_resolve(monkeypatch, tmp_path):
+    # The MCP server runs in another process: it never shares the harness registry, so
+    # each resolve must read the store again instead of keeping a stale copy.
+    path = tmp_path / "store.sqlite"
+    monkeypatch.setattr(session, "_store_path", lambda: path)
+    analysis = session.new_analysis("q", model="m")
+    session.record_call(analysis, state="S", tool="get_stock_history", arguments={}, output={})
+    connection = db.connect(path)
+    session.save(analysis, connection)
+    session._LIVE.clear()  # the server process knows nothing live
+    first = session.resolve(analysis.analysis_id)
+    assert len(first.tool_calls) == 1
+    session.record_call(analysis, state="S", tool="get_index_history", arguments={}, output={})
+    session.save(analysis, connection)  # the harness saves its next call
+    connection.close()
+    second = session.resolve(analysis.analysis_id)
+    assert [c.tool for c in second.tool_calls] == ["get_stock_history", "get_index_history"]
+    assert analysis.analysis_id not in session._LIVE  # a store read is not cached

@@ -104,7 +104,11 @@ def _store_path() -> Path:
 
 
 def resolve(analysis_id: str) -> Analysis | None:
-    """A live analysis, else one saved in the default store (never creating the file)."""
+    """A live analysis, else one saved in the default store (never creating the file).
+
+    A store read is not cached: in an MCP server process the harness saves new calls
+    after every step, so each lookup must see the store as it is now.
+    """
     live = _LIVE.get(analysis_id)
     if live is not None:
         return live
@@ -113,7 +117,7 @@ def resolve(analysis_id: str) -> Analysis | None:
         return None
     conn = db.connect(path)
     try:
-        return load(analysis_id, conn)
+        return _read(analysis_id, conn)
     except KeyError:
         return None
     finally:
@@ -225,6 +229,13 @@ def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
 
 def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
     """Read an analysis back (and register it as live); ``KeyError`` if it is not stored."""
+    analysis = _read(analysis_id, conn)
+    _LIVE[analysis.analysis_id] = analysis
+    return analysis
+
+
+def _read(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
+    """Read an analysis from the store without registering it; ``KeyError`` if absent."""
     row = conn.execute(
         "SELECT analysis_id, question, created_at, model, snapshot_id, data_versions_json, "
         "intent_json, state, gate_status, outcome, run_json FROM analyses WHERE analysis_id = ?",
@@ -267,5 +278,4 @@ def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
         gate_status=row[8],
         trail=[StateRecord(r["state"], r["status"], r["detail"]) for r in run.get("trail", [])],
     )
-    _LIVE[analysis.analysis_id] = analysis
     return analysis

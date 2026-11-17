@@ -8,8 +8,10 @@ import json
 import sqlite3
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
+from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import machine, session
 from bist_harness.harness.routes import ALLOWED_TOOLS, GUARDED_ROUTE, ROUTES, STATES
 from bist_harness.llm.client import ChatResult, ToolCall
@@ -896,3 +898,134 @@ def test_a_raising_tool_is_recorded_as_an_error():
     first = analysis.tool_calls[0]
     assert first.allowed and first.output["error"]["code"] == "TOOL_FAILED"
     assert "disk gone" in first.output["error"]["message"]
+
+
+# --- Fix round 1: the model server fails mid-run -------------------------------------
+PRIVATE_HOST = "gpu-box.internal"
+PRIVATE_IP = "10.1.2.3"
+
+
+class FailingClient(ScriptedClient):
+    """Answers like ScriptedClient, but raises ``error`` on its ``fail_on``-th call."""
+
+    def __init__(self, fail_on, error, *script):
+        super().__init__(*script)
+        self.fail_on = fail_on
+        self.error = error
+
+    def chat(self, messages, tools=None, **kwargs):
+        if len(self.requests) + 1 == self.fail_on:
+            self.requests.append({"messages": messages, "tools": tools, **kwargs})
+            raise self.error
+        return super().chat(messages, tools, **kwargs)
+
+
+def unreachable():
+    return LLMUnavailableError(
+        f"cannot reach the LLM endpoint at http://{PRIVATE_HOST}:11434/api/chat (ConnectError)"
+    )
+
+
+def test_model_failure_in_a_tool_state_ends_with_an_outcome(conn):
+    client = FailingClient(2, unreachable(), *price_summary_script())
+    explain = Spy()
+    analysis = machine.run_analysis(
+        "How did THYAO do?",
+        client,
+        call_tool=FakeTools(),
+        today=TODAY,
+        conn=conn,
+        explain_fn=explain,
+    )
+    assert analysis.outcome == "MODEL_UNAVAILABLE"
+    assert analysis.answer == machine.MODEL_UNAVAILABLE_ANSWERS["en"]
+    failed = record_of(analysis, "LOAD_MARKET_DATA")
+    assert failed.status == "FAILED"
+    assert failed.detail["error"] == "LLMUnavailableError"
+    assert "cannot reach the LLM endpoint" in failed.detail["message"]
+    # No further model turn; the remaining model states are skipped.
+    assert len(client.requests) == 2 and explain.calls == []
+    assert record_of(analysis, "CALCULATE_TECHNICALS").status == "SKIPPED"
+    assert record_of(analysis, "CALCULATE_TECHNICALS").detail == {"reason": "MODEL_UNAVAILABLE"}
+    assert record_of(analysis, "GENERATE_EXPLANATION").detail == {"reason": "MODEL_UNAVAILABLE"}
+    # The states the harness runs itself still run.
+    assert [(c.state, c.tool, c.source) for c in analysis.tool_calls] == [
+        ("CHECK_DATA_QUALITY", "check_data_quality", "harness"),
+        ("BUILD_EVIDENCE", "build_evidence_bundle", "harness"),
+        ("RISK_GATE", "check_data_quality", "harness"),
+    ]
+    assert analysis.gate_status == "PASS"
+    assert record_of(analysis, "HUMAN_REVIEW").status == "RAN"
+    assert visited(analysis) == list(ROUTES["PRICE_SUMMARY"])
+    loaded = session.load(analysis.analysis_id, conn)
+    assert loaded.outcome == "MODEL_UNAVAILABLE" and loaded.trail == analysis.trail
+
+
+def test_calls_made_before_the_failure_are_kept():
+    client = FailingClient(3, unreachable(), *price_summary_script())
+    analysis = machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)
+    assert [c.tool for c in analysis.tool_calls][:2] == ["get_stock_history", "get_index_history"]
+    assert record_of(analysis, "LOAD_MARKET_DATA").status == "RAN"
+    assert record_of(analysis, "CALCULATE_TECHNICALS").status == "FAILED"
+    assert analysis.outcome == "MODEL_UNAVAILABLE"
+
+
+def test_model_failure_at_the_intent_ends_before_any_tool(conn):
+    client = FailingClient(1, httpx.ReadTimeout("timed out"))
+    tools = FakeTools()
+    analysis = machine.run_analysis(
+        "THYAO nasıl gitti?", client, call_tool=tools, today=TODAY, conn=conn
+    )
+    assert tools.calls == [] and analysis.intent is None
+    assert analysis.outcome == "MODEL_UNAVAILABLE"
+    assert analysis.answer == machine.MODEL_UNAVAILABLE_ANSWERS["tr"]
+    assert record_of(analysis, "START").status == "FAILED"
+    assert record_of(analysis, "START").detail["error"] == "ReadTimeout"
+    assert visited(analysis) == list(GUARDED_ROUTE)
+    assert session.load(analysis.analysis_id, conn).outcome == "MODEL_UNAVAILABLE"
+
+
+def test_model_failure_in_the_explanation_ends_with_an_outcome():
+    def explain_fn(analysis, client, evidence, gate):
+        raise unreachable()
+
+    analysis = machine.run_analysis(
+        "How did THYAO do?",
+        ScriptedClient(*price_summary_script()),
+        call_tool=FakeTools(),
+        today=TODAY,
+        explain_fn=explain_fn,
+    )
+    assert analysis.outcome == "MODEL_UNAVAILABLE"
+    assert record_of(analysis, "GENERATE_EXPLANATION").status == "FAILED"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        unreachable(),
+        httpx.ConnectError(f"[Errno 111] refused: http://{PRIVATE_IP}:11434/api/chat"),
+        LLMUnavailableError(f"proxy {PRIVATE_IP}:11434 and {PRIVATE_HOST}:8080 said no"),
+    ],
+)
+def test_the_server_address_is_never_recorded(error, conn):
+    client = FailingClient(2, error, *price_summary_script())
+    analysis = machine.run_analysis(
+        "How did THYAO do?", client, call_tool=FakeTools(), today=TODAY, conn=conn
+    )
+    assert analysis.outcome == "MODEL_UNAVAILABLE"
+    stored = json.dumps(
+        [
+            conn.execute("SELECT * FROM analyses").fetchall(),
+            conn.execute("SELECT * FROM tool_calls").fetchall(),
+        ]
+    )
+    for secret in (PRIVATE_HOST, PRIVATE_IP, "11434", "8080", "http://"):
+        assert secret not in stored
+        assert secret not in json.dumps([r.detail for r in analysis.trail])
+
+
+def test_a_programming_error_in_the_client_is_not_swallowed():
+    client = FailingClient(2, KeyError("bug"), *price_summary_script())
+    with pytest.raises(KeyError):
+        machine.run_analysis("How did THYAO do?", client, call_tool=FakeTools(), today=TODAY)

@@ -14,15 +14,25 @@ without a valid call the harness makes the canonical call derived from the inten
 from __future__ import annotations
 
 import dataclasses
+import re
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+import httpx
+
 from bist_harness.data import peers
+from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import session
-from bist_harness.harness.intent import Intent, check_intent, keyword_guard, parse_intent
+from bist_harness.harness.intent import (
+    Intent,
+    _guess_language,
+    check_intent,
+    keyword_guard,
+    parse_intent,
+)
 from bist_harness.harness.routes import ALLOWED_TOOLS, GUARDED_ROUTE, ROUTES, STATES
 from bist_harness.tools.schemas import STRATEGY_VARIANTS, to_ollama_tools, validate_tool_call
 from bist_harness.universe import load_universe, normalize_ticker
@@ -33,6 +43,16 @@ REFUSED_ADVICE = "REFUSED_ADVICE"
 ANALYSIS_UNSAFE = "ANALYSIS_UNSAFE"
 OUT_OF_SCOPE = "OUT_OF_SCOPE"
 COMPLETED = "COMPLETED"  # the route ran to the end; Task 7 replaces it with the action label
+MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"  # the model server failed mid-run
+
+# What a failing model server raises: the client's own error, or a transport error from a
+# client that does not wrap them. Anything else is a bug and is not swallowed.
+MODEL_ERRORS = (LLMUnavailableError, httpx.HTTPError, OSError)
+_ADDRESS = re.compile(
+    r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+"  # a URL
+    r"|\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"  # an IPv4 address, with or without a port
+    r"|\b[\w.-]+:\d{2,5}\b"  # host:port
+)
 
 # States the harness runs itself: no model turn (design spec section 6).
 HARNESS_STATES = ("CHECK_DATA_QUALITY", "BUILD_EVIDENCE", "RISK_GATE")
@@ -60,6 +80,11 @@ OUT_OF_SCOPE_ANSWERS = {
         "This question is outside the system's scope. It only runs educational analyses "
         "of historical data for the stocks of the BIST 100 study universe."
     ),
+}
+MODEL_UNAVAILABLE_ANSWERS = {
+    "tr": "Model sunucusuna ulaşılamadı; analiz tamamlanamadı. Lütfen daha sonra deneyin.",
+    "en": "The model server could not be reached; the analysis was not completed. "
+    "Please try again later.",
 }
 UNSAFE_ANSWERS = {
     "tr": "Analiz güvenli biçimde yapılamaz ({reason}); sonuç ANALYSIS_UNSAFE.",
@@ -192,7 +217,13 @@ def run_analysis(
     today = today or date.today().isoformat()
     analysis = session.new_analysis(question, model=getattr(client, "model", "unknown"))
     run = _Run(analysis, conn)
-    intent = parse_intent(question, client, today=today)
+    try:
+        intent = parse_intent(question, client, today=today)
+    except MODEL_ERRORS as exc:
+        run.mark("START", "FAILED", **_failure(exc))
+        answer = MODEL_UNAVAILABLE_ANSWERS[_guess_language(question)]
+        run.close(GUARDED_ROUTE, MODEL_UNAVAILABLE, answer)
+        return analysis
     analysis.intent = dataclasses.asdict(intent)
     language = intent.language
 
@@ -215,6 +246,7 @@ def run_analysis(
     evidence: Any = ()
     gate: Any = None
     action: str | None = None
+    failure: dict | None = None  # set when the model server fails; no model turn after it
     for state in route[1:-1]:  # START is done; LOG_AND_CLOSE closes the run
         if state == "SELECT_UNIVERSE":
             run.mark(state, "RAN", ticker=intent.ticker, sector=intent.sector)
@@ -236,7 +268,15 @@ def run_analysis(
             if gate is not None and gate.status in BLOCKING_STATUSES:
                 run.mark(state, "SKIPPED", reason=gate.status)
                 continue
-            explanation = explain_fn(analysis, client, evidence, gate)
+            if failure is not None:
+                run.mark(state, "SKIPPED", reason=MODEL_UNAVAILABLE)
+                continue
+            try:
+                explanation = explain_fn(analysis, client, evidence, gate)
+            except MODEL_ERRORS as exc:
+                failure = _failure(exc)
+                run.mark(state, "FAILED", **failure)
+                continue
             if explanation is None:
                 run.mark(state, "RAN", placeholder=True)
             else:
@@ -244,12 +284,27 @@ def run_analysis(
                 run.mark(state, "RAN", action=action)
         elif state == "HUMAN_REVIEW":
             run.mark(state, "RAN", pending=True)  # the review command arrives with Task 8
+        elif failure is not None:
+            run.mark(state, "SKIPPED", reason=MODEL_UNAVAILABLE)
         else:
-            _model_state(run, client, call_tool, state, intent, question, max_attempts)
+            try:
+                _model_state(run, client, call_tool, state, intent, question, max_attempts)
+            except MODEL_ERRORS as exc:
+                failure = _failure(exc)
+                run.mark(state, "FAILED", **failure)
 
+    if failure is not None:
+        run.close(route, MODEL_UNAVAILABLE, MODEL_UNAVAILABLE_ANSWERS[language])
+        return analysis
     blocked = gate is not None and gate.status in BLOCKING_STATUSES
     run.close(route, ANALYSIS_UNSAFE if blocked else (action or COMPLETED))
     return analysis
+
+
+def _failure(exc: BaseException) -> dict:
+    """The error class and a short message, with any server address taken out."""
+    message = _ADDRESS.sub("<address>", str(exc))[:300]
+    return {"error": type(exc).__name__, "message": message}
 
 
 # --- call checks -----------------------------------------------------------------------
