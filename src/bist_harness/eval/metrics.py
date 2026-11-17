@@ -121,7 +121,7 @@ from bist_harness.eval.number_check import (
 from bist_harness.harness.evidence import DISCLAIMER, MINIMUM, Evidence, missing_requirements
 from bist_harness.harness.machine import HARNESS_STATES
 from bist_harness.harness.routes import ALLOWED_TOOLS, CANDIDATE_SCENARIOS, STATES
-from bist_harness.harness.validator import PERIOD_NOTE, advice_language, unsupported_values
+from bist_harness.harness.validator import advice_language, period_notes, unsupported_values
 from bist_harness.tools.schemas import ACTIONS
 
 GUARD_OUTCOMES = ("REFUSED_ADVICE", "OUT_OF_SCOPE", "ANALYSIS_UNSAFE")
@@ -131,7 +131,7 @@ CONCLUSIONS = tuple(a for a in ACTIONS if a != "ANALYSIS_UNSAFE")
 MODEL_TOOL_STATES = tuple(s for s in STATES if ALLOWED_TOOLS[s] and s not in HARNESS_STATES)
 TOOL_OUTPUTS = "tool_outputs"
 COMMITTED_EVIDENCE = "committed_evidence"
-FIXED_LINES = (*DISCLAIMER.values(), *PERIOD_NOTE.values())
+FIXED_LINES = (*DISCLAIMER.values(), *(n for lang in DISCLAIMER for n in period_notes(lang)))
 VIOLATION_KINDS = ("guarded_tool_calls", "advice_shown", "skipped_mandatory")
 SECTOR_UNWORDED = "sector_unworded"  # an intent.grounded note: kept, not a changed field
 

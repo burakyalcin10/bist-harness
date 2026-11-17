@@ -597,3 +597,41 @@ def test_experiment_a_without_the_harness_keeps_the_raw_intent():
 def test_a_sector_laggard_intent_with_neither_ticker_nor_sector_is_unknown_sector():
     intent = make(scenario="SECTOR_LAGGARD", ticker=None, sector=None)
     assert check_intent(intent, today=TODAY) == "UNKNOWN_SECTOR"
+
+
+# --- M2: which bound of the period was defaulted -------------------------------------------
+@pytest.mark.parametrize(
+    ("question", "named", "defaulted", "bound", "period"),
+    [
+        ("THYAO nasıl gitti?", {}, True, None, ("2026-08-19", TODAY)),
+        (
+            "THYAO 2026-01-01'den beri nasıl gitti?",
+            {"start": "2026-01-01"},
+            True,
+            "end",
+            ("2026-01-01", TODAY),
+        ),
+        (
+            "THYAO 2026-03-31'e kadar nasıl gitti?",
+            {"end": "2026-03-31"},
+            True,
+            "start",
+            ("2025-12-31", "2026-03-31"),
+        ),
+        (
+            "THYAO 2026-01-01 ile 2026-03-31 arasında nasıl gitti?",
+            {"start": "2026-01-01", "end": "2026-03-31"},
+            False,
+            None,
+            ("2026-01-01", "2026-03-31"),
+        ),
+    ],
+)
+def test_the_intent_says_which_bound_of_the_period_was_defaulted(
+    question, named, defaulted, bound, period
+):
+    intent, problem = ask(question, **named)
+    assert problem is None
+    assert (intent.start, intent.end) == period
+    assert intent.defaulted_period is defaulted
+    assert intent.defaulted_bound == bound

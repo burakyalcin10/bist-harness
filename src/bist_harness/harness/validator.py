@@ -58,6 +58,9 @@ __all__ = [
     "DISCLAIMER",
     "FALLBACK_ACTION",
     "PERIOD_NOTE",
+    "BOUND_NOTE",
+    "period_note",
+    "period_notes",
     "Explanation",
     "advice_language",
     "explanation_schema",
@@ -73,6 +76,33 @@ PERIOD_NOTE = {
     "tr": "Soruda dönem belirtilmediği için varsayılan analiz dönemi kullanıldı.",
     "en": "The question gave no period, so the default analysis period was used.",
 }
+# The note when the question gave one bound of the period (``Intent.defaulted_bound``
+# names the other, defaulted one).
+BOUND_NOTE = {
+    "start": {
+        "tr": "Soruda dönemin başlangıcı belirtilmediği için varsayılan başlangıç tarihi "
+        "kullanıldı.",
+        "en": "The question gave no start date, so the default start date of the analysis "
+        "period was used.",
+    },
+    "end": {
+        "tr": "Soruda dönemin bitişi belirtilmediği için varsayılan bitiş tarihi kullanıldı.",
+        "en": "The question gave no end date, so the default end date of the analysis period "
+        "was used.",
+    },
+}
+
+
+def period_note(language: str, bound: str | None = None) -> str:
+    """The fixed period note: no period given, or only ``bound`` ("start" / "end") defaulted."""
+    return BOUND_NOTE[bound][language] if bound in BOUND_NOTE else PERIOD_NOTE[language]
+
+
+def period_notes(language: str) -> tuple[str, ...]:
+    """Every period note of the language, the full one first."""
+    return (PERIOD_NOTE[language], *(notes[language] for notes in BOUND_NOTE.values()))
+
+
 FALLBACK_ACTION = "INVESTIGATE"
 LANGUAGE_NAMES = {"tr": "Turkish", "en": "English"}
 NOT_JSON = "the reply is not a JSON object with a string action and explanation"
@@ -495,12 +525,14 @@ def validate_explanation(
     question: str,
     language: str,
     defaulted_period: bool = False,
+    defaulted_bound: str | None = None,
 ) -> list[str]:
     """Return the problems of an explanation, in a fixed order; an empty list means it passes.
 
     ``evidence`` is the final evidence of the analysis (all items); only the committed
-    ones support a number, a date, a citation or a company. ``defaulted_period`` is
-    ``Intent.defaulted_period``: the fixed period note must then be in the text.
+    ones support a number, a date, a citation or a company. ``defaulted_period`` and
+    ``defaulted_bound`` are those of the intent: the period note that fits them
+    (``period_note``) must then be in the text, and no other period note.
     """
     language = language if language in LANGUAGES else "en"
     problems: list[str] = []
@@ -511,11 +543,18 @@ def validate_explanation(
     body, has_disclaimer = _strip_line(text, DISCLAIMER[language])
     if not has_disclaimer:
         problems.append(f"the disclaimer line is missing: {DISCLAIMER[language]!r}")
-    body, has_note = _strip_line(body, PERIOD_NOTE[language])
-    if defaulted_period and not has_note:
-        problems.append(f"the default-period note is missing: {PERIOD_NOTE[language]!r}")
-    if has_note and not defaulted_period:
+    required = period_note(language, defaulted_bound) if defaulted_period else None
+    present = []
+    for note in period_notes(language):
+        body, found = _strip_line(body, note)
+        if found:
+            present.append(note)
+    if required is not None and required not in present:
+        problems.append(f"the default-period note is missing: {required!r}")
+    if present and required is None:
         problems.append("the default-period note is present but the question gave a period")
+    elif any(note != required for note in present):
+        problems.append("a period note that does not fit the question is present")
     committed = [e for e in evidence if e.committed]
     problems += _citation_problems(body, evidence)
     problems += _number_problems(body, committed, question)
@@ -537,7 +576,9 @@ def explanation_schema(eligible: Sequence[str]) -> dict:
     }
 
 
-def _system_prompt(eligible: Sequence[str], language: str, defaulted_period: bool) -> str:
+def _system_prompt(
+    eligible: Sequence[str], language: str, defaulted_period: bool, bound: str | None = None
+) -> str:
     lines = [
         "You write the explanation step of an educational BIST 100 analysis harness. "
         "You cannot call tools; you only explain the evidence listed by the user message.",
@@ -555,7 +596,7 @@ def _system_prompt(eligible: Sequence[str], language: str, defaulted_period: boo
         "6. Name no company or ticker that the evidence does not name.",
     ]
     if defaulted_period:
-        lines.append(f"7. Include this line exactly: {PERIOD_NOTE[language]}")
+        lines.append(f"7. Include this line exactly: {period_note(language, bound)}")
     lines.append(f"{len(lines) - 2}. End with this line exactly: {DISCLAIMER[language]}")
     return "\n".join(lines)
 
@@ -578,11 +619,16 @@ def _parse(content: str) -> tuple[str, str] | None:
     return action, text
 
 
-def fallback_answer(committed: Sequence[Evidence], language: str, defaulted_period: bool) -> str:
+def fallback_answer(
+    committed: Sequence[Evidence],
+    language: str,
+    defaulted_period: bool,
+    bound: str | None = None,
+) -> str:
     """What is shown after a second rejection: the label, the evidence set, the fixed lines."""
     lines = [FALLBACK_ACTION, *(f"{e.label}: {e.sentence}" for e in committed)]
     if defaulted_period:
-        lines.append(PERIOD_NOTE[language])
+        lines.append(period_note(language, bound))
     lines.append(DISCLAIMER[language])
     return "\n".join(lines)
 
@@ -598,12 +644,13 @@ def generate_explanation(analysis, client, evidence, gate) -> Explanation:
     intent = analysis.intent or {}
     language = intent.get("language") if intent.get("language") in LANGUAGES else "en"
     defaulted = bool(intent.get("defaulted_period"))
+    bound = intent.get("defaulted_bound")
     evidence = list(evidence or ())
     committed = [e for e in evidence if e.committed]
     eligible = list(eligible_actions(analysis, evidence, gate))
     fallback = Explanation(
         action=FALLBACK_ACTION,
-        text=fallback_answer(committed, language, defaulted),
+        text=fallback_answer(committed, language, defaulted, bound),
         eligible=eligible,
         fallback=True,
     )
@@ -611,7 +658,7 @@ def generate_explanation(analysis, client, evidence, gate) -> Explanation:
         return fallback
 
     messages = [
-        {"role": "system", "content": _system_prompt(eligible, language, defaulted)},
+        {"role": "system", "content": _system_prompt(eligible, language, defaulted, bound)},
         {"role": "user", "content": _user_prompt(analysis.question, committed)},
     ]
     problems: list[list[str]] = []
@@ -635,6 +682,7 @@ def generate_explanation(analysis, client, evidence, gate) -> Explanation:
                 question=analysis.question,
                 language=language,
                 defaulted_period=defaulted,
+                defaulted_bound=bound,
             )
             if not found:
                 return Explanation(action, text, eligible, attempt, False, problems)

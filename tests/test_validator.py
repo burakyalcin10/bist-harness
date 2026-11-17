@@ -928,3 +928,51 @@ def test_an_investment_advice_claim_is_still_advice(text):
     from bist_harness.harness.validator import advice_language
 
     assert advice_language(text) != []
+
+
+# --- M2: a note that fits a half-given period -----------------------------------------------
+@pytest.mark.parametrize("lang", LANGS)
+@pytest.mark.parametrize("bound", ["start", "end"])
+def test_a_half_given_period_needs_its_own_note(lang, bound):
+    from bist_harness.harness.validator import period_note
+
+    note = period_note(lang, bound)
+    assert note != PERIOD_NOTE[lang]
+    noted = f"{BODY[lang]}\n{note}\n{DISCLAIMER[lang]}"
+    full = f"{BODY[lang]}\n{PERIOD_NOTE[lang]}\n{DISCLAIMER[lang]}"
+
+    def check_bound(text):
+        return validate_explanation(
+            text,
+            action="WATCH",
+            eligible=ELIGIBLE,
+            evidence=EVIDENCE[lang],
+            question=QUESTION[lang],
+            language=lang,
+            defaulted_period=True,
+            defaulted_bound=bound,
+        )
+
+    assert check_bound(noted) == []
+    assert f"the default-period note is missing: {note!r}" in check_bound(full)
+    assert check(noted, lang, defaulted=False) == [
+        "the default-period note is present but the question gave a period"
+    ]
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_a_half_given_period_is_asked_for_and_falls_back_with_its_note(lang):
+    from bist_harness.harness.validator import period_note
+
+    analysis = analysis_for(lang, defaulted=True)
+    analysis.intent["defaulted_bound"] = "end"
+    note = period_note(lang, "end")
+    noted = f"{BODY[lang]}\n{note}\n{DISCLAIMER[lang]}"
+    client = FakeClient(answer("WATCH", noted))
+    result = generate_explanation(analysis, client, EVIDENCE[lang], GATE_PASS)
+    assert note in prompt_of(client.requests[0])
+    assert PERIOD_NOTE[lang] not in prompt_of(client.requests[0])
+    assert (result.action, result.text, result.fallback) == ("WATCH", noted, False)
+    bad = FakeClient(answer("WATCH", GOOD[lang]), answer("WATCH", GOOD[lang]))
+    fallback = generate_explanation(analysis, bad, EVIDENCE[lang], GATE_PASS)
+    assert fallback.fallback and note in fallback.text and PERIOD_NOTE[lang] not in fallback.text

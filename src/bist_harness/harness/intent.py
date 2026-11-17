@@ -85,6 +85,9 @@ class Intent:
     as_of: str | None
     language: str  # "tr" | "en"
     defaulted_period: bool = False  # True when start/end came from the scenario default
+    # "start" or "end" when only that bound was defaulted (the question gave the other, or
+    # an as_of date that became the end); None when both were defaulted or none was.
+    defaulted_bound: str | None = None
     # Fields the model filled that the question does not name, as
     # {field: [model value, value kept]} (see ``ground_intent``), plus "sector_unworded"
     # when a sector was kept only as the group of a named stock. An audit record for the
@@ -308,12 +311,15 @@ def _apply_default_period(intent: Intent, today: str) -> Intent:
         intent.end and not _valid_date(intent.end)
     ):
         return intent
-    end = intent.end or (intent.as_of if intent.as_of and _valid_date(intent.as_of) else today)
+    as_of = intent.as_of if intent.as_of and _valid_date(intent.as_of) else None
+    named_end = intent.end or as_of
+    end = named_end or today
     if intent.start:
         start = intent.start
     else:
         start = (date.fromisoformat(end) - timedelta(days=days)).isoformat()
-    return replace(intent, start=start, end=end, defaulted_period=True)
+    bound = "end" if intent.start else "start" if named_end else None
+    return replace(intent, start=start, end=end, defaulted_period=True, defaulted_bound=bound)
 
 
 # --- grounding: the intent keeps only what the question names ----------------------------

@@ -360,6 +360,7 @@ def make_record(
             question=analysis.question,
             language=language,
             defaulted_period=bool((intent or {}).get("defaulted_period")),
+            defaulted_bound=(intent or {}).get("defaulted_bound"),
         )
     return {
         "experiment": experiment,
