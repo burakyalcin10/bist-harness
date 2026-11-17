@@ -12,7 +12,7 @@ import pytest
 from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import machine, session
 from bist_harness.harness.evidence import DISCLAIMER as EVIDENCE_DISCLAIMER
-from bist_harness.harness.evidence import Evidence
+from bist_harness.harness.evidence import TEMPLATES, WORDS, Evidence
 from bist_harness.harness.validator import (
     DISCLAIMER,
     PERIOD_NOTE,
@@ -245,14 +245,62 @@ def test_a_sentence_without_a_citation_fails(lang):
 
 @pytest.mark.parametrize("lang", LANGS)
 def test_a_citation_of_an_item_that_does_not_exist_fails(lang):
-    assert check(GOOD[lang].replace("[E4]", "[E9]"), lang) == ["E9 is not an evidence item"]
+    # Fix round 1: the sentence's number and date are then supported by nothing it cites.
+    assert check(GOOD[lang].replace("[E4]", "[E9]"), lang) == [
+        "E9 is not an evidence item",
+        miscited(2, "number", "41.27", "E9"),
+        miscited(2, "date", "2025-06-30", "E9"),
+    ]
 
 
 @pytest.mark.parametrize("lang", LANGS)
 def test_a_citation_of_an_uncommitted_item_fails(lang):
+    # Only committed items support a number, even when the uncommitted one holds the date.
     assert check(GOOD[lang].replace("[E4]", "[E3]"), lang) == [
-        "E3 is not in the committed evidence set"
+        "E3 is not in the committed evidence set",
+        miscited(2, "number", "41.27", "E3"),
+        miscited(2, "date", "2025-06-30", "E3"),
     ]
+
+
+# --- Fix round 1, finding 2: numbers are checked against the items the sentence cites ----
+def miscited(index: int, kind: str, value: str, labels: str) -> str:
+    return (
+        f"sentence {index}: {kind} {value} is not in the items it cites ({labels}) or the question"
+    )
+
+
+MISCITED_CASES = [
+    # a correct number cited to the wrong item (12.35 is E1's, the sentence cites E4)
+    ("en", "41.27 [E4]", "12.35 [E4]", miscited(2, "number", "12.35", "E4")),
+    ("tr", "41,27 oldu [E4]", "12,35 oldu [E4]", miscited(2, "number", "12.35", "E4")),
+    # a number of an item that another sentence cites (41.27 is E4's, cited in sentence 2)
+    ("en", "changed 12.35%", "changed 41.27%", miscited(1, "number", "41.27", "E1")),
+    ("tr", "%12,35 değişti", "%41,27 değişti", miscited(1, "number", "41.27", "E1")),
+    # a date of another item (2025-01-02 is only in E1's sentence)
+    ("en", "On 2025-06-30", "On 2025-01-02", miscited(2, "date", "2025-01-02", "E4")),
+    ("tr", "2025-06-30 tarihinde", "2025-01-02 tarihinde", miscited(2, "date", "2025-01-02", "E4")),
+]
+
+
+@pytest.mark.parametrize(("lang", "old", "new", "problem"), MISCITED_CASES)
+def test_a_number_or_date_must_come_from_the_items_its_sentence_cites(lang, old, new, problem):
+    text = GOOD[lang].replace(old, new, 1)
+    assert text != GOOD[lang]
+    assert check(text, lang) == [problem]
+
+
+TWO_ITEMS = {
+    "en": "THYAO changed 12.35% and closed at 312.50 on 2025-06-30 [E1, E2].",
+    "tr": "THYAO %12,35 değişti ve 2025-06-30 tarihinde 312,50 seviyesinden kapandı [E1][E2].",
+}
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_a_sentence_citing_two_items_may_use_the_numbers_of_both(lang):
+    assert check(f"{TWO_ITEMS[lang]}\n{DISCLAIMER[lang]}", lang) == []
+    only_one = TWO_ITEMS[lang].replace("[E1, E2]", "[E1]").replace("[E1][E2]", "[E1]")
+    assert check(f"{only_one}\n{DISCLAIMER[lang]}", lang) == [miscited(1, "number", "312.5", "E1")]
 
 
 CITATION_FORMS = {
@@ -297,8 +345,21 @@ def test_advice_or_prediction_language_fails(lang, sentence, phrase):
 
 
 NOT_ADVICE = {
-    "en": "This is not investment advice [E1].",
-    "tr": "Bu bir yatırım tavsiyesi değildir [E1].",
+    "en": [
+        "This is not investment advice [E1].",
+        "There is no guarantee of a return [E1].",
+        "The strategy is compared with a buy-and-hold benchmark [E1].",
+        "The eligible labels are HOLD, WATCH and INVESTIGATE [E1].",
+        "HOLD: the evidence does not single out a direction [E1].",
+        "The price rose in the period [E1].",
+    ],
+    "tr": [
+        "Bu bir yatırım tavsiyesi değildir [E1].",
+        "Strateji al-tut kıyasıyla karşılaştırıldı [E1].",
+        "Fiyat dönem içinde yükseldi [E1].",
+        "Fiyat artarak dönemi tamamladı [E1].",
+        "RSI aşırı satım bölgesinde değildi [E1].",
+    ],
 }
 
 
@@ -306,7 +367,75 @@ NOT_ADVICE = {
 def test_saying_it_is_not_advice_and_the_disclaimer_itself_pass(lang):
     # The Turkish disclaimer contains "garanti"; the disclaimer line is not advice.
     assert check(GOOD[lang], lang) == []
-    assert check(with_sentence(lang, NOT_ADVICE[lang]), lang) == []
+    for sentence in NOT_ADVICE[lang]:
+        assert check(with_sentence(lang, sentence), lang) == [], sentence
+
+
+# --- Fix round 1, finding 1: suffixed stems and hedged forms ------------------------------
+ADVICE_BYPASSES = {
+    "tr": [
+        "Hisse alınmalıdır",
+        "Hisse satılmalıdır",
+        "Fiyat artacaktır",
+        "Fiyat azalacaktır",
+        "Bu bir yatırım tavsiyesidir",
+        "Yatırımcı almalı",
+        "Bu hisseyi öneriyoruz",
+        "Bu hisseyi öneririz",
+        "Hisse almaya değer",
+        "Bu bir al sinyalidir",
+        "Satın alın",
+        "Hisse alın",
+        "Fiyat yükselir",
+        "Fiyat yükselebilir",
+        "Fiyatın yükselmesi bekleniyor",
+        "Fiyatın yükselmesi muhtemel",
+        "Yükselmeye devam edecek",
+        "Hisseyi alabilirsiniz",
+    ],
+    "en": [
+        "Sell",
+        "Buy",
+        "Buy THYAO now",
+        "It is a buy",
+        "I would buy",
+        "We suggest selling",
+        "I suggest buying",
+        "Consider buying",
+        "You should consider buying",
+        "Investors may want to buy",
+        "A guarantee of return",
+        "THYAO will probably rise",
+        "THYAO will likely rise",
+        "THYAO is expected to rise",
+        "It should rise",
+        "THYAO will outperform",
+        "THYAO will continue to fall",
+        "The price may fall",
+    ],
+}
+BYPASS_CASES = [(lang, s) for lang in LANGS for s in ADVICE_BYPASSES[lang]]
+
+
+@pytest.mark.parametrize(("lang", "sentence"), BYPASS_CASES)
+def test_suffixed_and_hedged_advice_or_prediction_fails(lang, sentence):
+    problems = check(with_sentence(lang, f"{sentence} [E1]."), lang)
+    assert len(problems) == 1 and problems[0].startswith("advice or prediction language: "), (
+        problems
+    )
+
+
+def _template_texts(lang: str) -> list[str]:
+    texts = [templates[lang] for templates in TEMPLATES.values()]
+    texts += [f"The state was {word} [E1]." for word in WORDS[lang].values()]
+    return texts
+
+
+@pytest.mark.parametrize("lang", LANGS)
+def test_no_evidence_template_or_word_reads_as_advice(lang):
+    for text in _template_texts(lang):
+        problems = check(f"{text} [E1]\n{DISCLAIMER[lang]}", lang)
+        assert not [p for p in problems if p.startswith("advice")], (text, problems)
 
 
 # --- V5: the mandatory disclaimer line ------------------------------------------------------

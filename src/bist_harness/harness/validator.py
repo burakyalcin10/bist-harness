@@ -13,7 +13,8 @@ validator checks it again together with the text:
 4. every sentence cites at least one evidence label, and every cited label exists and is
    committed;
 5. every number and date is in the committed evidence (its values or its sentences) or in
-   the question (rules K-008 and K-015 through ``eval.number_check``);
+   the question (rules K-008 and K-015 through ``eval.number_check``), and, sentence by
+   sentence, in the items that sentence cites or in the question;
 6. no investment-advice or prediction language (accent-insensitive);
 7. no company name or ticker that the committed evidence does not mention.
 
@@ -40,12 +41,18 @@ from bist_harness.eval.number_check import (
     extract_numbers,
     find_unsupported_dates,
     find_unsupported_numbers,
+    numbers_match,
     question_numbers,
 )
 from bist_harness.harness import session
 from bist_harness.harness.actions import eligible_actions
 from bist_harness.harness.evidence import DISCLAIMER, LANGUAGES, Evidence
-from bist_harness.harness.intent import fold_text
+from bist_harness.harness.intent import (
+    MOVE_AORIST_TR,
+    MOVE_FUTURE_TR,
+    MOVE_VERBS_EN,
+    fold_text,
+)
 
 __all__ = [
     "DISCLAIMER",
@@ -89,8 +96,6 @@ ADVICE_PHRASES = (
     "we recommend",
     "recommend buying",
     "recommend selling",
-    "guaranteed",
-    "guarantees",
     "risk free",
     "will rise",
     "will fall",
@@ -137,19 +142,83 @@ ADVICE_PHRASES = (
     "kesinlikle duser",
     "kesin kazanc",
     "kesin getiri",
-    "yukselecek",
-    "yukselecektir",
-    "dusecek",
-    "dusecektir",
-    "artacak",
-    "azalacak",
     "hedef fiyat",
     "risksiz",
 )
-# "garanti", "garantili", "garantilidir" ... but not the bank (Garanti BBVA, Garanti Bankasi).
-_GUARANTEE_TR = re.compile(r"(?<= )garanti[a-z]*(?= )(?! bbva | bankasi )")
+# Suffix-tolerant patterns next to the phrases (fix round 1): Turkish stems take suffixes
+# ("alınmalıdır", "artacaktır") and English advice comes hedged ("will likely rise"). The
+# price-move vocabulary is shared with the question guard in ``harness.intent``.
+_MOVES_EN = "|".join(
+    (
+        *MOVE_VERBS_EN,
+        "recover",
+        "rebound",
+        "outperform",
+        "underperform",
+        "rally",
+        "decline",
+        "gain",
+        "lose",
+        "surge",
+        "soar",
+        "plunge",
+        "crash",
+        "grow",
+        "double",
+        "beat",
+    )
+)
+# Future stems without their last letter, which is k or ğ (g when folded): "artaca[kg]".
+_FUTURE_TR = "|".join(
+    verb[:-1] for verb in (*MOVE_FUTURE_TR, "azalacak", "gerileyecek", "toparlanacak")
+)
+ADVICE_PATTERNS = (
+    # Turkish: "almalı", "alınmalıdır", "satılmalı", "tutulmalı", "tutmalısınız"
+    r"(?:al(?:in)?|sat(?:il)?|tut(?:ul)?)mali[a-z]*",
+    r"(?:al|sat|tut)abilirsiniz",
+    r"(?:almaya|satmaya|tutmaya) deger[a-z]*",
+    r"(?:al|sat|tut) (?:sinyal|tavsiye|firsat|onerisi)[a-z]*",  # "al sinyalidir"
+    r"satin alin(?:iz)?|alin(?:iz)?|tutun(?:uz)?|satiniz|satin(?! al)",  # imperatives
+    r"oner(?:iyor|ir|il(?:ir|mektedir))[a-z]*",  # "öneriyoruz", "öneririz", "önerilir"
+    r"tavsiye ed[a-z]*",
+    # "yatırım tavsiyesidir", but not "yatırım tavsiyesi değildir / vermez"
+    r"yatirim tavsiye[a-z]*(?= )(?! (?:degil|niteligi|icermez|vermez|sunmaz|yoktur))",
+    # "garanti", "garantilidir", but not the bank (Garanti BBVA, Garanti Bankası)
+    r"garanti[a-z]*(?= )(?! bbva | bankasi )",
+    r"(?:" + "|".join((*MOVE_AORIST_TR, "geriler")) + r")(?:dir|ler|lar)?",  # "yükselir"
+    r"(?:" + _FUTURE_TR + r")[gk][a-z]*",  # "artacaktır", "yükseleceği"
+    r"(?:yukselebil|dusebil|artabil|azalabil|gerileyebil)[a-z]*",  # "yükselebilir"
+    r"(?:yukselme|dusme|artma|azalma|gerileme)(?:si|leri) "
+    r"(?:bekleni[a-z]*|beklenir|muhtemel[a-z]*|olasi[a-z]*)",
+    r"devam edece[gk][a-z]*",  # "yükselmeye devam edecek"
+    # English
+    r"will (?:(?:probably|likely|surely|definitely|certainly|most|still|not|continue to|"
+    rf"keep) )*(?:{_MOVES_EN})",
+    rf"(?:is|are) going to (?:{_MOVES_EN})",
+    r"(?:expected|likely|set|poised|bound|sure|certain|projected|forecast|predicted|"
+    rf"anticipated) to (?:{_MOVES_EN})",
+    rf"(?:should|could|may|might|must|would) (?:(?:continue to|keep) )?(?:{_MOVES_EN})",
+    r"(?:i|we|you) (?:would|could|might|must|can) (?:also )?(?:consider )?"
+    r"(?:buy|sell|hold|invest|add|accumulat)[a-z]*",
+    r"(?:suggest|advise|recommend|urge)[a-z]* (?:that )?(?:you )?(?:to )?"
+    r"(?:buy|sell|hold|invest|accumulat|reduc)[a-z]*",
+    r"consider (?:buying|selling|holding|adding|investing|accumulating)",
+    r"(?:may|might|would) (?:want|wish|like) to (?:buy|sell|hold|invest|add)",
+    r"(?:is|are|looks|seems)(?: like)? an? (?:buy|sell|hold)(?= )(?! (?:label|action))",
+    # "guaranteed", "a guarantee of return", but not "no guarantee", "not guaranteed"
+    r"(?<! no )(?<! not )(?<! any )(?<! t )(?<! cannot )(?<! without )guarantee[a-z]*",
+)
 _ADVICE = re.compile(
-    "(?<= )(?:" + "|".join(re.escape(p) for p in ADVICE_PHRASES) + ")(?= )|" + _GUARANTEE_TR.pattern
+    "|".join(
+        [f"(?<= )(?:{re.escape(p)})(?= )" for p in ADVICE_PHRASES]
+        + [f"(?<= )(?:{p})(?= )" for p in ADVICE_PATTERNS]
+    )
+)
+# A bare imperative at the start of a sentence: "Buy.", "Sell THYAO", "Hold it". "HOLD"
+# in capitals is the action label and is left alone.
+_IMPERATIVE = re.compile(
+    r"^ (?:buy|sell)(?= )(?! and hold )"
+    r"|^ hold (?:$|(?:it|now|on|onto|them|the|this|these|your|shares|positions?)(?= ))"
 )
 
 # --- companies -----------------------------------------------------------------------------
@@ -268,21 +337,46 @@ def _citation_problems(text: str, evidence: Sequence[Evidence]) -> list[str]:
     return problems
 
 
-def _number_problems(text: str, committed: Sequence[Evidence], question: str) -> list[str]:
-    values = [e.value for e in committed]
-    sentences = [e.sentence for e in committed]
+def _unsupported(
+    text: str, items: Sequence[Evidence], question: str
+) -> tuple[list[float], list[str]]:
+    """Numbers and dates of ``text`` that neither the items (values or sentences) nor the
+    question support."""
+    values = [e.value for e in items]
+    sentences = [e.sentence for e in items]
     allowed = [n for s in sentences for n in extract_numbers(s)] + question_numbers(question)
-    problems = [
-        f"number {_fmt(n)} is not in the committed evidence or the question"
-        for n in find_unsupported_numbers(
-            text, [{"values": collect_numbers(values)}], allowed=allowed
-        )
-    ]
+    numbers = find_unsupported_numbers(text, [{"values": collect_numbers(values)}], allowed=allowed)
     source = [{"values": [v for v in values if isinstance(v, str)], "sentences": sentences}]
-    problems += [
-        f"date {d} is not in the committed evidence or the question"
-        for d in find_unsupported_dates(text, source, question)
+    return numbers, find_unsupported_dates(text, source, question)
+
+
+def _number_problems(text: str, committed: Sequence[Evidence], question: str) -> list[str]:
+    """First against the whole committed set; then each number or date the set does support
+    against the items its own sentence cites (spec section 13: the number and the field it
+    comes from belong to the same sentence)."""
+    numbers, dates = _unsupported(text, committed, question)
+    problems = [
+        f"number {_fmt(n)} is not in the committed evidence or the question" for n in numbers
     ]
+    problems += [f"date {d} is not in the committed evidence or the question" for d in dates]
+    by_label = {e.label: e for e in committed}
+    for i, sentence in enumerate(_sentences(text), 1):
+        cited = list(dict.fromkeys(m[0] for m in _LABEL.finditer(sentence)))
+        if not cited:
+            continue  # already reported as a sentence without a citation
+        items = [by_label[label] for label in cited if label in by_label]
+        own_numbers, own_dates = _unsupported(sentence, items, question)
+        names = ", ".join(cited)
+        problems += [
+            f"sentence {i}: number {_fmt(n)} is not in the items it cites ({names}) or the question"
+            for n in own_numbers
+            if not any(numbers_match(n, m) for m in numbers)
+        ]
+        problems += [
+            f"sentence {i}: date {d} is not in the items it cites ({names}) or the question"
+            for d in own_dates
+            if d not in dates
+        ]
     return problems
 
 
@@ -291,6 +385,12 @@ def _advice_problems(text: str) -> list[str]:
     for match in _ADVICE.finditer(fold_text(text)):
         if match[0] not in found:
             found.append(match[0])
+    for sentence in _sentences(text):
+        if sentence.lstrip("-* ").startswith("HOLD"):
+            continue  # the action label, not an imperative
+        match = _IMPERATIVE.search(fold_text(_LABEL.sub(" ", sentence)))
+        if match and match[0].strip() not in found:
+            found.append(match[0].strip())
     return [f"advice or prediction language: {phrase!r}" for phrase in found]
 
 

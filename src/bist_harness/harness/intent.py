@@ -152,17 +152,29 @@ ADVICE_PHRASES = (
     "add to my portfolio",
     "open a position",
 )
+# Price-move vocabulary shared with the output validator (harness.validator), so the
+# question guard and the explanation check do not drift apart.
+MOVE_AORIST_TR = ("yukselir", "duser", "artar", "azalir")  # "yükselir", "düşer", ...
+MOVE_FUTURE_TR = ("yukselecek", "dusecek", "artacak")
+MOVE_VERBS_EN = (
+    "go up",
+    "go down",
+    "rise",
+    "fall",
+    "drop",
+    "increase",
+    "decrease",
+    "reach",
+    "hit",
+    "climb",
+)
+
 PREDICTION_PHRASES = (
     # Turkish
-    "yukselir mi",
-    "yukselecek mi",
+    *(f"{verb} mi" for verb in MOVE_AORIST_TR),
+    *(f"{verb} mi" for verb in MOVE_FUTURE_TR),
     "yukseli beklen",
-    "duser mi",
-    "dusecek mi",
     "dusus beklen",
-    "artar mi",
-    "artacak mi",
-    "azalir mi",
     "hedef fiyat",
     "fiyat tahmini",
     "fiyat hedefi",
@@ -219,7 +231,7 @@ PREDICTION_PATTERNS = (
     re.compile(r" what will (the )?(price of )?[a-z]{4,5} (price )?be "),
     re.compile(
         r" will (it|they|the stock|the price|the share|[a-z]{4,5}) "
-        r"(go up|go down|rise|fall|drop|increase|decrease|reach|hit|climb) "
+        rf"({'|'.join(MOVE_VERBS_EN)}) "
     ),
 )
 
