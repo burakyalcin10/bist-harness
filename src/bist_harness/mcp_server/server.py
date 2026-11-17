@@ -77,6 +77,10 @@ def current_adjustments_id() -> str:
     return snapshot.adjustments_id()
 
 
+def current_layers_id() -> str:
+    return snapshot.layers_id()
+
+
 def _parse_date(text: str) -> date | None:
     """A date written exactly as YYYY-MM-DD, or ``None``."""
     if not isinstance(text, str) or not _ISO_DATE.fullmatch(text):
@@ -88,10 +92,12 @@ def _parse_date(text: str) -> date | None:
 
 
 def _versions() -> dict:
-    """What identifies the data behind a result: snapshot, corrections file and source."""
+    """What identifies the data behind a result: snapshot, corrections file, the macro,
+    fundamental and KAP layers with their reference tables, and the source."""
     return {
         "snapshot_id": current_snapshot_id(),
         "adjustments_id": current_adjustments_id(),
+        "layers_id": current_layers_id(),
         "data_source": DATA_SOURCE,
     }
 

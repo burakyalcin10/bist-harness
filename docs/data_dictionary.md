@@ -62,6 +62,7 @@ instructor's Scenario 3 script unless noted.
 | `as_of` | Analysis date; nothing after it is used. In `calculate_indicators` it is the date of the last bar used |
 | `snapshot_id` | Identifier of the market-data snapshot the tool read |
 | `adjustments_id` | Short hash of `data/reference/price_adjustments.csv`, the corrections applied when a series is read; a change to that file changes every `result_id` |
+| `layers_id` | Short hash of the macro, fundamental and KAP layer files of the snapshot and of the reference tables that shape them (`cpi_release_dates.csv`, `half_day_sessions.csv`); a rebuilt layer changes every `result_id`. `snapshot verify` compares the files with the hashes sealed in `layers.json` |
 | `data_source` | Where the prices come from |
 | `data_first_date`, `data_last_date` | First and last bar the snapshot holds for the symbol |
 | `coverage_warning` | Text when the requested period reaches more than 7 days beyond the data; otherwise null |

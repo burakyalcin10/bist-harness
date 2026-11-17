@@ -17,6 +17,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -202,8 +203,65 @@ def adjustments_id(path: Path | None = None) -> str:
     return hashlib.sha256(content).hexdigest()[:8]
 
 
+LAYERS = ("macro", "fundamentals", "kap")
+LAYER_REFERENCES = tuple(
+    REPO_ROOT / "data" / "reference" / name
+    for name in ("cpi_release_dates.csv", "half_day_sessions.csv")
+)
+SEAL_FILE = "layers.json"
+
+
+@lru_cache(maxsize=512)
+def _file_hash_cached(path: str, mtime_ns: int, size: int) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _file_hash(path: Path) -> str:
+    stat = path.stat()
+    return _file_hash_cached(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def layer_hashes(snapshot_id: str | None = None, root: Path | None = None) -> dict[str, str]:
+    """SHA-256 of every data file of the macro, fundamental and KAP layers, as stored."""
+    snapshot_id = snapshot_id or active_snapshot_id(root)
+    folder = _root(root) / snapshot_id
+    hashes: dict[str, str] = {}
+    for layer in LAYERS:
+        if (folder / layer).is_dir():
+            for path in sorted((folder / layer).glob("*.parquet")):
+                hashes[f"{layer}/{path.name}"] = _file_hash(path)
+    return hashes
+
+
+def layers_id(
+    snapshot_id: str | None = None,
+    root: Path | None = None,
+    references: tuple[Path, ...] = LAYER_REFERENCES,
+) -> str:
+    """Short hash of the layer files and the reference tables that shape them.
+
+    Part of the identity of every tool result: a rebuilt layer under the same
+    ``snapshot_id`` gives different result ids.
+    """
+    parts = layer_hashes(snapshot_id, root)
+    for path in references:
+        if Path(path).is_file():
+            content = Path(path).read_bytes().replace(b"\r\n", b"\n")
+            parts[f"reference/{Path(path).name}"] = hashlib.sha256(content).hexdigest()
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode("utf-8")).hexdigest()[:8]
+
+
+def seal_layers(snapshot_id: str | None = None, root: Path | None = None) -> dict[str, str]:
+    """Record the current layer hashes in the snapshot (``layers.json``)."""
+    snapshot_id = snapshot_id or active_snapshot_id(root)
+    hashes = layer_hashes(snapshot_id, root)
+    path = _root(root) / snapshot_id / SEAL_FILE
+    path.write_text(json.dumps(hashes, indent=2, sort_keys=True), encoding="utf-8")
+    return hashes
+
+
 def verify_snapshot(snapshot_id: str | None = None, root: Path | None = None) -> list[str]:
-    """Compare every stored series with the hash in the manifest; return the problems."""
+    """Compare every stored series and layer file with its recorded hash; list the problems."""
     manifest = load_manifest(snapshot_id, root)
     folder = _root(root) / manifest.snapshot_id
     problems = []
@@ -215,6 +273,15 @@ def verify_snapshot(snapshot_id: str | None = None, root: Path | None = None) ->
             problems.append(f"{entry.symbol}: file missing")
         elif _content_hash(pd.read_parquet(path)) != entry.sha256:
             problems.append(f"{entry.symbol}: content changed")
+    seal = folder / SEAL_FILE
+    sealed = json.loads(seal.read_text(encoding="utf-8")) if seal.is_file() else {}
+    live = layer_hashes(manifest.snapshot_id, root)
+    for name, digest in sorted(sealed.items()):
+        if name not in live:
+            problems.append(f"{name}: file missing")
+        elif live[name] != digest:
+            problems.append(f"{name}: content changed")
+    problems.extend(f"{name}: not sealed" for name in sorted(live) if name not in sealed)
     return problems
 
 
@@ -270,12 +337,16 @@ def main(argv: list[str] | None = None) -> int:
     if args[:1] == ["verify"]:
         problems = verify_snapshot()
         if not problems:
-            print("snapshot matches its manifest")
+            print("snapshot matches its manifest and its sealed layers")
             return 0
-        print(f"{len(problems)} series do not match the manifest, e.g. {problems[:5]}")
+        print(f"{len(problems)} files do not match, e.g. {problems[:5]}")
         return 1
+    if args[:1] == ["seal"]:
+        hashes = seal_layers()
+        print(f"sealed {len(hashes)} layer files; layers_id {layers_id()}")
+        return 0
     if args[:1] != ["build"]:
-        print("usage: python -m bist_harness.data.snapshot build | verify")
+        print("usage: python -m bist_harness.data.snapshot build | verify | seal")
         return 2
     manifest = build_snapshot(default_symbols())
     empty = [s.symbol for s in manifest.series if s.rows == 0]

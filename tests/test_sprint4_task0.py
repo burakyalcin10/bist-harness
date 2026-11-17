@@ -8,6 +8,58 @@ from bist_harness.data import snapshot
 from bist_harness.errors import DataUnavailableError
 from bist_harness.features import table as ft
 
+from .synth import ohlcv
+
+
+def _snapshot_with_layers(tmp_path):
+    snapshot.build_snapshot(
+        ["XU100"], snapshot_id="s1", root=tmp_path, downloader=lambda s, a, b: ohlcv(30, 2)
+    )
+    folder = tmp_path / "s1"
+    for layer, name in [
+        ("macro", "cpi.parquet"),
+        ("fundamentals", "statements.parquet"),
+        ("kap", "disclosures.parquet"),
+    ]:
+        (folder / layer).mkdir()
+        pd.DataFrame({"x": [1, 2]}).to_parquet(folder / layer / name)
+    return folder
+
+
+def test_layers_id_changes_when_a_layer_or_a_reference_table_changes(tmp_path):
+    folder = _snapshot_with_layers(tmp_path)
+    reference = tmp_path / "half_days.csv"
+    reference.write_text("date,close,basis\n", encoding="utf-8")
+    first = snapshot.layers_id("s1", tmp_path, references=(reference,))
+    assert first == snapshot.layers_id("s1", tmp_path, references=(reference,))
+    pd.DataFrame({"x": [1, 3]}).to_parquet(folder / "kap" / "disclosures.parquet")
+    second = snapshot.layers_id("s1", tmp_path, references=(reference,))
+    assert second != first
+    reference.write_text("date,close,basis\n2025-10-28,12:30,eve\n", encoding="utf-8")
+    assert snapshot.layers_id("s1", tmp_path, references=(reference,)) != second
+
+
+def test_verify_checks_the_sealed_layer_files(tmp_path):
+    folder = _snapshot_with_layers(tmp_path)
+    snapshot.seal_layers("s1", tmp_path)
+    assert snapshot.verify_snapshot("s1", tmp_path) == []
+    pd.DataFrame({"x": [9]}).to_parquet(folder / "macro" / "cpi.parquet")
+    (folder / "fundamentals" / "statements.parquet").unlink()
+    pd.DataFrame({"x": [1]}).to_parquet(folder / "kap" / "extra.parquet")
+    assert sorted(snapshot.verify_snapshot("s1", tmp_path)) == [
+        "fundamentals/statements.parquet: file missing",
+        "kap/extra.parquet: not sealed",
+        "macro/cpi.parquet: content changed",
+    ]
+
+
+def test_every_tool_result_names_the_layers_it_was_computed_from(monkeypatch):
+    from bist_harness.mcp_server import server
+
+    monkeypatch.setattr(server, "current_layers_id", lambda: "abcd1234")
+    assert server._versions()["layers_id"] == "abcd1234"
+
+
 HALF_DAY_CALENDAR = pd.DatetimeIndex(["2025-10-27", "2025-10-28", "2025-10-30", "2025-10-31"])
 
 
