@@ -24,13 +24,16 @@ def _metrics():
     )
 
 
-def test_real_growth_is_withheld_because_the_source_already_restates_the_comparative():
+def test_without_a_comparative_column_real_growth_is_not_guessed():
+    """Superseded by K-055: the layer now comes from KAP reports with their comparative
+    column (tests/test_fundamentals_point_in_time.py). Data without that column still
+    gets no real growth, and says why."""
     out = _metrics()
     assert out["revenue_yoy_pct"] == 50.0
     for key in ("revenue_real_yoy_pct", "ebitda_real_yoy_pct", "net_profit_real_yoy_pct"):
         assert out[key] is None
     codes = [w.split(":")[0] for w in out["warnings"]]
-    assert "RESTATED_SOURCE" in codes and "REAL_GROWTH_WITHHELD" in codes
+    assert "NO_COMPARABLE_YEAR" in codes and "RESTATED_SOURCE" not in codes
 
 
 def test_valuation_is_withheld_because_stored_prices_are_dividend_adjusted():
@@ -44,7 +47,7 @@ def test_change_tool_carries_the_same_warning_and_still_gives_a_trend():
     out = fn.fundamental_change(
         _statements(), _calendar(), ticker="TUPRS", as_of="2025-11-10", cpi=CPI
     )
-    assert any(w.startswith("RESTATED_SOURCE") for w in out["warnings"])
+    assert any(w.startswith("NO_COMPARABLE_YEAR") for w in out["warnings"])
     assert out["revenue_real_yoy_pct"] is None and out["fundamental_trend"] == "Improving"
 
 

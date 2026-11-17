@@ -64,13 +64,19 @@ INDUSTRIAL_ONLY = (
     "cash_conversion",
 )
 TMS29_FIRST = Period(2023, 4)
+RESTATEMENT_TOLERANCE = 0.005  # a comparative 0.5% off the published figure was restated
 MILLION = 1e6
 
 
 class Book:
     """Statements of one stock, addressed by period and field name."""
 
-    def __init__(self, statements: pd.DataFrame, ticker: str):
+    """Each period holds the figures of its own report as published (``field``) and the
+    comparative column of that same report (``field@prior``), which a company under
+    inflation accounting restates to the current price level.
+    """
+
+    def __init__(self, statements: pd.DataFrame, ticker: str, calendar: pd.DataFrame | None = None):
         self.ticker = normalize_ticker(ticker)
         self.group = financial_group(self.ticker)
         self.codes = ITEMS[self.group]
@@ -81,37 +87,112 @@ class Book:
                 own["year"], own["quarter"], own["item_code"], own["value"], strict=True
             )
         }
-        self.periods = sorted({Period(y, q) for y, q, _ in self._values})
+        self.periods = sorted({Period(y, q) for y, q, code in self._values if "@" not in code})
+        self._ends: dict[Period, pd.Timestamp] = {}
+        if calendar is not None and "period_end" in calendar:
+            mine = calendar[(calendar["ticker"] == self.ticker) & calendar["period_end"].notna()]
+            self._ends = {
+                Period(int(y), int(q)): pd.Timestamp(e)
+                for y, q, e in zip(mine["year"], mine["quarter"], mine["period_end"], strict=True)
+            }
 
-    def value(self, period: Period, field: str) -> float | None:
-        """Cumulative value of a flow, or the balance at the period end."""
+    def _get(self, period: Period, field: str, suffix: str = "") -> float | None:
         if field == "ebitda":
-            profit, depreciation = (
-                self.value(period, "operating_profit"),
-                self.value(period, "depreciation"),
-            )
+            profit = self._get(period, "operating_profit", suffix)
+            depreciation = self._get(period, "depreciation", suffix)
             return None if profit is None or depreciation is None else profit + depreciation
         code = self.codes.get(field)
-        return None if code is None else self._values.get((period.year, period.quarter, code))
+        if code is None:
+            return None
+        return self._values.get((period.year, period.quarter, code + suffix))
 
-    def quarter(self, period: Period, field: str) -> float | None:
-        """The quarter's own value of a flow."""
+    def value(self, period: Period, field: str) -> float | None:
+        """Cumulative value of a flow, or the balance at the period end, as published."""
+        return self._get(period, field)
+
+    def prior(self, period: Period, field: str) -> float | None:
+        """The comparative figure printed in the report of ``period``."""
+        return self._get(period, field, "@prior")
+
+    def end(self, period: Period) -> pd.Timestamp:
+        """Last day of the period (from the report; MAVI's year ends in January)."""
+        return self._ends.get(period, period.end_date)
+
+    def restated(self, period: Period) -> bool | None:
+        """Did the report of ``period`` restate last year's figures (inflation accounting)?
+
+        Its comparative column is set against what was published a year earlier; ``None``
+        when there is nothing to compare.
+        """
+        for field in ("revenue", "net_profit", "operating_cash_flow"):
+            prior, published = self.prior(period, field), self.value(period.year_earlier(), field)
+            if prior is not None and published:
+                return abs(prior / published - 1) > RESTATEMENT_TOLERANCE
+        return None
+
+    def factor(self, cpi: pd.Series | None, start: Period, end: Period) -> float | None:
+        """Price rise between the ends of two periods, from the CPI index."""
+        if cpi is None:
+            return None
+        months = cpi.copy()
+        months.index = pd.DatetimeIndex(months.index).to_period("M")
+        try:
+            return float(
+                months.loc[self.end(end).to_period("M")]
+                / months.loc[self.end(start).to_period("M")]
+            )
+        except KeyError:
+            return None
+
+    def _level(self, cpi: pd.Series | None, start: Period, end: Period) -> float | None:
+        """Factor that brings a figure of ``start`` to the price level of ``end``: the CPI
+        ratio when ``end``'s report restates, 1 when it does not, None when unknown."""
+        restated = self.restated(end)
+        if restated is None:
+            return None
+        return self.factor(cpi, start, end) if restated else 1.0
+
+    def base(self, period: Period, field: str, cpi: pd.Series | None) -> float | None:
+        """Last year's figure on this period's price level."""
+        restated = self.restated(period)
+        if restated:
+            return self.prior(period, field)
+        published = self.value(period.year_earlier(), field)
+        factor = self.factor(cpi, period.year_earlier(), period)
+        if restated is None or published is None or factor is None:
+            return None
+        return published * factor
+
+    def quarter(self, period: Period, field: str, cpi: pd.Series | None = None) -> float | None:
+        """The quarter's own value of a flow, on the period's price level."""
+        own = self._get(period, field, "@q")
+        if own is not None:
+            return own
         current = self.value(period, field)
         if current is None or period.quarter == 1:
             return current
         before = self.value(period.previous(), field)
-        return None if before is None else current - before
+        level = (
+            1.0
+            if self.restated(period) is not True
+            else self.factor(cpi, period.previous(), period)
+        )
+        return None if before is None or level is None else current - before * level
 
-    def ttm(self, period: Period, field: str) -> float | None:
-        """Last twelve months of a flow."""
+    def ttm(self, period: Period, field: str, cpi: pd.Series | None = None) -> float | None:
+        """Last twelve months of a flow, on the period's price level."""
         current = self.value(period, field)
         if current is None or period.quarter == 4:
             return current
-        last_year = self.value(Period(period.year - 1, 4), field)
-        same_last_year = self.value(period.year_earlier(), field)
-        if last_year is None or same_last_year is None:
+        year_end = Period(period.year - 1, 4)
+        last_year = self.value(year_end, field)
+        same_last_year = self.prior(period, field)
+        level = self._level(cpi, year_end, period)
+        if same_last_year is None:  # an older layer without comparative columns
+            same_last_year, level = self.value(period.year_earlier(), field), 1.0
+        if last_year is None or same_last_year is None or level is None:
             return None
-        return current + last_year - same_last_year
+        return current + last_year * level - same_last_year
 
 
 def _ratio(numerator: float | None, denominator: float | None, *, scale: float = 1.0):
@@ -177,10 +258,9 @@ def _debt(book: Book, period: Period) -> float | None:
 def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> dict:
     """Every metric that needs only the statements of ``period`` and of earlier periods."""
     earlier = period.year_earlier()
-    factor = _price_factor(cpi, period, earlier)
     revenue, net_profit = book.value(period, "revenue"), book.value(period, "net_profit")
     ebitda = book.value(period, "ebitda")
-    ttm_ebitda = book.ttm(period, "ebitda")
+    ttm_ebitda = book.ttm(period, "ebitda", cpi)
     net_debt = _net_debt(book, period)
     current_assets = book.value(period, "current_assets")
     inventories = book.value(period, "inventories")
@@ -188,11 +268,12 @@ def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> 
     cash_flow = book.value(period, "operating_cash_flow")
 
     def growth(field: str, real: bool) -> float | None:
-        if real:  # withheld: see _warnings (the source already restates the comparative)
-            return None
-        return _growth(
-            book.value(period, field), book.value(earlier, field), factor if real else 1.0
-        )
+        """Nominal: against last year's published figure. Real: against last year's
+        figure on today's price level (the restated comparative, or the CPI)."""
+        now = book.value(period, field)
+        if real:
+            return _growth(now, book.base(period, field, cpi))
+        return _growth(now, book.value(earlier, field))
 
     return {
         "revenue_mn": _millions(revenue),
@@ -211,10 +292,12 @@ def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> 
         "ebitda_margin_pct": _ratio(ebitda, revenue, scale=100),
         "net_margin_pct": _ratio(net_profit, revenue, scale=100),
         "roe_pct": _ratio(
-            book.ttm(period, "parent_net_profit"), book.value(period, "parent_equity"), scale=100
+            book.ttm(period, "parent_net_profit", cpi),
+            book.value(period, "parent_equity"),
+            scale=100,
         ),
         "roa_pct": _ratio(
-            book.ttm(period, "net_profit"), book.value(period, "total_assets"), scale=100
+            book.ttm(period, "net_profit", cpi), book.value(period, "total_assets"), scale=100
         ),
         "net_debt_to_ebitda": _ratio(net_debt, ttm_ebitda),
         "debt_to_equity": _ratio(_debt(book, period), book.value(period, "equity")),
@@ -245,7 +328,7 @@ def _valuation(book: Book, period: Period, close: pd.Series | None, as_of: str) 
 def _header(book: Book, row: pd.Series, period: Period) -> dict:
     return {
         "period": str(period),
-        "period_end": str(period.end_date.date()),
+        "period_end": str(book.end(period).date()),
         "published_at": pd.Timestamp(row["published_at"]).isoformat(timespec="seconds"),
         "known_from": str(pd.Timestamp(row["known_from"]).date()),
         "financial_group": book.group,
@@ -254,24 +337,26 @@ def _header(book: Book, row: pd.Series, period: Period) -> dict:
 
 
 def _warnings(book: Book, period: Period, cpi: pd.Series | None) -> list[str]:
+    """Figures are as published in each period's own report (KAP); these notes say how
+    last year's figures were brought to the same price level."""
     warnings = []
-    if book.group != "bank":
+    restated = book.restated(period)
+    if restated is False:
         warnings.append(
-            "RESTATED_SOURCE: the statement source replaces a period's figures with the "
-            "restated comparative of the following year's report (inflation accounting), "
-            "so amounts of earlier periods are at a later price level than the one "
-            "published at the time, and their changes are not the published ones."
+            "COMPARATIVE_NOT_RESTATED: the report does not restate last year's figures "
+            "(no inflation accounting: banks, insurers, companies reporting in another "
+            "functional currency); real growth deflates them with the CPI."
         )
-        if period.year_earlier() < TMS29_FIRST:
-            warnings.append(
-                "COMPARATIVE_BEFORE_TMS29: the year-earlier period predates inflation "
-                "accounting; year-over-year changes mix two bases."
-            )
-    warnings.append(
-        "REAL_GROWTH_WITHHELD: for the latest year the stored comparative is already at "
-        "the current price level, so the year-over-year change is close to real growth; a "
-        "separate CPI adjustment would deflate twice and is not reported."
-    )
+    elif restated is None:
+        warnings.append(
+            "NO_COMPARABLE_YEAR: last year's published figure is not in the data; real "
+            "growth and twelve-month sums are not given."
+        )
+    if book.group == "industrial" and period.year_earlier() < TMS29_FIRST and restated is not True:
+        warnings.append(
+            "COMPARATIVE_BEFORE_TMS29: the year-earlier period predates inflation "
+            "accounting; year-over-year changes mix two bases."
+        )
     return warnings
 
 
@@ -290,7 +375,7 @@ def fundamental_metrics(
         return None
     row = known.iloc[-1]
     period = Period(int(row["year"]), int(row["quarter"]))
-    book = Book(statements, ticker)
+    book = Book(statements, ticker, calendar)
     metrics = {**period_metrics(book, period, cpi), **_valuation(book, period, close, as_of)}
     return {
         "ticker": book.ticker,
@@ -302,30 +387,47 @@ def fundamental_metrics(
     }
 
 
-def _trend(now: dict, before: dict, group: str) -> tuple[list[str], str | None]:
+def flow_changes(book: Book, period: Period, cpi: pd.Series | None) -> dict[str, float | None]:
+    """This period's flows minus last year's on the same price level.
+
+    One rule for revenue, profit and operating cash flow: a loss turned into a profit
+    counts as up. Without a comparable price level the published figure is used.
+    """
+    fields = {"REVENUE_UP": "revenue", "PROFIT_UP": "net_profit"}
+    if book.group == "industrial":
+        fields["CASH_FLOW_UP"] = "operating_cash_flow"
+    out: dict[str, float | None] = {}
+    for name, field in fields.items():
+        now, base = book.value(period, field), book.base(period, field, cpi)
+        if base is None:
+            base = book.value(period.year_earlier(), field)
+        out[name] = None if now is None or base is None else now - base
+    return out
+
+
+def _trend(
+    now: dict, before: dict, group: str, flows: dict[str, float | None]
+) -> tuple[list[str], str | None]:
     """Improvement flags of a period against the same period a year earlier, and the trend.
 
-    Real growth is used when available, nominal otherwise. With fewer than three
-    applicable checks no trend is given.
+    Flows are compared on one price level (``flow_changes``), ratios as they are. With
+    fewer than three applicable checks no trend is given.
     """
-
-    def pick(real: str, nominal: str) -> float | None:
-        return now[real] if now[real] is not None else now[nominal]
 
     def change(key: str) -> float | None:
         return None if now[key] is None or before[key] is None else now[key] - before[key]
 
     margin_key = "ebitda_margin_pct" if group == "industrial" else "net_margin_pct"
     checks = {
-        "REVENUE_UP": pick("revenue_real_yoy_pct", "revenue_yoy_pct"),
-        "PROFIT_UP": pick("net_profit_real_yoy_pct", "net_profit_yoy_pct"),
+        "REVENUE_UP": flows.get("REVENUE_UP"),
+        "PROFIT_UP": flows.get("PROFIT_UP"),
         "MARGIN_UP": change(margin_key),
         "RETURN_ON_EQUITY_UP": change("roe_pct"),
     }
     if group == "industrial":
         leverage = change("net_debt_to_ebitda")
         checks["LEVERAGE_DOWN"] = None if leverage is None else -leverage
-        checks["CASH_FLOW_UP"] = change("operating_cash_flow_mn")
+        checks["CASH_FLOW_UP"] = flows.get("CASH_FLOW_UP")
     applicable = {name: value for name, value in checks.items() if value is not None}
     flags = [name for name, value in applicable.items() if value > 0]
     if len(applicable) < 3:
@@ -351,16 +453,17 @@ def fundamental_change(
     known = known_periods(calendar, ticker, as_of)
     if known.empty:
         return None
-    book = Book(statements, ticker)
+    book = Book(statements, ticker, calendar)
     rows = []
     for _, row in known.iloc[::-1].head(periods).iterrows():
         period = Period(int(row["year"]), int(row["quarter"]))
-        own = {f: book.quarter(period, f) for f in ("revenue", "ebitda", "net_profit")}
+        own = {f: book.quarter(period, f, cpi) for f in ("revenue", "ebitda", "net_profit")}
         earlier = {
-            f: book.quarter(period.year_earlier(), f) for f in ("revenue", "ebitda", "net_profit")
+            f: book.quarter(period.year_earlier(), f, cpi)
+            for f in ("revenue", "ebitda", "net_profit")
         }
         before = {
-            f: book.quarter(period.previous(), f) for f in ("revenue", "ebitda", "net_profit")
+            f: book.quarter(period.previous(), f, cpi) for f in ("revenue", "ebitda", "net_profit")
         }
         rows.append(
             {
@@ -381,7 +484,7 @@ def fundamental_change(
     period = Period(int(last["year"]), int(last["quarter"]))
     now = period_metrics(book, period, cpi)
     year_ago = period_metrics(book, period.year_earlier(), cpi)
-    flags, trend = _trend(now, year_ago, book.group)
+    flags, trend = _trend(now, year_ago, book.group, flow_changes(book, period, cpi))
 
     def change(key: str) -> float | None:
         if now[key] is None or year_ago[key] is None:
