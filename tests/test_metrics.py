@@ -502,3 +502,38 @@ def test_the_docs_say_a_to_c_conclusions_are_unsupported_by_construction():
         assert "ANALYSIS_UNSAFE" in doc and "citation" in doc
     assert "model_numeric_hallucination_rate" in metrics.__doc__
     assert "uncited" in metrics.__doc__
+
+
+# --- I5: the model's own intent next to the grounded one ---------------------------------
+def grounded_intent(**grounded) -> dict:
+    return {**record()["intent"], "grounded": grounded}
+
+
+def test_ticker_accuracy_is_reported_for_the_raw_model_and_after_grounding():
+    records = [
+        # the model said THYAO; grounding kept the question's TOASO
+        record(question_id="FX-11", intent=grounded_intent(ticker=["THYAO", "TOASO"])),
+        # the model invented a sector and a start date; the ticker was right
+        record(
+            question_id="FX-12",
+            intent=grounded_intent(sector=["Airlines", None], start=["2024-01-01", None]),
+        ),
+        # a sector kept only as the group of a named stock: not an invented field
+        record(question_id="FX-13", intent=grounded_intent(sector_unworded=["Auto", "Auto"])),
+        record(question_id="FX-14"),  # nothing grounded (an older record has no key)
+    ]
+    d = metrics.summarize(records)["D"]
+    assert d["ticker_accuracy_grounded"] == 1.0
+    assert d["ticker_accuracy_raw"] == pytest.approx(3 / 4)
+    assert d["invented_fields"] == 3
+    assert d["sector_unworded"] == 1
+    assert "ticker_accuracy" not in d  # one name per meaning
+
+
+def test_per_record_raw_intent_and_invented_fields():
+    rec = record(intent=grounded_intent(ticker=["THYAO", "TOASO"], end=["2025-12-31", None]))
+    assert metrics.raw_intent(rec)["ticker"] == "THYAO"
+    assert metrics.raw_intent(rec)["end"] == "2025-12-31"
+    assert metrics.raw_intent(rec)["scenario"] == "PRICE_SUMMARY"
+    assert metrics.invented_fields(rec) == 2
+    assert metrics.raw_intent(record(intent=None)) is None

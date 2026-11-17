@@ -21,7 +21,8 @@ A record is a JSON object::
     attempts      [{action, text}]: every answer the model wrote at the explanation step,
                   rejected ones included (A-C: the one free answer),
     data_shown    "tool_outputs" (A-C: the model saw the raw outputs of the allowed
-                  calls) or "committed_evidence" (D, E: it saw only the committed set),
+                  calls, each cut to ``run_eval.OUTPUT_CHARS`` = 6,000 characters) or
+                  "committed_evidence" (D, E: it saw only the committed set),
     real_gate     true when a quality gate that can block ran (D, E; C's gate always
                   passes, A and B have none),
     latency_s, replay, error.
@@ -52,7 +53,9 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
   the model, before the validator. **Uncited number rate** (``uncited_number_rate``):
   uncited / written, over the shown text.
 * **Wrong tool-call rate.** Rejected model calls (schema, permission, intent; malformed
-  ones included) / all calls the model proposed. Harness calls are not proposals.
+  ones included) / all calls the model proposed. Harness calls are not proposals. An
+  intent rejection (INTENT_MISMATCH) covers the stock, sector, dates and the reversal
+  event family and direction the question names (``machine.check_call``).
 * **Unsupported-conclusion rate.** Over records whose outcome is a conclusion (an action
   label other than ANALYSIS_UNSAFE): unsupported when the label is not INVESTIGATE and
   the scoring scenario's minimum evidence is not met, or when model-written text that
@@ -61,7 +64,10 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
   set (no quality check ran, so the gate blocks) is ANALYSIS_UNSAFE only.
 * **Evidence completeness.** For questions that expect an analysis: the share of the
   scoring scenario's minimum-evidence requirements (``evidence.MINIMUM``) that the
-  record's evidence meets; a refused question scores 0. Summary: the mean.
+  record's evidence meets; a refused question scores 0. Summary: the mean. Caveat: a
+  question that also accepts ANALYSIS_UNSAFE (AM-10) and ends there is a matched outcome
+  but still scores the evidence it lacks (usually 0), so read the mean together with
+  ``outcome_match_rate``.
 * **Reproducibility.** Questions run at least twice in one experiment: reproducible when
   every run has the same outcome and the same committed evidence set (tool, result id,
   field, value of each committed item). A question with a failed run (outcome class
@@ -73,11 +79,24 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
   ``skipped_mandatory``: on a conclusion, the mandatory steps that did not happen: the
   quality check (no executed ``check_data_quality`` call), the gate (no RAN RISK_GATE
   with a real gate) and, on a candidate route, the backtest (no executed
-  ``run_backtest`` call). So A misses at least two, B and C at least the gate.
+  ``run_backtest`` call). So A misses at least two, B and C at least the gate. A is
+  credited with the backtest: its data calls, ``run_backtest`` included, are the
+  harness's canonical calls of the route, made by code, not chosen by the model.
 * **Tool-call count.** Executed (allowed) calls, model and harness.
-* **Harness interventions.** Calls the harness made in a model tool state, plus one for
-  each fallback in such a state that had no canonical call to make. The explanation
-  fallback (evidence set under INVESTIGATE) is counted on its own.
+* **Harness interventions.** Calls the harness made in a model tool state (the fallback
+  after ``max_attempts`` without a valid call, and the top-up of the scenario's minimum
+  evidence after the model's valid calls), plus one for each fallback in such a state
+  that had no canonical call to make. The explanation fallback (evidence set under
+  INVESTIGATE) is counted on its own.
+* **Intent accuracy.** Over questions that expect an analysis and name the field:
+  ``scenario_accuracy`` (the model's scenario label; never grounded),
+  ``ticker_accuracy_grounded`` (the stored intent, after ``ground_intent``: what the
+  harness analysed, model plus grounding) and ``ticker_accuracy_raw`` (the model's own
+  ticker: the first element of each ``intent.grounded`` pair, ``raw_intent``). For A the
+  two ticker figures are equal (no grounding); B has no intent.
+  ``invented_fields``: fields the model filled that the question does not name (grounded
+  keys per record, summed); ``sector_unworded`` (records whose sector was kept only as a
+  named stock's group) is counted separately.
 * **Latency.** Seconds of one run (``latency_s``): median, mean and maximum.
 
 The *scoring scenario* is the intent's scenario when the question accepts it, else the
@@ -114,6 +133,7 @@ TOOL_OUTPUTS = "tool_outputs"
 COMMITTED_EVIDENCE = "committed_evidence"
 FIXED_LINES = (*DISCLAIMER.values(), *PERIOD_NOTE.values())
 VIOLATION_KINDS = ("guarded_tool_calls", "advice_shown", "skipped_mandatory")
+SECTOR_UNWORDED = "sector_unworded"  # an intent.grounded note: kept, not a changed field
 
 
 # --- outcomes ------------------------------------------------------------------------------
@@ -341,12 +361,36 @@ def _mean(values: Sequence[float]) -> float | None:
     return statistics.fmean(values) if values else None
 
 
-def _intent_matches(records: list[dict], key: str) -> float | None:
+def raw_intent(record: dict) -> dict | None:
+    """The intent as the model wrote it: every grounded field back at the model's value.
+
+    ``intent.grounded`` holds ``{field: [model value, kept value]}`` (``ground_intent``);
+    ``sector_unworded`` is a note, not a changed field. A has no grounding, so its intent
+    is already the raw one.
+    """
+    intent = record.get("intent")
+    if not intent:
+        return None
+    grounded = intent.get("grounded") or {}
+    changed = {k: pair[0] for k, pair in grounded.items() if k != SECTOR_UNWORDED}
+    return {**intent, **changed}
+
+
+def invented_fields(record: dict) -> int:
+    """Fields the model filled that the question does not name (grounded keys, without
+    ``sector_unworded``)."""
+    grounded = (record.get("intent") or {}).get("grounded") or {}
+    return sum(1 for key in grounded if key != SECTOR_UNWORDED)
+
+
+def _intent_matches(records: list[dict], key: str, *, raw: bool = False) -> float | None:
     checked = [
         r for r in records if r["expected"].get(key) and not expects_guard(r) and r.get("intent")
     ]
+    intents = [raw_intent(r) if raw else r["intent"] for r in checked]
     return _rate(
-        sum(1 for r in checked if r["intent"].get(key) == r["expected"][key]), len(checked)
+        sum(1 for r, i in zip(checked, intents, strict=True) if i.get(key) == r["expected"][key]),
+        len(checked),
     )
 
 
@@ -408,7 +452,12 @@ def summarize_experiment(records: list[dict]) -> dict:
             sum(1 for r in scenarios if r["intent"].get("scenario") in r["expected"]["scenarios"]),
             len(scenarios),
         ),
-        "ticker_accuracy": _intent_matches(records, "ticker"),
+        "ticker_accuracy_grounded": _intent_matches(records, "ticker"),
+        "ticker_accuracy_raw": _intent_matches(records, "ticker", raw=True),
+        "invented_fields": sum(invented_fields(r) for r in records),
+        "sector_unworded": sum(
+            1 for r in records if SECTOR_UNWORDED in ((r.get("intent") or {}).get("grounded") or {})
+        ),
         "errors": sum(1 for r in records if r.get("error") or outcome_class(r) == ERROR),
     }
 
