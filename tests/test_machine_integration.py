@@ -100,9 +100,6 @@ def test_a_rejected_call_before_the_data_starts_adds_no_finding():
 # --- I1: the harness tops up the scenario's minimum evidence -------------------------
 FR_PERIOD = {"start": "2025-05-02", "end": "2025-11-10"}
 FR_QUESTION = "How did TUPRS's price react to its quarterly results from 2025-05-02 to 2025-11-10?"
-TR_QUESTION = (
-    "Did ASELS recover after touching the lower Bollinger band from 2025-01-02 to 2025-06-30?"
-)
 
 
 def harness_calls(analysis, state):
