@@ -13,6 +13,7 @@ from pathlib import Path
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3.5:9b-q4_K_M"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _read_dotenv(path: Path) -> dict[str, str]:
@@ -50,5 +51,5 @@ class Settings:
         return cls(
             llm_base_url=base_url,
             llm_model=get("BIST_LLM_MODEL") or DEFAULT_MODEL,
-            data_dir=Path(data_dir) if data_dir else Path.cwd() / "data",
+            data_dir=Path(data_dir) if data_dir else REPO_ROOT / "data",
         )
