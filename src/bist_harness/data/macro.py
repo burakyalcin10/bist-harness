@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from bist_harness.config import REPO_ROOT
 from bist_harness.data import snapshot
 from bist_harness.data.market import Downloader, _yfinance_download
 from bist_harness.errors import DataUnavailableError
@@ -42,6 +43,7 @@ SOURCES = {
 }
 BUILD_HINT = "Run `uv run python -m bist_harness.data.macro build` first."
 CPI_RELEASE_DAY = 3
+CPI_RELEASES_PATH = REPO_ROOT / "data" / "reference" / "cpi_release_dates.csv"
 FX_START = "2020-01-01"
 USER_AGENT = "Mozilla/5.0 (educational research project; CSE-481)"
 
@@ -73,6 +75,39 @@ def cpi_publication_date(period) -> pd.Timestamp:
     while day.day_of_week >= 5:
         day += pd.Timedelta(days=1)
     return day
+
+
+CPI_RELEASE_BASIS = "first BIST trading day on or after the 3rd of the next month"
+
+
+def cpi_release_dates(periods, calendar: pd.DatetimeIndex) -> pd.DataFrame:
+    """Release day of each month's CPI: the 3rd of the next month, or the first BIST
+    trading day after it. BIST is closed on public holidays, so its calendar moves the day
+    past holidays as TÜİK does (April 2022 CPI: 5 May, after the Ramadan holiday)."""
+    rows = []
+    for period in periods:
+        month = period if isinstance(period, pd.Period) else pd.Timestamp(period).to_period("M")
+        third = (month + 1).to_timestamp() + pd.Timedelta(days=CPI_RELEASE_DAY - 1)
+        later = calendar[calendar >= third]
+        if len(later):
+            rows.append((str(month), later[0].strftime("%Y-%m-%d"), CPI_RELEASE_BASIS))
+    return pd.DataFrame(rows, columns=["period", "released", "basis"])
+
+
+def _apply_cpi_releases(cpi: pd.DataFrame, path: Path | None) -> pd.DataFrame:
+    """Replace the rule-based release day by the recorded one where the table has it."""
+    if path is None or not Path(path).is_file():
+        return cpi
+    table = pd.read_csv(path, dtype=str)
+    recorded = dict(zip(table["period"], pd.to_datetime(table["released"]), strict=True))
+    out = cpi.copy()
+    months = pd.to_datetime(out["period"]).dt.to_period("M").astype(str)
+    out["published"] = [
+        recorded.get(month, published)
+        for month, published in zip(months, out["published"], strict=True)
+    ]
+    out["published"] = pd.to_datetime(out["published"])
+    return out
 
 
 def parse_cpi(html: str) -> pd.DataFrame:
@@ -188,9 +223,17 @@ def build_macro(
 
 
 def load_macro(
-    name: str, *, snapshot_id: str | None = None, root: Path | None = None
+    name: str,
+    *,
+    snapshot_id: str | None = None,
+    root: Path | None = None,
+    cpi_releases: Path | None = CPI_RELEASES_PATH,
 ) -> pd.DataFrame:
-    """One macro series from a snapshot (the active one by default)."""
+    """One macro series from a snapshot (the active one by default).
+
+    CPI release days come from the recorded table ``cpi_releases`` where it has the
+    month; the snapshot file itself is not changed (like the price adjustments, K-021).
+    """
     if name not in SERIES:
         raise ValueError(f"unknown macro series: {name}")
     snapshot_id = snapshot_id or snapshot.active_snapshot_id(root)
@@ -199,13 +242,26 @@ def load_macro(
         raise DataUnavailableError(
             f"Snapshot {snapshot_id} has no macro series {name}. {BUILD_HINT}"
         )
-    return pd.read_parquet(path)
+    frame = pd.read_parquet(path)
+    return _apply_cpi_releases(frame, cpi_releases) if name == "cpi" else frame
+
+
+def write_cpi_release_table(path: Path = CPI_RELEASES_PATH, first: str = "2019-12") -> int:
+    """Write the release table for every month of the snapshot's CPI from ``first`` on."""
+    cpi = load_macro("cpi", cpi_releases=None)
+    months = [m for m in pd.to_datetime(cpi["period"]).dt.to_period("M") if str(m) >= first]
+    table = cpi_release_dates(months, snapshot.load_history("XU100").index)
+    table.to_csv(path, index=False, lineterminator="\n")
+    return len(table)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["release-dates"]:
+        print("rows written:", write_cpi_release_table())
+        return 0
     if args[:1] != ["build"]:
-        print("usage: python -m bist_harness.data.macro build")
+        print("usage: python -m bist_harness.data.macro build | release-dates")
         return 2
     folder = snapshot._root(None) / snapshot.active_snapshot_id()
     print(build_macro(folder))

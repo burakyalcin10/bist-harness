@@ -114,6 +114,8 @@ def _macro(table: pd.DataFrame, macro: dict | None) -> None:
     fx = macro.get("fx")
     if fx is not None and "USDTRY" in fx:
         change = (fx["USDTRY"] / fx["USDTRY"].shift(FX_WINDOW_DAYS) - 1) * 100
+        # Yahoo's FX close is struck hours after the BIST close: day t sees day t-1.
+        change.index = pd.DatetimeIndex(change.index) + pd.Timedelta(days=1)
         table["usdtry_change_20d_pct"] = change.reindex(table.index, method="ffill")
     else:
         table["usdtry_change_20d_pct"] = np.nan
