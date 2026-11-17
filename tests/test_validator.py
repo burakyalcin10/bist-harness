@@ -899,6 +899,11 @@ def test_every_fixed_system_answer_passes_the_advice_check(lang, text):
         "Bu sistem yatırım tavsiyesi ya da fiyat tahmini vermez. [E1]",
         "Bu cevap yatırım tavsiyesi veya kesin bir yorum içermez. [E1]",
         "Bu metin yatırım tavsiyesi değildir. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliği taşımaz. [E1]",
+        "Bu analiz yatırım tavsiyesi niteliğinde değildir. [E1]",
+        "Bu metin yatırım tavsiyesi niteliğinde değil. [E1]",
+        "Bu sonuçların yatırım tavsiyesi niteliği yoktur. [E1]",
+        "Bu bilgiler yatırım tavsiyesi veya öneri niteliği taşımaz. [E1]",
     ],
 )
 def test_a_negated_investment_advice_phrase_is_not_advice(text):
@@ -912,6 +917,11 @@ def test_a_negated_investment_advice_phrase_is_not_advice(text):
     [
         "Bu bir yatırım tavsiyesidir ve THYAO için geçerlidir. [E1]",
         "Bu yatırım tavsiyesi ya da yorum olarak okunabilir. [E1]",
+        "Bu bir yatırım tavsiyesi niteliğindedir [E1].",
+        "Bu bir yatırım tavsiyesi niteliğindedir ve THYAO için geçerlidir. [E1]",
+        "Bu yatırım tavsiyesi veya öneri niteliğindedir. [E1]",
+        "Bu yatırım tavsiyesi niteliği taşır. [E1]",
+        "Bu bir yatırım tavsiyesi niteliğinde bir değerlendirmedir. [E1]",
     ],
 )
 def test_an_investment_advice_claim_is_still_advice(text):

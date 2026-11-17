@@ -190,9 +190,12 @@ ADVICE_PATTERNS = (
     r"tavsiye ed[a-z]*",
     # "yatırım tavsiyesidir", but not "yatırım tavsiyesi değildir / vermez"
     # (also "yatırım tavsiyesi ya da fiyat tahmini vermez": a negation up to three words
-    # after "ya da" / "veya", as in the system's own refusal sentence)
+    # after "ya da" / "veya", as in the system's own refusal sentence). "Niteliği" counts
+    # only in its negated forms ("niteliği taşımaz / yoktur", "niteliğinde değildir"):
+    # "yatırım tavsiyesi niteliğindedir" is advice.
     r"yatirim tavsiye[a-z]*(?= )(?! (?:(?:ya da|veya) (?:[a-z0-9]+ ){0,3})?"
-    r"(?:degil|niteligi|icermez|vermez|sunmaz|yoktur))",
+    r"(?:degil|icermez|vermez|sunmaz|yoktur"
+    r"|niteligi (?:tasimaz|yoktur|bulunmaz|icermez)|niteliginde degil))",
     # "garanti", "garantilidir", but not the bank (Garanti BBVA, Garanti Bankası)
     r"garanti[a-z]*(?= )(?! bbva | bankasi )",
     r"(?:" + "|".join((*MOVE_AORIST_TR, "geriler")) + r")(?:dir|ler|lar)?",  # "yükselir"
