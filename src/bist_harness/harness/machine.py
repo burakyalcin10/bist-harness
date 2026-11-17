@@ -26,6 +26,7 @@ import httpx
 from bist_harness.data import peers
 from bist_harness.errors import LLMUnavailableError
 from bist_harness.harness import session
+from bist_harness.harness.evidence import build_evidence
 from bist_harness.harness.intent import (
     Intent,
     _guess_language,
@@ -101,14 +102,10 @@ class GateDecision:
     reasons: tuple[str, ...] = ()
 
 
+default_evidence = build_evidence  # BUILD_EVIDENCE: templated sentences E1..En
 EvidenceFn = Callable[..., Any]  # (analysis, *, language) -> evidence
 GateFn = Callable[[session.Analysis, Any], Any]  # (analysis, evidence) -> result with .status
 ExplainFn = Callable[..., Any]  # (analysis, client, evidence, gate) -> None or result
-
-
-def default_evidence(analysis: session.Analysis, *, language: str) -> tuple:
-    """No evidence yet: Task 5 plugs ``build_evidence`` in here."""
-    return ()
 
 
 def default_gate(analysis: session.Analysis, evidence: Sequence) -> GateDecision:

@@ -14,6 +14,7 @@ Run over stdio:  uv run python -m bist_harness.mcp_server.server
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import inspect
@@ -37,7 +38,7 @@ from bist_harness.data.raw_prices import load_raw
 from bist_harness.data.snapshot import REPO_ROOT
 from bist_harness.errors import DataUnavailableError
 from bist_harness.features.table import build_feature_table
-from bist_harness.harness import session
+from bist_harness.harness import evidence, session
 from bist_harness.quality.checks import check_price_series
 from bist_harness.tools import calendar_patterns, events, support_resistance
 from bist_harness.tools.disclosure import quarter_reactions, summarize_reactions
@@ -761,10 +762,25 @@ def get_speech_features(source_id: str) -> dict:
 
 @_tool
 def build_evidence_bundle(analysis_id: str) -> dict:
-    if session.resolve(analysis_id) is None:
+    analysis = session.resolve(analysis_id)
+    if analysis is None:
         return _error("UNKNOWN_ANALYSIS", f"{analysis_id!r} is not a known analysis.")
-    # The evidence builder arrives with the harness (Sprint 4, Task 5).
-    return _error("NOT_IMPLEMENTED", "The evidence bundle is not available yet.")
+    intent = analysis.intent or {}
+    scenario = intent.get("scenario")
+    language = intent.get("language") if intent.get("language") in ("tr", "en") else "en"
+    items = evidence.build_evidence(analysis, language=language)
+    args = {"analysis_id": analysis_id}
+    output = {
+        **args,
+        "scenario": scenario,
+        "language": language,
+        "evidence": [dataclasses.asdict(item) for item in items],
+        "committed_labels": [item.label for item in items if item.committed],
+        "missing_requirements": evidence.missing_requirements(items, scenario),
+        "warnings": evidence.collect_warnings(analysis, language=language),
+        **_versions(),
+    }
+    return _with_result_id("build_evidence_bundle", args, output)
 
 
 def _tool_tickers(arguments: dict) -> list[str]:

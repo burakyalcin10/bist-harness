@@ -1,6 +1,39 @@
 {
-  "error": {
-    "code": "NOT_IMPLEMENTED",
-    "message": "The evidence bundle is not available yet."
-  }
+  "adjustments_id": "adj00000",
+  "analysis_id": "AN-000000000000",
+  "committed_labels": [],
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "evidence": [
+    {
+      "committed": false,
+      "field": "period_return_pct",
+      "label": "E1",
+      "result_id": "76159e60e877",
+      "sentence": "The closing price of ASELS changed 32.80% between 2024-01-02 and 2024-12-31.",
+      "tool": "get_stock_history",
+      "value": 32.8
+    },
+    {
+      "committed": false,
+      "field": "last_close",
+      "label": "E2",
+      "result_id": "76159e60e877",
+      "sentence": "The last close of ASELS in the period was 188.43 (2024-12-31).",
+      "tool": "get_stock_history",
+      "value": 188.43
+    }
+  ],
+  "language": "en",
+  "layers_id": "lay00000",
+  "missing_requirements": [],
+  "result_id": "ce00e8d7b8eb",
+  "scenario": null,
+  "snapshot_id": "golden-snapshot",
+  "warnings": [
+    {
+      "result_id": null,
+      "text": "Historical evidence only; no guarantee of future return.",
+      "tool": null
+    }
+  ]
 }

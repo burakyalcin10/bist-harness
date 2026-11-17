@@ -32,7 +32,7 @@ MAX_LIST_ROWS = 12
 PINNED = {"snapshot": "golden-snapshot", "adjustments": "adj00000", "layers": "lay00000"}
 
 TOOLS = list(TOOL_SCHEMAS)
-STUBS = {"build_evidence_bundle", "get_speech_features"}  # not implemented yet
+STUBS = {"get_speech_features"}  # not implemented yet
 
 
 @pytest.fixture(autouse=True)

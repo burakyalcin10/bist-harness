@@ -140,10 +140,10 @@ def test_speech_features_distinguish_empty_list_from_unknown_source(monkeypatch,
     assert srv.get_speech_features("v2")["error"]["code"] == "UNKNOWN_SOURCE"
 
 
-def test_evidence_bundle_is_not_implemented_yet():
+def test_evidence_bundle_of_an_analysis_without_calls_is_empty():
     analysis = session.new_analysis("q", model="m")
     out = srv.build_evidence_bundle(analysis.analysis_id)
-    assert out["error"]["code"] == "NOT_IMPLEMENTED"
+    assert out["evidence"] == [] and out["committed_labels"] == []
 
 
 def test_wrong_argument_type_is_invalid_over_mcp_and_directly():
