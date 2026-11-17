@@ -24,9 +24,14 @@ from mcp.server.mcpserver import MCPServer
 from bist_harness.data import peers, snapshot
 from bist_harness.data.market import DATA_SOURCE
 from bist_harness.errors import DataUnavailableError
-from bist_harness.tools import events, support_resistance
+from bist_harness.tools import calendar_patterns, events, support_resistance
 from bist_harness.tools.indicators import add_all_indicators, indicator_state
-from bist_harness.tools.schemas import INDICATORS, REVERSAL_EVENT_TYPES, TOOL_SCHEMAS
+from bist_harness.tools.schemas import (
+    INDICATORS,
+    REVERSAL_EVENT_TYPES,
+    TOOL_SCHEMAS,
+    WEEKDAY_PATTERNS,
+)
 from bist_harness.tools.sector import rank_sector_relative_strength as rank_sector
 from bist_harness.universe import is_in_universe, normalize_ticker
 
@@ -235,6 +240,19 @@ def detect_reversal_events(
         "direction": result["direction"],
     }
     return _with_result_id("detect_reversal_events", args, {**args, **result, **meta})
+
+
+@server.tool(description=TOOL_SCHEMAS["test_weekday_pattern"]["description"])
+def test_weekday_pattern(ticker: str, pattern: str, start: str, end: str) -> dict:
+    loaded = _load_window(ticker, start, end)
+    if isinstance(loaded, dict):
+        return loaded
+    name, history, meta = loaded
+    if pattern not in WEEKDAY_PATTERNS:
+        return _error("INVALID_ARGUMENT", f"pattern must be one of {WEEKDAY_PATTERNS}.")
+    result = calendar_patterns.evaluate_pattern(history, pattern, since=start)
+    args = {"ticker": name, "pattern": pattern, "start": start, "end": end}
+    return _with_result_id("test_weekday_pattern", args, {**args, **result, **meta})
 
 
 def _check_as_of(as_of: str) -> dict | None:

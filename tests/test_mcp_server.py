@@ -337,3 +337,24 @@ def test_sector_tool_reports_members_missing_from_the_snapshot(sector_histories,
 def test_sector_tool_bad_input(args, code, sector_histories):
     out = srv.rank_sector_relative_strength(*args)
     assert out["error"]["code"] == code
+
+
+@pytest.mark.parametrize(
+    "pattern", ["WEEKDAY_MEANS", "MON_WEAK_FRI_STRONG", "POST_LARGE_DOWN_REVERSION"]
+)
+def test_weekday_pattern_tool_tests_the_requested_period(pattern, offline_history):
+    from bist_harness.tools.calendar_patterns import evaluate_pattern
+
+    out = srv.test_weekday_pattern("ASELS", pattern, "2021-01-01", "2023-12-31")
+    expected = evaluate_pattern(offline_history.loc[:"2023-12-31"], pattern, since="2021-01-01")
+    for key, value in expected.items():
+        assert out[key] == value
+    assert out["ticker"] == "ASELS" and out["pattern"] == pattern
+    assert out["definition"] and out["snapshot_id"] and len(out["result_id"]) == 12
+
+
+def test_weekday_pattern_tool_rejects_an_unknown_pattern():
+    out = srv.test_weekday_pattern("ASELS", "FULL_MOON", "2021-01-01", "2023-12-31")
+    assert out["error"]["code"] == "INVALID_ARGUMENT"
+    out = srv.test_weekday_pattern("GARAN", "WEEKDAY_MEANS", "2021-01-01", "2023-12-31")
+    assert out["error"]["code"] == "UNKNOWN_TICKER"

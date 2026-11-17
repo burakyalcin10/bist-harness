@@ -13,6 +13,7 @@ IMPLEMENTED_TOOLS = {
     "calculate_indicators",
     "find_support_resistance",
     "rank_sector_relative_strength",
+    "test_weekday_pattern",
     "detect_reversal_events",
 }
 
