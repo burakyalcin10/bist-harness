@@ -36,6 +36,21 @@ class ToolCallRecord:
 
 
 @dataclass
+class StateRecord:
+    """What happened in one harness state: RAN, SKIPPED or NOT_APPLICABLE, with details."""
+
+    state: str
+    status: str
+    detail: dict = field(default_factory=dict)
+
+
+# Model settings every analysis runs with (temperature 0, fixed seed): same question, same
+# data, same tool calls.
+TEMPERATURE = 0.0
+SEED = 42
+
+
+@dataclass
 class Analysis:
     analysis_id: str
     question: str
@@ -46,6 +61,12 @@ class Analysis:
     intent: dict | None = None
     state: str = "START"
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    temperature: float = TEMPERATURE
+    seed: int = SEED
+    outcome: str | None = None  # REFUSED_ADVICE, ANALYSIS_UNSAFE, ... once the run ends
+    answer: str | None = None  # the fixed answer of a refused or unsafe question
+    gate_status: str | None = None
+    trail: list[StateRecord] = field(default_factory=list)  # one record per state
 
 
 _LIVE: dict[str, Analysis] = {}
@@ -133,20 +154,31 @@ def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
     """Write the analysis and its tool calls; saving again replaces what was stored."""
     intent = analysis.intent or {}
     versions = {"adjustments_id": analysis.adjustments_id}
+    run = {
+        "temperature": analysis.temperature,
+        "seed": analysis.seed,
+        "answer": analysis.answer,
+        "trail": [
+            {"state": r.state, "status": r.status, "detail": r.detail} for r in analysis.trail
+        ],
+    }
     with conn:
         conn.execute(
             """
             INSERT INTO analyses (analysis_id, created_at, question, intent_json, ticker,
                                   sector, as_of, period_start, period_end, snapshot_id,
-                                  data_versions_json, model, state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  data_versions_json, model, state, gate_status, outcome,
+                                  run_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(analysis_id) DO UPDATE SET
                 question = excluded.question, intent_json = excluded.intent_json,
                 ticker = excluded.ticker, sector = excluded.sector, as_of = excluded.as_of,
                 period_start = excluded.period_start, period_end = excluded.period_end,
                 snapshot_id = excluded.snapshot_id,
                 data_versions_json = excluded.data_versions_json,
-                model = excluded.model, state = excluded.state
+                model = excluded.model, state = excluded.state,
+                gate_status = excluded.gate_status, outcome = excluded.outcome,
+                run_json = excluded.run_json
             """,
             (
                 analysis.analysis_id,
@@ -162,6 +194,9 @@ def save(analysis: Analysis, conn: sqlite3.Connection) -> None:
                 _dump(versions),
                 analysis.model,
                 analysis.state,
+                analysis.gate_status,
+                analysis.outcome,
+                _dump(run),
             ),
         )
         conn.execute("DELETE FROM tool_calls WHERE analysis_id = ?", (analysis.analysis_id,))
@@ -192,11 +227,12 @@ def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
     """Read an analysis back (and register it as live); ``KeyError`` if it is not stored."""
     row = conn.execute(
         "SELECT analysis_id, question, created_at, model, snapshot_id, data_versions_json, "
-        "intent_json, state FROM analyses WHERE analysis_id = ?",
+        "intent_json, state, gate_status, outcome, run_json FROM analyses WHERE analysis_id = ?",
         (analysis_id,),
     ).fetchone()
     if row is None:
         raise KeyError(f"unknown analysis: {analysis_id}")
+    run = {} if row[10] is None else json.loads(row[10])  # None: saved before version 3
     calls = conn.execute(
         "SELECT seq, state, tool, arguments_json, output_json, result_id, allowed, source "
         "FROM tool_calls WHERE analysis_id = ? ORDER BY seq",
@@ -224,6 +260,12 @@ def load(analysis_id: str, conn: sqlite3.Connection) -> Analysis:
             )
             for c in calls
         ],
+        temperature=run.get("temperature", TEMPERATURE),
+        seed=run.get("seed", SEED),
+        outcome=row[9],
+        answer=run.get("answer"),
+        gate_status=row[8],
+        trail=[StateRecord(r["state"], r["status"], r["detail"]) for r in run.get("trail", [])],
     )
     _LIVE[analysis.analysis_id] = analysis
     return analysis

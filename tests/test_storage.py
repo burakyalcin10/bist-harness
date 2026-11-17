@@ -49,7 +49,7 @@ def test_new_file_has_the_five_tables_and_the_schema_version(tmp_path):
     conn = db.connect(tmp_path / "store.sqlite")
     names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert TABLES <= names
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 3
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
