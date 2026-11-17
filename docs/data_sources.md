@@ -55,3 +55,30 @@ Assumptions to keep in mind:
 - **No revisions.** The tables hold the values as published on 2026-11-18. Turkish CPI
   is not revised in practice; the policy and Fed tables are decision records.
 - A decision or a figure counts from its date; nothing is used before it.
+
+## 3. Financial statements and their publication times
+
+Built on 2026-11-18 into `data/snapshots/20261117-0722/fundamentals/`
+(`statements.parquet`, `calendar.parquet`, `manifest.json`). Coverage and timing
+statistics: `docs/results/2026-11-18-fundamentals-coverage.md`.
+
+| Item | Source | Notes |
+| --- | --- | --- |
+| Statement items | İş Yatırım, public financial-statement service (`MaliTablo`) | Cumulative values per reporting period with an item code per line. Layout `XI_29` for industrial companies, `UFRS_K` for the bank and the insurer |
+| Publication time | KAP (Kamuyu Aydınlatma Platformu), disclosure query, class "FR", subject "Finansal Rapor" | Timestamp to the second, with the fiscal year and period of the report |
+
+The brief names Fintables for fundamentals. No Fintables access was available, and
+announcement 1 (item 2) allows another reliable source; announcement 1 (item 3)
+recommends KAP for disclosure times.
+
+Rules applied:
+
+- **A statement is used from the first trading day whose close follows its KAP
+  timestamp**: before 18:00 on a trading day, that day; otherwise the next trading day.
+- If a period has several financial-report disclosures, the first one counts.
+- Item codes used per metric are listed in `src/bist_harness/tools/fundamentals.py`
+  (`ITEMS`).
+- Inflation accounting (TMS 29): non-bank statements from the 2023 year end on are
+  inflation-adjusted. Year-over-year growth is reported in nominal terms and in real
+  terms (the earlier amount is brought to the later period's price level with the CPI
+  index); a comparison that reaches back before the 2023 year end is flagged.
