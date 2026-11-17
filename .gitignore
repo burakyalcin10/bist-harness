@@ -11,3 +11,4 @@ models/
 *.safetensors
 .superpowers/
 data/snapshots/
+data/*.sqlite
