@@ -30,7 +30,7 @@ counts, hashes).
 | USD/TRY, EUR/TRY | Yahoo Finance daily close (`USDTRY=X`, `EURTRY=X`) | 1,790 | 2020-01-01 to 2026-11-17 | The day itself |
 | TCMB policy rate | TCMB, "1 Hafta Repo" decision table (lending rate) | 58 | 2010-05-20 to 2026-10-23 | Decision date |
 | Fed funds target range | Federal Reserve Board, "Open Market Operations" page | 60 | 2003-06-25 to 2026-09-17 | Date given on the page |
-| CPI, annual and monthly change | TCMB, "Tüketici Fiyatları" table (TÜİK figures) | 262 | 2005-01 to 2026-10 | Release day: the 3rd of the following month, or the next working day if that is a weekend |
+| CPI, annual and monthly change | TCMB, "Tüketici Fiyatları" table (TÜİK figures) | 262 | 2005-01 to 2026-10 | Release day from `data/reference/cpi_release_dates.csv` (2019-12 on): the 3rd of the following month, or the next BIST trading day |
 
 Why not EVDS: the TCMB data service needs a personal API key. The exchange rates were
 therefore taken from Yahoo Finance and compared with the TCMB indicative rates
@@ -49,9 +49,14 @@ period, for which this difference is small; the report should name Yahoo as the 
 
 Assumptions to keep in mind:
 
-- **CPI release day is a rule, not a recorded timestamp.** TÜİK publishes on the 3rd of
-  the month at 10:00; when the 3rd is a weekend the release moves to the next working
-  day. Holidays that shift a release further are not modelled.
+- **CPI release day comes from a recorded table, built by a rule.** TÜİK publishes on
+  the 3rd of the month at 10:00; a weekend or a public holiday moves the release. The
+  table `data/reference/cpi_release_dates.csv` takes the first BIST trading day on or
+  after the 3rd (BIST is closed on public holidays: April 2022 CPI, 5 May). TÜİK's own
+  release calendar could not be retrieved automatically (its portal is a JavaScript
+  application; TCMB's monthly price reports carry no dates), so a month TÜİK delayed
+  further would be used too early; each row states its basis and can be corrected by
+  hand. The table is applied when the series is read; the snapshot file is unchanged.
 - **No revisions.** The tables hold the values as published on 2026-11-17. Turkish CPI
   is not revised in practice; the policy and Fed tables are decision records.
 - A decision or a figure counts from its date; nothing is used before it.
@@ -62,26 +67,35 @@ Built on 2026-11-17 into `data/snapshots/20261117-0722/fundamentals/`
 (`statements.parquet`, `calendar.parquet`, `manifest.json`). Coverage and timing
 statistics: `docs/results/2026-11-17-fundamentals-coverage.md`.
 
+**Rebuilt in Sprint 4 (K-055).** The first build took the figures from İş Yatırım's
+public statement service; a measurement showed that this service moves a period's
+figures to the price level of a later report
+(`docs/results/2026-11-17-fundamentals-source-measurement.md`). That layer is kept as
+`fundamentals_isyatirim/` for comparison and no tool reads it.
+
 | Item | Source | Notes |
 | --- | --- | --- |
-| Statement items | İş Yatırım, public financial-statement service (`MaliTablo`) | Cumulative values per reporting period with an item code per line. Layout `XI_29` for industrial companies, `UFRS_K` for the bank and the insurer |
-| Publication time | KAP (Kamuyu Aydınlatma Platformu), disclosure query, class "FR", subject "Finansal Rapor" | Timestamp to the second, with the fiscal year and period of the report |
+| Statement figures | The KAP financial-report disclosure of each period itself (`https://www.kap.org.tr/tr/Bildirim/<number>`), read from its XBRL-tagged page | Current period and the comparative column of the same report; unit (TL, thousand TL, million TL) and consolidation read from the page. Pages are stored compressed outside git in `data/cache/kap_reports/` (`uv run python -m bist_harness.data.kap_reports download`); the layer is built with `uv run python -m bist_harness.data.fundamentals build-kap` |
+| Publication time | KAP disclosure query, class "FR", subject "Finansal Rapor" | Timestamp to the second, with the fiscal year and period of the report |
 
 The brief names Fintables for fundamentals. No Fintables access was available, and
-announcement 1 (item 2) allows another reliable source; announcement 1 (item 3)
-recommends KAP for disclosure times.
+announcement 1 (item 2) allows another reliable source; announcement 1 (items 3)
+recommends KAP.
 
 Rules applied:
 
 - **A statement is used from the first trading day whose close follows its KAP
-  timestamp**: before 18:00 on a trading day, that day; otherwise the next trading day.
-- If a period has several financial-report disclosures, the first one counts.
-- Item codes used per metric are listed in `src/bist_harness/tools/fundamentals.py`
-  (`ITEMS`).
-- Inflation accounting (TMS 29): non-bank statements from the 2023 year end on are
-  inflation-adjusted. Year-over-year growth is reported in nominal terms and in real
-  terms (the earlier amount is brought to the later period's price level with the CPI
-  index); a comparison that reaches back before the 2023 year end is flagged.
+  timestamp**: before 18:00 on a trading day (12:30 on the half-day sessions of
+  `data/reference/half_day_sessions.csv`), that day; otherwise the next trading day.
+- Where a company files a consolidated and a solo report, the consolidated one is used;
+  of that kind the first publication counts and later ones are counted as corrections.
+- Metric fields and the XBRL concepts they are read from: `CONCEPTS` in
+  `src/bist_harness/data/fundamentals.py`. Period start and end come from the report's
+  own column dates (MAVI's fiscal year ends in January).
+- Inflation accounting (TMS 29): whether a company restates is read from the data (the
+  comparative column against the figure published a year earlier). Real growth uses the
+  restated comparative, or the CPI where the company does not restate (banks, the
+  insurer, THYAO). A comparison that reaches back before the 2023 year end is flagged.
 
 ## 4. Company events (KAP disclosure metadata)
 
@@ -122,3 +136,24 @@ Notes:
 - This layer is context only (announcement 1, item 3): it never supplies a number.
 - There is no speech-to-text layer yet; it is planned for Sprint 7 with a fixed list of
   approved public videos.
+
+## 5. Unadjusted closes (market values)
+
+Built with `uv run python -m bist_harness.data.raw_prices build` on 2026-11-17 into
+`data/snapshots/20261117-0722/prices_raw/` (30 universe stocks, 2020-01-02 to the last bar
+of the price snapshot).
+
+| Item | Value |
+| --- | --- |
+| Source | Yahoo Finance through `yfinance`, `auto_adjust=False`, with split events |
+| Raw close | Yahoo's close times the ratios of every later split: the price quoted on the day |
+| Check | On all 26 split days (bonus issues) the `auto_adjust=False` close is continuous and the raw close drops by the split ratio, CCOLA included |
+| Use | Market value = raw close x paid-in capital of the period (BIST shares: nominal 1 TL). P/E, P/B and EV/EBITDA are withheld when a split happened between the period end and the analysis date |
+| Known limit | Rights issues change the share count without a split and are not seen; the paid-in capital of the latest report is then out of date until the next report |
+
+## 6. Layer identity
+
+Every tool result carries `layers_id`, a hash of the macro, fundamental, KAP and
+raw-price files of the snapshot and of the two reference tables that shape them. After
+a layer is rebuilt, `uv run python -m bist_harness.data.snapshot seal` records the file
+hashes in `layers.json`; `… snapshot verify` reports a changed, missing or unsealed file.

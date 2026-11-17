@@ -152,3 +152,20 @@ that the protocol and the code say the same thing.
 Consequence: the test period is **not** run until the fundamental layer has been rebuilt
 from as-published figures. It will then be run once, for all variants and for Scenario 4
 together, with the definitions of section 3 unchanged.
+
+### 6.1 Sprint 4, Task 0 (2026-11-17), still before any test-period run
+
+| What | Before | Now | Why |
+| --- | --- | --- | --- |
+| Source of the statement figures | İş Yatırım `MaliTablo` (restated later) | The KAP financial-report disclosure of each period, read from its XBRL page; the consolidated report when there is one, the first publication of that kind (K-055) | Measured: the old source moves figures to a later price level (`docs/results/2026-11-17-fundamentals-source-measurement.md`) |
+| Year-over-year change in `fundamental_trend` | Real growth where available, else nominal; a loss turned profit was "not applicable"; cash flow compared across price levels | Revenue, profit and operating cash flow are compared with last year's figure on the same price level (the restated comparative of the same report, or the CPI when the company does not restate); a loss turned profit counts as up | One rule for every flow check; the old checks disagreed |
+| Usable-from day on half-day sessions | 18:00 cut-off every day | 12:30 on the legal half days (`data/reference/half_day_sessions.csv`) | A report published at 14:00 on a half day was dated to a session that had already closed |
+| CPI release day | 3rd of the month or the next weekday | 3rd of the month or the next BIST trading day (`data/reference/cpi_release_dates.csv`) | Holidays move the release; no variant reads CPI, the macro tool does |
+| USD/TRY in the feature table | Same-day Yahoo close | The previous day's | The Yahoo close is struck after the BIST close; no variant reads it |
+| Scenarios 1 to 3 | No runner; only variants A to E and Scenario 4 were in the study run | `backtest/scenarios.py`, run together with them; tried on the discovery period only | The one test run must hold every pre-registered question |
+| Scenario 1 outcome | Not specified further | The 10-day window must end inside the period; the peer median leaves the stock itself out (as the Scenario 4 reaction does) | Choices the protocol left open, made before the test run |
+| Scenario 2, `WEEKDAY_MEANS` | "Excess over the unconditional mean" undefined for a weekday table | The discovery period's best weekday: its mean minus the all-days mean; the same weekday in the test period | Same |
+
+The discovery-period results of Scenarios 1 to 3 were produced on 2026-11-17 to try the
+runners (`runs/study-discovery-20261117-143125.json`); discovery is open to inspection
+(section 1). Nothing of the test period was computed.
