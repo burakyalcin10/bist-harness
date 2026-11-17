@@ -89,3 +89,35 @@ success rate 61.54%, average forward return 2.61%, median 0.57%.
 - One process issue found and fixed during the live run: `httpx` logged every request
   URL once the MCP SDK had switched logging to INFO, which would have printed a private
   server address. A logging filter in `llm/client.py` now drops those lines, with a test.
+
+## After the code review (same night)
+
+A fresh-context review found two critical and eleven important issues; all were fixed
+with tests that failed first (190 tests pass). The ones that change how the results
+above should be read:
+
+- **The number check was too lenient when the first live run was made.** It accepted
+  any number that appeared anywhere in a tool output, including inside text fields and
+  dates, and it skipped numbers glued to letters or symbols. It now counts only numeric
+  fields as support, reads numbers wherever they stand, and checks dates as whole dates.
+  `NUMBERS_OK` in the table above was produced by the lenient version.
+- **Bake-off scoring now treats a malformed tool-call attempt as a failure** and counts
+  a failed request as a failure. The laptop numbers above predate this and were not
+  rerun; the rerun happens on the RTX 5070 in Sprint 2.
+
+### Live rerun with the stricter check
+
+Only `qwen3.5:2b` completed. **The `qwen3.5:4b` rerun was stopped by the system because
+the laptop ran low on memory, and it was not restarted.**
+
+| # | qwen3.5:2b after the fixes | Verdict |
+| --- | --- | --- |
+| 1 | Correct tool and arguments; average 2.61%, median 0.57%, success rate 61.54% — all correct this time. It also repeated a coverage warning that was misleading: the request started on 2020-01-01, a holiday, one day before the first bar. | `NUMBERS_OK` |
+| 2 | Correct tool and arguments; correct numbers; wrote the dates as "January 2, 2025" and "October 30, 2026". The check read the day numbers 2 and 30 as unsupported numbers. | `UNSUPPORTED_NUMBERS [2.0, 30.0]` (false alarm) |
+| 3 | Called `get_stock_history` for 2024-01-01 to 2026-11-17 and reported the period return; no buy/sell advice, but again did not decline. | `NUMBERS_OK` |
+
+Both problems seen in this rerun were fixed afterwards, each with a test that failed
+first: dates written with English or Turkish month names are now read as dates and
+compared with the tool's dates, and a gap of up to seven days at either edge of the data
+no longer raises a coverage warning. **These two fixes are covered by offline tests only;
+they have not been re-verified against a live model.**

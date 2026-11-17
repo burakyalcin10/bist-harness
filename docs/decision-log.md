@@ -27,6 +27,10 @@ kısımları backlog'a at."
 | K-012 | mcp SDK 2.3.0 kullanıldı; bu sürümde `FastMCP` adı `MCPServer` oldu ve üst düzey bir `Client` geldi. | `uv add mcp` güncel sürümü kurdu; plan metni eski adı kullanıyordu. Sunucu hem süreç içi hem stdio alt süreç olarak test edildi. | Sürüm `uv.lock` içinde sabit; 1.x'e dönmek sunucu ve çalıştırıcıda birkaç satır değiştirir. | Bekliyor |
 | K-013 | Araçlar hisse başına tek bir tam geçmiş anlık görüntüsünden (2020-01-01'den bugüne) okur; istenen `end` tarihinde kesilir, olaylar `start` tarihinden itibaren sayılır. `end` tarihi dahildir; bugünden sonraki `end` reddedilir (`FUTURE_DATE`). | Her tarih aralığı için ayrı indirme yapılmaz; bantlar önceki günlerle ısınır; araç gelecekteki fiyatı hiçbir zaman görmez. | Pencerenin ilk 20 günündeki olay sayısı, yalnız pencere içinden hesaplayan hocanın betiğinden farklı olabilir; betik de 2020-01-01'den başladığı için tam dönem sonuçları aynıdır. | Bekliyor |
 | K-014 | Takvim örüntülerinde koşul yalnız önceki günlere dayanacak. | Hocanın Senaryo 2 betiğinde `detect_pattern`, örüntüyü Pzt, Sal, Çar `< 0` **ve** Per, Cum `> 0` olarak tanımlıyor; `pattern_summary` de aynı haftaların Per–Cum getirisini "örüntü sonrası getiri" olarak raporluyor. Bu getiri tanım gereği pozitif ve pozitif oranı %100 çıkar (betik 17 Kasım'da okunarak doğrulandı). Betik örüntünün sıklığını doğru sayıyor; yalnız "sonrası getiri" ölçüsü koşuldan bağımsız değil. | Yok; bizim aracımız betiğin sıklık sayısını ayrıca raporlayabilir. Raporda bu fark açıklanmalı. | Bekliyor |
+| K-015 | Sayı denetimi katılaştırıldı: yalnız araç çıktısının sayısal alanları bir sayıyı destekler; metin alanlarındaki, hata mesajlarındaki ve tarihlerdeki rakamlar desteklemez. Modelin seçtiği araç argümanları da muafiyet sayılmaz; yalnız sorudaki sayılar muaftır. Tarihler bütün olarak karşılaştırılır. | Kod incelemesi, gevşek sürümde uydurma bir sayının rastlantıyla geçebildiğini gösterdi ("getiri %20" tanım metnindeki 20 sayesinde geçiyordu). Kaçan uydurma sayı, yanlış alarmdan daha kötü. | Doğru bir cevap yanlışlıkla reddedilebilir (ör. "20 günlük bant" diyen cevap). Sprint 4'te reddedilen açıklama bir kez yeniden istenir. Kural tek modülde; gevşetmek kolay. | Bekliyor |
+| K-016 | Araç çağrıları, araç çalışmadan önce şemaya göre denetlenir; bilinmeyen araç, eksik ya da fazla argüman, yanlış tip ve liste dışı değer `INVALID_ARGUMENT` olarak modele geri bildirilir. `event_type` zorunlu argümandır. | İncelemede `window: 50` gibi fazla bir argümanın sessizce yok sayıldığı görüldü. Hatalı araç çağrısı not ölçütlerinden biri; sayılabilmesi için yakalanması gerekir. | Model daha sık hata mesajı alır; ince ayar verisi şemaya tam uyan çağrılar içermeli. | Bekliyor |
+| K-017 | Sprint 1 kodu bağımsız bir inceleyiciye (yeni bağlamlı alt agent) incelettirildi; 2 kritik ve 11 önemli bulgu tek geçişte, her biri önce kalan bir testle düzeltildi. Küçük bulgular ertelendi (aşağıda). | Yürütme yöntemi tek oturum olduğu için bu, kodun aldığı tek ikinci göz. | Yok. | Bekliyor |
+| K-018 | Canlı ince hat denemesinin düzeltme sonrası tekrarında `qwen3.5:4b` kısmı, sistem dizüstünde bellek azaldığı için durduruldu; yeniden başlatmadım. | Araç, bellek darlığında arka plan işini kendisi durdurdu ve kendiliğimden yeniden başlatmamamı bildirdi. | Son iki düzeltme (ay adlı tarihler, kapsama toleransı) yalnız çevrimdışı testlerle doğrulandı. RTX 5070 açıldığında üç soru yeniden çalıştırılmalı. | Bekliyor |
 
 ### K-003 ayrıntısı: hocaya sorulmayan sorular ve verdiğimiz cevaplar
 
@@ -42,3 +46,20 @@ kısımları backlog'a at."
 | Fintables erişimi | Yok varsayıldı; Sprint 3'te erişilebilir kaynak seçilecek, açıklama tarihleri KAP'tan. | Duyuru 1 madde 2: başka güvenilir kaynak serbest. |
 | Weight-space programming | Yan deney olarak yapılır; raporda ve yapay zekâ kullanım ekinde açıkça belirtilir. | Burak'ın kararı (17 Kasım). |
 | Canlı test dili | Sistem sorunun dilinde cevap verir; Türkçe ve İngilizce desteklenir. | Hocanın duyurudaki örnek sorusu Türkçe, istemdeki örnek İngilizce. |
+
+### Ertelenen küçük bulgular (kod incelemesinden)
+
+- `.env` dosyası BOM ya da UTF-16 ile kaydedilirse ilk anahtar okunmuyor (PowerShell 5 ile oluşturulan dosyalarda olabilir).
+- Araç argümanında `20210101` biçimindeki tarih kabul ediliyor.
+- Model ölçümünün puanlaması tarih biçimlerini normalleştirmiyor.
+- Model ölçümünde ilk isteğin başarısız olması bütün modeli "ulaşılamaz" sayıyor.
+- Bazı testler zayıf: ölçüm tablosu testi elle yazılmış satırlar kullanıyor; `run_slice` ve ölçümün `main()` fonksiyonları ile stdio üzerinden varsayılan yol yalnız canlı çalıştırmada deneniyor.
+- Sayı denetimi, yazıyla yazılmış sayıları ("altmış") göremez. Bu bir sınırlamadır; raporun sınırlamalar bölümüne girmeli.
+
+### Senin vermen gereken kararlar
+
+1. Temel model seçimi (RTX 5070 ölçümünden sonra; Sprint 2 planı Task 11).
+2. Tasarım belgesinin onayı ve K-005, K-006, K-007.
+3. `numbers_match` kuralı (K-008) ve katı sayı denetimi (K-015): senin katkı noktandı; kuralı sen sahiplenmelisin.
+4. Peer grubu listesi ve olay tanımları (Sprint 2 planı Task 2 ve Task 6).
+5. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.
