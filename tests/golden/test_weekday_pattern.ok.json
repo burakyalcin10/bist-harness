@@ -1,0 +1,76 @@
+{
+  "adjustments_id": "adj00000",
+  "best_day": "Wed",
+  "coverage_warning": null,
+  "data_first_date": "2023-01-02",
+  "data_last_date": "2026-01-23",
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "definition": "Average, median and share of positive daily returns for each weekday. The p-value tests whether the gap between the best and the worst weekday could be chance.",
+  "end": "2025-06-30",
+  "interpretation_flags": [
+    "NOT_SIGNIFICANT",
+    "UNSTABLE_OUT_OF_SAMPLE"
+  ],
+  "layers_id": "lay00000",
+  "mean_after_cost_pct": 0.28,
+  "occurrences": 629,
+  "p_value": 0.7196,
+  "p_value_bonferroni": 1.0,
+  "pattern": "WEEKDAY_MEANS",
+  "patterns_in_family": 5,
+  "result_id": "ede500a06a21",
+  "sample_warning": null,
+  "snapshot_id": "golden-snapshot",
+  "spread_pct": 0.39,
+  "start": "2023-02-01",
+  "test": {
+    "best_day": "Thu",
+    "spread_pct": 1.0,
+    "worst_day": "Wed"
+  },
+  "ticker": "ASELS",
+  "train": {
+    "best_day": "Wed",
+    "spread_pct": 1.0,
+    "worst_day": "Thu"
+  },
+  "transaction_cost_pct": 0.1,
+  "weekdays": [
+    {
+      "average_return_pct": 0.21,
+      "median_return_pct": 0.5,
+      "observations": 126,
+      "positive_rate_pct": 56.35,
+      "weekday": "Mon"
+    },
+    {
+      "average_return_pct": 0.04,
+      "median_return_pct": 0.02,
+      "observations": 125,
+      "positive_rate_pct": 50.4,
+      "weekday": "Tue"
+    },
+    {
+      "average_return_pct": 0.38,
+      "median_return_pct": 0.71,
+      "observations": 126,
+      "positive_rate_pct": 57.94,
+      "weekday": "Wed"
+    },
+    {
+      "average_return_pct": -0.02,
+      "median_return_pct": 0.09,
+      "observations": 126,
+      "positive_rate_pct": 52.38,
+      "weekday": "Thu"
+    },
+    {
+      "average_return_pct": 0.02,
+      "median_return_pct": -0.19,
+      "observations": 126,
+      "positive_rate_pct": 46.03,
+      "weekday": "Fri"
+    }
+  ],
+  "worst_day": "Thu"
+}

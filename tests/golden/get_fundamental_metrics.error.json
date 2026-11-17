@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "DATA_UNAVAILABLE",
+    "message": "No financial statement of TUPRS was public on 2024-01-01."
+  }
+}

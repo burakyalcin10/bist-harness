@@ -1,0 +1,19 @@
+{
+  "adjustments_id": "adj00000",
+  "coverage_warning": null,
+  "data_first_date": "2023-01-02",
+  "data_last_date": "2026-01-23",
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "end": "2024-12-31",
+  "first_close": 141.89,
+  "first_date": "2024-01-02",
+  "last_close": 188.43,
+  "last_date": "2024-12-31",
+  "layers_id": "lay00000",
+  "period_return_pct": 32.8,
+  "result_id": "76159e60e877",
+  "rows": 261,
+  "snapshot_id": "golden-snapshot",
+  "start": "2024-01-02",
+  "ticker": "ASELS"
+}

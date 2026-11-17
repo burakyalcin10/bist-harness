@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNKNOWN_INDEX",
+    "message": "'XU999' is not available; indices: XU100, XU030, XBANK, XUSIN."
+  }
+}

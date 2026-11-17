@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "topic must be one of ['regulation_legal', 'management', 'credit_rating', 'structured_products', 'share_transactions', 'buyback', 'dividend', 'merger_acquisition', 'capital_increase', 'financing', 'contract', 'investment', 'earnings', 'other']"
+  }
+}

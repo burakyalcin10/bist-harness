@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "NOT_IMPLEMENTED",
+    "message": "Speech feature extraction is not available yet."
+  }
+}

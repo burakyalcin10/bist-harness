@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "INVALID_DATE_RANGE",
+    "message": "start must be earlier than end."
+  }
+}

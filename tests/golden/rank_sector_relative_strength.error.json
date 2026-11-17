@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNKNOWN_SECTOR",
+    "message": "'Nonexistent' is not a sector of the universe: Banking, Defense / Vehicles, Energy / Petrochemicals, Holding, Food & Beverage, Retail, Airlines / Transport, Steel, Telecom, Chemicals / Fertilizer, Mining, Automotive, Construction, Healthcare / Pharma, Real Estate, Insurance, Electric Utilities, Cement, Brokerage, Durables."
+  }
+}

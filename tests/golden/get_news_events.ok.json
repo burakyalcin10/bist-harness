@@ -1,0 +1,45 @@
+{
+  "adjustments_id": "adj00000",
+  "by_topic": {
+    "contract": 1,
+    "dividend": 1,
+    "regulation_legal": 1
+  },
+  "context_only": true,
+  "data_first_date": "2025-03-04",
+  "data_source": "KAP (public disclosure platform) material-event disclosures: metadata only, with the official publication time. Context, not a substitute for numerical data.",
+  "end": "2025-12-31",
+  "events": [
+    {
+      "published_at": "2025-09-02T09:00:00",
+      "subject": "Dava: Dava bilgilendirmesi",
+      "ticker": "ASELS",
+      "topic": "regulation_legal",
+      "url": "https://www.kap.org.tr/tr/Bildirim/5002"
+    },
+    {
+      "published_at": "2025-06-18T19:30:00",
+      "subject": "Kar Payı: Temettü kararı",
+      "ticker": "ASELS",
+      "topic": "dividend",
+      "url": "https://www.kap.org.tr/tr/Bildirim/5001"
+    },
+    {
+      "published_at": "2025-03-04T10:05:00",
+      "subject": "Sözleşme: Yeni iş ilişkisi",
+      "ticker": "ASELS",
+      "topic": "contract",
+      "url": "https://www.kap.org.tr/tr/Bildirim/5000"
+    }
+  ],
+  "layers_id": "lay00000",
+  "result_id": "bcaafde9663e",
+  "snapshot_id": "golden-snapshot",
+  "start": "2025-01-01",
+  "ticker": "ASELS",
+  "topic": null,
+  "total": 3,
+  "warnings": [
+    "COVERAGE_STARTS_LATER: disclosures are held from 2025-03-04; earlier days are not covered, which is not the same as no disclosure."
+  ]
+}

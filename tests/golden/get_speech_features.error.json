@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNKNOWN_SOURCE",
+    "message": "'VID-404' is not an approved video source."
+  }
+}

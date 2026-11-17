@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNKNOWN_ANALYSIS",
+    "message": "'AN-unknown' is not a known analysis."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "INVALID_DATE",
+    "message": "Dates must be written as YYYY-MM-DD."
+  }
+}

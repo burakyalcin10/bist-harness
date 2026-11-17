@@ -1,0 +1,17 @@
+{
+  "adjustments_id": "adj00000",
+  "analysis_id": "AN-000000000000",
+  "checked": [
+    {
+      "as_of": "2024-12-31",
+      "rows": 522,
+      "ticker": "ASELS"
+    }
+  ],
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "findings": [],
+  "layers_id": "lay00000",
+  "result_id": "5f5a4d7e745b",
+  "snapshot_id": "golden-snapshot",
+  "status": "PASS"
+}

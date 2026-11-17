@@ -1,0 +1,118 @@
+{
+  "adjustments_id": "adj00000",
+  "as_of": "2025-11-10",
+  "compared_with": "2024Q3",
+  "current_ratio_change": 0.31,
+  "data_source": "Statements: İş Yatırım public financial-statement service (cumulative values per reporting period). Publication times: KAP financial-report disclosures. A period is used from the first trading day whose close follows its publication.",
+  "ebitda_margin_change_pp": 1.5,
+  "financial_group": "industrial",
+  "fundamental_trend": "Improving",
+  "improvement_flags": [
+    "REVENUE_UP",
+    "PROFIT_UP",
+    "MARGIN_UP",
+    "CASH_FLOW_UP"
+  ],
+  "known_from": "2025-11-03",
+  "layers_id": "lay00000",
+  "net_debt_to_ebitda_change": null,
+  "net_margin_change_pp": 1.0,
+  "net_profit_real_yoy_pct": 38.46,
+  "net_profit_yoy_pct": 80.0,
+  "not_applicable": [],
+  "period": "2025Q3",
+  "period_end": "2025-09-30",
+  "periods": 3,
+  "published_at": "2025-11-02T18:00:00",
+  "quarters": [
+    {
+      "abnormal_vs_index_5d_pct": -5.06,
+      "abnormal_vs_peers_5d_pct": null,
+      "ebitda_margin_q_pct": 15.15,
+      "ebitda_q_mn": 55.82,
+      "known_from": "2025-11-03",
+      "net_margin_q_pct": 6.58,
+      "net_profit_q_mn": 24.22,
+      "net_profit_q_yoy_pct": null,
+      "period": "2025Q3",
+      "reaction_1d_pct": -1.38,
+      "reaction_20d_pct": null,
+      "reaction_5d_pct": -7.49,
+      "revenue_q_mn": 368.3,
+      "revenue_q_yoy_pct": null,
+      "revenue_qoq_pct": 53.46
+    },
+    {
+      "abnormal_vs_index_5d_pct": -15.33,
+      "abnormal_vs_peers_5d_pct": null,
+      "ebitda_margin_q_pct": 14.58,
+      "ebitda_q_mn": 35.0,
+      "known_from": "2025-08-01",
+      "net_margin_q_pct": 5.83,
+      "net_profit_q_mn": 14.0,
+      "net_profit_q_yoy_pct": null,
+      "period": "2025Q2",
+      "reaction_1d_pct": -3.96,
+      "reaction_20d_pct": 2.91,
+      "reaction_5d_pct": -6.72,
+      "revenue_q_mn": 240.0,
+      "revenue_q_yoy_pct": null,
+      "revenue_qoq_pct": -7.69
+    },
+    {
+      "abnormal_vs_index_5d_pct": 0.17,
+      "abnormal_vs_peers_5d_pct": null,
+      "ebitda_margin_q_pct": 11.92,
+      "ebitda_q_mn": 31.0,
+      "known_from": "2025-05-12",
+      "net_margin_q_pct": 5.38,
+      "net_profit_q_mn": 14.0,
+      "net_profit_q_yoy_pct": null,
+      "period": "2025Q1",
+      "reaction_1d_pct": 5.71,
+      "reaction_20d_pct": -5.3,
+      "reaction_5d_pct": -1.17,
+      "revenue_q_mn": 260.0,
+      "revenue_q_yoy_pct": null,
+      "revenue_qoq_pct": -35.0
+    }
+  ],
+  "reaction_summary": {
+    "events": 5,
+    "horizons": {
+      "1d": {
+        "events": 5,
+        "mean_abnormal_vs_index_pct": 1.13,
+        "mean_abnormal_vs_peers_pct": null,
+        "mean_return_pct": 0.73,
+        "median_return_pct": 1.55,
+        "positive_rate_pct": 60.0
+      },
+      "20d": {
+        "events": 4,
+        "mean_abnormal_vs_index_pct": -10.86,
+        "mean_abnormal_vs_peers_pct": null,
+        "mean_return_pct": -4.92,
+        "median_return_pct": -5.95,
+        "positive_rate_pct": 25.0
+      },
+      "5d": {
+        "events": 5,
+        "mean_abnormal_vs_index_pct": -6.03,
+        "mean_abnormal_vs_peers_pct": null,
+        "mean_return_pct": -4.6,
+        "median_return_pct": -5.22,
+        "positive_rate_pct": 0.0
+      }
+    },
+    "sample_warning": "Limited sample size"
+  },
+  "result_id": "27fbcee88f92",
+  "revenue_meaning": "net sales",
+  "revenue_real_yoy_pct": 15.38,
+  "revenue_yoy_pct": 50.0,
+  "roe_change_pp": null,
+  "snapshot_id": "golden-snapshot",
+  "ticker": "ASELS",
+  "warnings": []
+}

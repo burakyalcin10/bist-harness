@@ -1,0 +1,47 @@
+{
+  "adjustments_id": "adj00000",
+  "as_of": "2025-06-30",
+  "benchmark": "XU100",
+  "benchmark_return_pct": 7.49,
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "effective_date": "2025-06-30",
+  "horizon_days": 20,
+  "laggards": [],
+  "layers_id": "lay00000",
+  "leaders": [
+    "AKBNK"
+  ],
+  "members": [
+    {
+      "lag_score_pct": 1.62,
+      "rank": 1,
+      "return_pct": 15.56,
+      "role": "universe",
+      "ticker": "AKBNK"
+    },
+    {
+      "lag_score_pct": 0.0,
+      "rank": 2,
+      "return_pct": 13.94,
+      "role": "reference",
+      "ticker": "ISCTR"
+    },
+    {
+      "lag_score_pct": -14.1,
+      "rank": 3,
+      "return_pct": -0.16,
+      "role": "reference",
+      "ticker": "GARAN"
+    }
+  ],
+  "result_id": "0204c1c8721c",
+  "sector": "Banking",
+  "sector_median_return_pct": 13.94,
+  "sector_strong": true,
+  "snapshot_id": "golden-snapshot",
+  "warnings": [
+    "NO_DATA: YKBNK has no 20-day history on 2025-06-30.",
+    "NO_DATA: HALKB has no 20-day history on 2025-06-30.",
+    "NO_DATA: VAKBN has no 20-day history on 2025-06-30."
+  ]
+}

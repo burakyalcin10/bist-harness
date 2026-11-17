@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "periods must be a whole number from 1 to 8."
+  }
+}

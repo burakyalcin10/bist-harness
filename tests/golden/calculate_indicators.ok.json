@@ -1,0 +1,29 @@
+{
+  "adjustments_id": "adj00000",
+  "as_of": "2024-12-31",
+  "close": 188.43,
+  "close_vs_sma_20": "Above",
+  "coverage_warning": null,
+  "data_first_date": "2023-01-02",
+  "data_last_date": "2026-01-23",
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "end": "2024-12-31",
+  "indicators": [
+    "RSI",
+    "MACD",
+    "SMA"
+  ],
+  "layers_id": "lay00000",
+  "macd": 0.73,
+  "macd_hist": 0.15,
+  "macd_signal": 0.57,
+  "macd_state": "Bullish",
+  "result_id": "0eb7a9ad90b6",
+  "rsi": 49.46,
+  "rsi_state": "Neutral",
+  "sma_20": 187.09,
+  "sma_50": 190.58,
+  "snapshot_id": "golden-snapshot",
+  "start": "2024-01-02",
+  "ticker": "ASELS"
+}

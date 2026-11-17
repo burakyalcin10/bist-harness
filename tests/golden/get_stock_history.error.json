@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "UNKNOWN_TICKER",
+    "message": "'GARAN' is not one of the 30 study-universe stocks."
+  }
+}

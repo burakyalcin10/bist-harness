@@ -1,0 +1,19 @@
+{
+  "adjustments_id": "adj00000",
+  "coverage_warning": null,
+  "data_first_date": "2023-01-02",
+  "data_last_date": "2026-01-23",
+  "data_source": "Yahoo Finance via yfinance, auto_adjust=True",
+  "end": "2024-12-31",
+  "first_close": 59.02,
+  "first_date": "2024-01-02",
+  "index": "XU100",
+  "last_close": 137.65,
+  "last_date": "2024-12-31",
+  "layers_id": "lay00000",
+  "period_return_pct": 133.23,
+  "result_id": "c482473be8ab",
+  "rows": 261,
+  "snapshot_id": "golden-snapshot",
+  "start": "2024-01-02"
+}

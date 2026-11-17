@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "FUTURE_DATE",
+    "message": "end is in the future; tools only report history."
+  }
+}
