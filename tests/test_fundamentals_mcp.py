@@ -37,7 +37,7 @@ def test_metrics_tool_returns_the_point_in_time_metrics():
     )
     for key, value in expected.items():
         assert out[key] == value, key
-    assert out["period"] == "2025Q3" and out["revenue_real_yoy_pct"] == 15.38 and out["pe"] == 50.0
+    assert out["period"] == "2025Q3" and out["revenue_yoy_pct"] == 50.0 and out["pe"] is None
     assert "KAP" in out["data_source"] and out["snapshot_id"] and len(out["result_id"]) == 12
 
 
@@ -64,7 +64,7 @@ def test_tools_work_without_macro_or_price_data(monkeypatch):
     monkeypatch.setattr(srv, "load_history", no_prices)
     out = srv.get_fundamental_metrics("TUPRS", "2025-11-10")
     assert out["revenue_yoy_pct"] == 50.0 and out["revenue_real_yoy_pct"] is None
-    assert out["pe"] is None and any(w.startswith("NO_CPI") for w in out["warnings"])
+    assert out["pe"] is None
 
 
 @pytest.mark.parametrize(

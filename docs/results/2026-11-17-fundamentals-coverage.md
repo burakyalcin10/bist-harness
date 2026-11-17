@@ -1,6 +1,6 @@
 # Fundamental data coverage — snapshot `20261117-0722`
 
-Built on 2026-11-18 with `uv run python -m bist_harness.data.fundamentals build` and
+Built on 2026-11-17 with `uv run python -m bist_harness.data.fundamentals build` and
 `… fundamentals times` into `data/snapshots/20261117-0722/fundamentals/`.
 
 | Item | Value |

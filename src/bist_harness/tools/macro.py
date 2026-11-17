@@ -35,19 +35,28 @@ def macro_context(series: dict[str, pd.DataFrame], *, start: str, end: str) -> d
     output: dict = {"start": start, "end": end}
 
     fx = series.get("fx")
-    window = fx.loc[first:last] if fx is not None else _empty(["USDTRY", "EURTRY"])
-    if window.empty:
-        warnings.append("NO_FX_DATA: no exchange-rate data for the period.")
+    starts_later = False
     for name in ("USDTRY", "EURTRY"):
         key = name.lower()
-        values = window[name].dropna() if name in window else pd.Series(dtype=float)
-        if values.empty:
-            output.update({f"{key}_start": None, f"{key}_end": None, f"{key}_change_pct": None})
+        values = fx[name].dropna() if fx is not None and name in fx else pd.Series(dtype=float)
+        at_end, at_start = values.loc[:last], values.loc[:first]
+        output.update({f"{key}_start": None, f"{key}_end": None, f"{key}_change_pct": None})
+        if at_end.empty:
             continue
-        begin, finish = float(values.iloc[0]), float(values.iloc[-1])
+        output[f"{key}_end"] = round(float(at_end.iloc[-1]), 4)
+        if at_start.empty:  # the period begins before the series does
+            starts_later = True
+            continue
+        begin, finish = float(at_start.iloc[-1]), float(at_end.iloc[-1])
         output[f"{key}_start"] = round(begin, 4)
-        output[f"{key}_end"] = round(finish, 4)
         output[f"{key}_change_pct"] = round((finish / begin - 1) * 100, 2)
+    if output["usdtry_end"] is None and output["eurtry_end"] is None:
+        warnings.append("NO_FX_DATA: no exchange-rate data for the period.")
+    elif starts_later:
+        warnings.append(
+            f"FX_DATA_STARTS_LATER: exchange rates begin after {start}; the start value "
+            "and the change over the period are not available."
+        )
 
     policy = series.get("policy_rate")
     if policy is None:

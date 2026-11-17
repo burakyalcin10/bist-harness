@@ -41,7 +41,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def _add_analysis(conn: sqlite3.Connection, analysis_id: str = "a1") -> None:
     conn.execute(
         "INSERT INTO analyses (analysis_id, created_at, question) VALUES (?, ?, ?)",
-        (analysis_id, "2026-11-18T00:00:00+00:00", "ASELS?"),
+        (analysis_id, "2026-11-17T00:00:00+00:00", "ASELS?"),
     )
 
 
@@ -69,7 +69,7 @@ def test_child_rows_need_an_existing_analysis(tmp_path):
         "INSERT INTO tool_calls (analysis_id, seq, tool) VALUES ('missing', 1, 'get_stock_history')",
         "INSERT INTO evidence (analysis_id, label, sentence) VALUES ('missing', 'E1', 'x')",
         "INSERT INTO decisions (analysis_id, reviewed_at, human_result) "
-        "VALUES ('missing', '2026-11-18', 'ACCEPT')",
+        "VALUES ('missing', '2026-11-17', 'ACCEPT')",
     ):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(statement)

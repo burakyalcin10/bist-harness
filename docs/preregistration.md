@@ -1,6 +1,6 @@
 # Pre-registration protocol
 
-Written on 2026-11-18, before any backtest was run and before any event study on the
+Written on 2026-11-17, before any backtest was run and before any event study on the
 test period. The project brief (section 34, step 5) asks to "define event-based research
 questions before looking at outcomes where possible". This file fixes the questions,
 definitions and parameters. It is committed before the code that produces test-period
@@ -133,3 +133,22 @@ Any change to a definition or parameter after this file is committed is recorded
 `docs/decision-log.md` with the date and the reason, and the report shows the result
 both before and after the change. A change made after seeing a test-period result is
 marked as such.
+
+## 6. Corrections made before any test-period run
+
+Recorded on 2026-11-17 after an independent code review of Sprint 3. No test-period
+backtest and no Scenario 4 study had been run when these were made; the list exists so
+that the protocol and the code say the same thing.
+
+| What | Before | Now | Why |
+| --- | --- | --- | --- |
+| Date of this protocol | "2026-11-17" | 2026-11-17 | The files were dated a day ahead by mistake; the system clock and the commits say 2026-11-17 |
+| Buy-and-hold benchmark | Implemented as a daily-rebalanced equal-weight basket | Equal money in each stock, bought once, never rebalanced | "Buy-and-hold" must mean holding |
+| Peer-group benchmark | Listed for every variant | Reported for variants B to E; variant A has no sector condition and reports none | Matches the code |
+| Period of the fundamental data | "statements from the 2024 year-end onward only" | Statements are loaded from 2022Q4, because year-over-year changes and twelve-month sums need the year before; variants C to E trade from 2025-01-01, at first on 2024Q3 statements | States what the code does |
+| Topic rules of the disclosure layer | Fixed before the download | Three keyword rules were corrected after reading real subject lines (articles of association, warrant notices, a Turkish spelling variant), and two more after the review (exports, investor notices). The `regulation_legal` set that variant E reads did not change (36 disclosures) | Tags other than `regulation_legal` are context only |
+| Fundamental data "public on the event day" | Assumed | **Not true of the source.** It replaces a period's figures with the restated comparative of the following year's report. Real growth and valuation ratios are withheld; the fundamental trend of variants C to E and of Scenario 4 is not exactly what was computable on the day | Found by the review |
+
+Consequence: the test period is **not** run until the fundamental layer has been rebuilt
+from as-published figures. It will then be run once, for all variants and for Scenario 4
+together, with the definitions of section 3 unchanged.

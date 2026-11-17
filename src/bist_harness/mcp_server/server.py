@@ -491,6 +491,13 @@ def get_news_events(
     except DataUnavailableError as exc:
         return _error("DATA_UNAVAILABLE", str(exc))
     result = news_events(disclosures, start=start, end=end, ticker=ticker, topic=topic)
+    first_held = disclosures["published_at"].min() if len(disclosures) else None
+    result["data_first_date"] = None if first_held is None else str(first_held.date())
+    if first_held is not None and pd.Timestamp(start) < first_held.normalize():
+        result["warnings"].append(
+            f"COVERAGE_STARTS_LATER: disclosures are held from {first_held.date()}; "
+            "earlier days are not covered, which is not the same as no disclosure."
+        )
     versions["data_source"] = NEWS_SOURCE
     args = {"start": start, "end": end, "ticker": result["ticker"], "topic": topic}
     return _with_result_id("get_news_events", args, {**result, **versions})
@@ -619,8 +626,19 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
     if not in_period or benchmark.loc[pd.Timestamp(start) :].empty:
         return _error("DATA_UNAVAILABLE", f"No market data between {start} and {end}.")
 
+    data_first = benchmark.index[0]
+    if pd.Timestamp(start) < data_first - timedelta(days=COVERAGE_SLACK_DAYS):
+        warnings.append(
+            f"DATA_STARTS_LATER: market data begin on {data_first.date()}; the backtest "
+            f"covers the part of the period from that day on."
+        )
     features = None
     if needs_features:
+        warnings.append(
+            "FUNDAMENTALS_NOT_POINT_IN_TIME: the statement source restates earlier periods "
+            "at a later price level, so the fundamental trend behind these signals is not "
+            "exactly what was computable on the signal day."
+        )
         if start < TEST_PERIOD[0]:
             effective_start = TEST_PERIOD[0]
             warnings.append(
@@ -644,6 +662,7 @@ def run_backtest(strategy: str, universe: list[str], start: str, end: str) -> di
     )
     result = run_variant(strategy, context, start=effective_start, end=end)
     result["effective_start"] = effective_start
+    result["data_first_date"] = str(data_first.date())
     args = {"strategy": strategy, "universe": tickers, "start": start, "end": end}
     output = {**args, **result, "benchmark": BENCHMARK, "warnings": warnings, **versions}
     return _with_result_id("run_backtest", args, output)

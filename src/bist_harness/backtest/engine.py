@@ -238,7 +238,7 @@ def summarize_backtest(
         excess = None
         if cumulative is not None and results["cumulative_return_pct"] is not None:
             excess = round(results["cumulative_return_pct"] - cumulative, 2)
-            if excess < 0:
+            if excess < 0 and trades:  # no trades: nothing to compare
                 flags.append(f"UNDERPERFORMS_{name.upper()}")
         output[f"excess_vs_{name}_pct"] = excess
 

@@ -53,6 +53,23 @@ WEEKDAY_PATTERNS = [
     "END_OF_WEEK_CONTINUATION",
 ]
 
+NEWS_TOPICS = [
+    "regulation_legal",
+    "management",
+    "credit_rating",
+    "structured_products",
+    "share_transactions",
+    "buyback",
+    "dividend",
+    "merger_acquisition",
+    "capital_increase",
+    "financing",
+    "contract",
+    "investment",
+    "earnings",
+    "other",
+]
+
 STRATEGY_VARIANTS = [
     "A_TECHNICAL",
     "B_TECH_SECTOR",
@@ -242,7 +259,8 @@ TOOL_SCHEMAS: dict[str, dict] = {
                 "ticker": {**_TICKER, "description": _TICKER["description"] + " Optional."},
                 "topic": {
                     "type": "string",
-                    "description": "Optional topic tag, e.g. earnings, FX, rates, regulation.",
+                    "enum": NEWS_TOPICS,
+                    "description": "Optional topic tag of the disclosure.",
                 },
                 "start": _START,
                 "end": _END,

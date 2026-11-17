@@ -208,6 +208,7 @@ produced the signal.
 | `strategy` | Variant: `A_TECHNICAL` … `E_FULL_CONTEXTUAL` | — |
 | `universe` | Stocks the variant was run on | — |
 | `rule`, `execution` | Entry rule of the variant and the timing rules, in words | — |
+| `data_first_date` | First day of market data (backtest) or of held disclosures (news); a period that starts earlier gets a warning |
 | `effective_start` | First day from which signals were traded: the requested `start`, or 2025-01-01 for variants C to E, which need fundamentals | date |
 | `holding_days` | Trading days from the signal to the exit close (10) | days |
 | `cost_per_side_pct` | Commission plus slippage, charged on entry and on exit (0.15) | % |
@@ -222,9 +223,9 @@ produced the signal.
 | `sharpe` | Mean daily portfolio return over its standard deviation, times √252; risk-free rate 0; null without variation | ratio |
 | `max_drawdown_pct` | Deepest fall of the portfolio value below its earlier peak (0 or negative) | % |
 | `exposure_pct` | Share of days with at least one open trade | % |
-| `benchmark_buy_and_hold_return_pct` | Compound return of holding the same stocks with equal weight, rebalanced daily | % |
+| `benchmark_buy_and_hold_return_pct` | Return of a basket of the same stocks bought once with equal money in each and never rebalanced | % |
 | `benchmark_xu100_return_pct` | Compound return of XU100 over the period | % |
-| `benchmark_sector_peers_return_pct` | Variants B to E: compound return of the stocks' peer groups, equal weight | % |
+| `benchmark_sector_peers_return_pct` | Variants B to E: return of the stocks' peer groups, bought once with equal money and held | % |
 | `excess_vs_buy_and_hold_pct`, `excess_vs_xu100_pct`, `excess_vs_sector_peers_pct` | `cumulative_return_pct` minus that benchmark | % points |
 | `by_period` | Trades, win rate and mean trade return for signals in the `discovery` and in the `test` period | — |
 | `by_regime` | The same for signals on days when XU100 closed above (`Uptrend`) or below (`Downtrend`) its 200-day average; `Undefined` before 200 closes exist | — |
@@ -270,7 +271,7 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `total_assets_mn`, `equity_mn` | Balance at the period end | mn TRY |
 | `net_debt_mn` | Short-term plus long-term financial debt minus cash and short-term financial investments | mn TRY |
 | `revenue_yoy_pct`, `ebitda_yoy_pct`, `net_profit_yoy_pct` | Cumulative value against the same period a year earlier, nominal; null when the earlier value is not positive | % |
-| `revenue_real_yoy_pct`, `ebitda_real_yoy_pct`, `net_profit_real_yoy_pct` | The same after bringing the earlier value to the later period's price level with the CPI index | % |
+| `revenue_real_yoy_pct`, `ebitda_real_yoy_pct`, `net_profit_real_yoy_pct` | **Withheld (always null).** The source already shows last year's figure restated to the current price level, so a CPI adjustment would deflate twice | % |
 | `ebitda_margin_pct`, `net_margin_pct` | EBITDA and net profit over revenue, cumulative | % |
 | `roe_pct` | Last-twelve-months net profit of the parent over the parent's equity at the period end | % |
 | `roa_pct` | Last-twelve-months net profit over total assets at the period end | % |
@@ -279,11 +280,8 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `current_ratio` | Current assets over short-term liabilities | ratio |
 | `quick_ratio` | Current assets minus inventories, over short-term liabilities | ratio |
 | `cash_conversion` | Operating cash flow over net profit, cumulative | ratio |
-| `market_cap_mn` | Close on `as_of` times the share count of the period (paid-in capital, 1 TRY nominal) | mn TRY |
-| `pe` | `market_cap_mn` over last-twelve-months net profit of the parent | ratio |
-| `pb` | `market_cap_mn` over the parent's equity | ratio |
-| `ev_ebitda` | `market_cap_mn` plus `net_debt_mn`, over last-twelve-months EBITDA | ratio |
-| `valuation_note` | Why the valuation ratios are null: `SHARE_COUNT_CHANGED_AFTER_THE_PERIOD` (prices in the snapshot assume the later share count) or `NO_PRICE_OR_SHARE_COUNT` | — |
+| `market_cap_mn`, `pe`, `pb`, `ev_ebitda` | **Withheld (always null).** Prices in the snapshot are adjusted for dividends, so a past close times the share count understates the market value of the time | — |
+| `valuation_note` | `WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED` | — |
 | `not_applicable` | Fields that do not exist for a bank or an insurer (EBITDA, net debt, liquidity ratios, cash flow) | — |
 | `periods` | `calculate_fundamental_change`: number of quarters requested (1 to 8) | count |
 | `compared_with` | Period a year before `period`, used for the changes below | — |
@@ -300,10 +298,14 @@ trading day). A ratio whose base is missing, zero or negative is null.
 | `improvement_flags` | Checks that are positive against a year earlier: `REVENUE_UP`, `PROFIT_UP` (real growth when CPI is available), `MARGIN_UP`, `RETURN_ON_EQUITY_UP`, and for industrial companies `LEVERAGE_DOWN`, `CASH_FLOW_UP` | — |
 | `fundamental_trend` | `Improving` when at least two thirds of the applicable checks are positive, `Deteriorating` when at most one third, otherwise `Mixed`; null with fewer than three applicable checks | — |
 
-Limits: values are those the source holds today (a later restatement of a period is not
-tracked); under inflation accounting each period is stated at its own price level, so a
-quarter's own value (a difference of two cumulative values) is approximate; statements
-before the 2023 year end are not inflation-adjusted (`COMPARATIVE_BEFORE_TMS29`).
+**Limits (found by the Sprint 3 review).** The statement source is not point-in-time
+for companies under inflation accounting: once the following year's report is out, a
+period's figures are shown as restated in that report, at the later price level. So
+amounts of earlier periods are not the published ones, twelve-month sums and
+balance-sheet ratios can mix price levels, and for the latest year the year-over-year
+change is close to real growth while for earlier years it is not. Every output carries a
+`RESTATED_SOURCE` warning. Rebuilding this layer from as-published figures is planned as
+the first task of Sprint 4; until then these fields are indicative only.
 
 ## 13. News and event layer — `get_news_events`
 

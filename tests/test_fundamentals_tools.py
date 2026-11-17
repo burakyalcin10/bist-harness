@@ -84,7 +84,7 @@ def test_header_names_the_period_and_when_it_became_public():
     assert out["period_end"] == "2025-09-30" and out["known_from"] == "2025-11-03"
     assert out["published_at"] == "2025-11-02T18:00:00"
     assert out["financial_group"] == "industrial" and out["revenue_meaning"] == "net sales"
-    assert out["not_applicable"] == [] and out["warnings"] == []
+    assert out["not_applicable"] == []
 
 
 def test_amounts_growth_and_margins():
@@ -97,13 +97,11 @@ def test_amounts_growth_and_margins():
     assert out["ebitda_margin_pct"] == 14.0 and out["net_margin_pct"] == 6.0
 
 
-def test_real_growth_brings_last_year_to_this_years_prices():
+def test_real_growth_is_not_reported():
+    """The source already restates the comparative; see tests/test_sprint3_review.py."""
     out = _metrics()
-    assert out["revenue_real_yoy_pct"] == round((900 / (600 * 1.3) - 1) * 100, 2)  # 15.38
-    assert out["net_profit_real_yoy_pct"] == round((54 / (30 * 1.3) - 1) * 100, 2)
-    without = _metrics(cpi=None)
-    assert without["revenue_real_yoy_pct"] is None and without["revenue_yoy_pct"] == 50.0
-    assert any(w.startswith("NO_CPI_FOR_REAL_GROWTH") for w in without["warnings"])
+    assert out["revenue_real_yoy_pct"] is None and out["net_profit_real_yoy_pct"] is None
+    assert _metrics(cpi=None)["revenue_yoy_pct"] == 50.0
 
 
 def test_returns_use_the_last_twelve_months():
@@ -123,14 +121,10 @@ def test_leverage_and_liquidity():
     assert out["cash_conversion"] == round(90 / 54, 2)  # 1.67
 
 
-def test_valuation_uses_the_close_on_the_analysis_date():
+def test_valuation_is_withheld():
     out = _metrics()
-    # 100 million shares at 37: market value 3,700
-    assert out["market_cap_mn"] == 3700.0
-    assert out["pe"] == 50.0 and out["pb"] == round(3700 / 600, 2)
-    assert out["ev_ebitda"] == round((3700 + 140) / 171, 2)  # 22.46
-    assert out["valuation_note"] is None
-    assert _metrics(close=None)["pe"] is None
+    assert out["market_cap_mn"] is None and out["pe"] is None and out["ev_ebitda"] is None
+    assert out["valuation_note"] == "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED"
 
 
 def test_valuation_is_withheld_when_the_share_count_changed_after_the_period():
@@ -140,7 +134,7 @@ def test_valuation_is_withheld_when_the_share_count_changed_after_the_period():
     )
     assert out["period"] == "2025Q2"
     assert out["pe"] is None and out["market_cap_mn"] is None
-    assert out["valuation_note"] == "SHARE_COUNT_CHANGED_AFTER_THE_PERIOD"
+    assert out["valuation_note"] == "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED"
 
 
 @pytest.mark.parametrize(
@@ -185,8 +179,7 @@ def test_a_ratio_with_a_zero_or_negative_base_is_none():
     )
     assert out["roe_pct"] is None and out["debt_to_equity"] is None and out["pb"] is None
     assert out["cash_conversion"] is None
-    # twelve-month profit is still positive (-5 + 50 - 30 = 15), so P/E exists
-    assert out["pe"] == round(3700 / 15, 2)
+    assert out["pe"] is None  # valuation is withheld altogether
     assert out["net_profit_mn"] == -5.0 and out["net_margin_pct"] == round(-5 / 900 * 100, 2)
 
 
@@ -226,8 +219,9 @@ def test_bank_gets_no_industrial_ratios():
     assert out["roe_pct"] == round(51 / 280 * 100, 2) and out["roa_pct"] == 1.7
     for key in ("ebitda_mn", "net_debt_to_ebitda", "current_ratio", "quick_ratio", "ev_ebitda"):
         assert out[key] is None and key in out["not_applicable"]
-    assert out["pe"] == round(52 * 37 / 51, 2) and out["pb"] == round(52 * 37 / 280, 2)
-    assert out["warnings"] == []  # no inflation-accounting warning for a bank
+    assert out["pe"] is None and out["pb"] is None
+    codes = [w.split(":")[0] for w in out["warnings"]]
+    assert "RESTATED_SOURCE" not in codes and "COMPARATIVE_BEFORE_TMS29" not in codes
 
 
 def test_change_lists_quarters_latest_first_with_their_own_values():
@@ -262,7 +256,7 @@ def test_change_compares_the_latest_period_with_a_year_earlier():
     out = fn.fundamental_change(
         _statements(), _calendar(), ticker="TUPRS", as_of="2025-11-10", cpi=CPI
     )
-    assert out["revenue_real_yoy_pct"] == 15.38
+    assert out["revenue_real_yoy_pct"] is None and out["revenue_yoy_pct"] == 50.0
     # EBITDA margin 14.0% against 75 / 600 = 12.5%
     assert out["ebitda_margin_change_pp"] == 1.5
     # current ratio 1.5 against 250 / 210 = 1.19

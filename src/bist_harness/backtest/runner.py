@@ -28,12 +28,29 @@ EXECUTION = (
 )
 
 
-def _equal_weight_returns(closes: dict[str, pd.Series], calendar: pd.DatetimeIndex) -> pd.Series:
-    """Mean daily return of the given stocks on each calendar day (those with a bar)."""
-    if not closes:
+def _buy_and_hold_returns(closes: dict[str, pd.Series], calendar: pd.DatetimeIndex) -> pd.Series:
+    """Daily return of a basket bought once with equal money in each stock and then held.
+
+    Each stock is bought at its last close before the period (or its first close in it)
+    and never rebalanced; the basket's value is the average of the stocks' growth.
+    """
+    if not closes or not len(calendar):
         return pd.Series(0.0, index=calendar)
-    daily = pd.DataFrame({name: series.pct_change() for name, series in closes.items()})
-    return daily.reindex(calendar).mean(axis=1).fillna(0.0)
+    growth = {}
+    for name, series in closes.items():
+        series = series.dropna()
+        before = series.loc[series.index < calendar[0]]
+        inside = series.loc[calendar[0] : calendar[-1]]
+        if inside.empty:
+            continue
+        base = float(before.iloc[-1]) if len(before) else float(inside.iloc[0])
+        growth[name] = (series.reindex(calendar, method="ffill") / base).fillna(1.0)
+    if not growth:
+        return pd.Series(0.0, index=calendar)
+    value = pd.DataFrame(growth).mean(axis=1)
+    returns = value / value.shift(1) - 1
+    returns.iloc[0] = value.iloc[0] - 1
+    return returns
 
 
 def run_variant(variant: str, context: StrategyContext, *, start: str, end: str) -> dict:
@@ -43,7 +60,11 @@ def run_variant(variant: str, context: StrategyContext, *, start: str, end: str)
     indicators. A trade needs its whole holding window inside the data.
     """
     first, last = pd.Timestamp(start), pd.Timestamp(end)
+    # Every day on which the index or one of the stocks has a bar: a session missing
+    # from the index file must not drop a day of an open trade.
     calendar = context.benchmark.loc[first:last].index
+    for history in context.histories.values():
+        calendar = calendar.union(history.loc[first:last].index)
     runs = []
     info = information_dates(variant, context)
     for ticker, signal in signals(variant, context).items():
@@ -63,13 +84,13 @@ def run_variant(variant: str, context: StrategyContext, *, start: str, end: str)
     daily = portfolio_returns(trades, closes, opens, calendar)
 
     benchmarks = {
-        "buy_and_hold": _equal_weight_returns(closes, calendar),
+        "buy_and_hold": _buy_and_hold_returns(closes, calendar),
         "xu100": context.benchmark.pct_change().reindex(calendar).fillna(0.0),
     }
     if variant != "A_TECHNICAL":
         members = {m for t in context.histories for m in peer_group_of(t).members}
         peers = {m: context.peer_closes[m] for m in sorted(members) if m in context.peer_closes}
-        benchmarks["sector_peers"] = _equal_weight_returns(peers, calendar)
+        benchmarks["sector_peers"] = _buy_and_hold_returns(peers, calendar)
 
     summary = summarize_backtest(runs, daily, benchmarks, regimes=market_regime(context.benchmark))
     return {

@@ -64,7 +64,7 @@ kısımları backlog'a at."
 4. Peer grubu listesi ve olay tanımları (Sprint 2 planı Task 2 ve Task 6).
 5. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.
 
-## 18 Kasım 2026 — Sprint 2 gece vardiyası (Claude tek başına çalıştı)
+## 17 Kasım 2026 — Sprint 2 gece vardiyası (Claude tek başına çalıştı)
 
 Burak'ın talimatı: "Sprint 2'ye geçelim, aynı işlemi Sprint 3 için de yapalım, ben yokum,
 sabaha kadar aralıksız çalış." Yürütme yöntemi Sprint 1 ile aynı: tek oturum, sonunda
@@ -88,7 +88,7 @@ bağımsız inceleme (K-001).
 | K-032 | SQLite şemasında `analyses` tablosuna plandakinden on sütun fazla kondu. | §28'deki her karar günlüğü alanının bir sütunu olsun; eşleme testle doğrulanıyor. | Şema sürümü artar. | Bekliyor |
 | K-033 | Sprint 2 kodu bağımsız bir inceleyiciye incelettirildi: geleceğe bakma bulunmadı; 2 kritik, 9 önemli bulgu tek geçişte, her biri önce kalan bir testle düzeltildi. | Tek oturumda yürütmenin tek ikinci gözü. | Yok. | Bekliyor |
 | K-034 | Anlık görüntü özet (hash) yöntemi değişti ve `20261117-0722` manifesti saklanan dosyalardan yeniden hesaplandı. | İlk yöntem Parquet'e yazıp okuyunca aynı sonucu vermiyordu; doğrulama bütün serileri "değişmiş" gösteriyordu. Dosyalara dokunulmadı. | Yok; `snapshot verify` komutu eşleşme bildiriyor. | Bekliyor |
-| K-035 | Sprint 3 veri kaynakları: çeyreklik tablolar İş Yatırım'ın herkese açık mali tablo servisinden, açıklama zamanları KAP bildirim sorgusundan; TÜFE ve politika faizi TCMB sayfalarından; kur Yahoo'dan; Fed hedefi Federal Reserve sayfasından. | Fintables erişimi yok (K-003); EVDS anahtar istiyor. Hepsi 18 Kasım'da denendi ve cevap verdi. Duyuru 1 madde 2 başka güvenilir kaynağa izin veriyor. | Kaynak değişirse yalnız indirme katmanı değişir. | Bekliyor |
+| K-035 | Sprint 3 veri kaynakları: çeyreklik tablolar İş Yatırım'ın herkese açık mali tablo servisinden, açıklama zamanları KAP bildirim sorgusundan; TÜFE ve politika faizi TCMB sayfalarından; kur Yahoo'dan; Fed hedefi Federal Reserve sayfasından. | Fintables erişimi yok (K-003); EVDS anahtar istiyor. Hepsi 17 Kasım'da denendi ve cevap verdi. Duyuru 1 madde 2 başka güvenilir kaynağa izin veriyor. | Kaynak değişirse yalnız indirme katmanı değişir. | Bekliyor |
 | K-036 | Ön kayıt protokolü (`docs/preregistration.md`) yazıldı: keşif 2020–2024, test 2025 – 13 Kasım 2026; strateji parametreleri (t+1 açılışında giriş, 10 gün tutma, tek yön %0,15 maliyet) hiçbir backtest çalıştırılmadan sabitlendi. | İstem §34 madde 5. THYAO'nun takvim sonuçları test dönemini de içerecek biçimde önceden görüldüğü için protokolde "ön kayıtlı değil" olarak işaretlendi. | Parametre değişirse protokolde sapma olarak yazılır. | Bekliyor |
 
 ### Sprint 2'de ortaya çıkan bulgular (raporda kullanılabilir)
@@ -107,11 +107,64 @@ bağımsız inceleme (K-001).
 - Anlık görüntü seans sırasında kurulursa bitmemiş bar günlük kapanış gibi saklanır; kurulum seans dışında yapılmalı.
 - ECILC'de 12 Mart 2020'de hacimsiz bir barın ardından %+31,9: %40 sınırının altında kaldığı için işaretlenmiyor.
 
+## 17 Kasım 2026 — Sprint 3 (aynı gece vardiyasının devamı; Claude tek başına çalıştı)
+
+Plan (`docs/superpowers/plans/2026-11-18-sprint-3-backtest-ve-temel-veri.md`) Claude
+tarafından yazıldı ve Burak görmeden yürütüldü; talimat "aynı işlemi Sprint 3 için de
+yapalım" idi.
+
+| No | Karar | Gerekçe | Geri alma maliyeti | Durum |
+| --- | --- | --- | --- | --- |
+| K-037 | Backtest kuralları: karar t gününün kapanışında, giriş **t+1 açılışında**, çıkış t+10 kapanışında; tek yön %0,15 maliyet; hisse başına tek açık işlem; açık işlemler eşit ağırlıklı, nakit getirisiz; tutma penceresi veride tamamlanmayan sinyal işlem açmaz. | İstem §18: karar, t+1'in bilgisini kullanamaz. Sinyali üreten barın fiyatıyla işlem yapmak sonucu iyimser gösterir. Kurallar ön kayıt protokolünde, hiçbir backtest çalışmadan önce sabitlendi. | Kural değişirse bütün backtest sonuçları yeniden üretilir ve protokolde sapma olarak yazılır. | Bekliyor |
+| K-038 | Kıyaslar: aynı hisselerin günlük yeniden dengelenen eşit ağırlıklı sepeti ("al-tut"), XU100 ve (B–E için) peer gruplarının sepeti. Sharpe 252 gün, risksiz oran 0. | Basit ve tekrarlanabilir. Türkiye faizleriyle risksiz oran 0 varsayımı Sharpe'ı yüksek gösterir; çıktıda yazılı. | Kıyas tanımı değişirse "fark" alanları değişir. | Bekliyor |
+| K-039 | Makro kaynakları: kur Yahoo'dan (EVDS anahtar istiyor; dört günde TCMB gösterge kuruyla karşılaştırıldı, fark yaklaşık %1 içinde); politika faizi ve TÜFE TCMB sayfalarından; Fed hedef aralığı Federal Reserve sayfasından. TÜFE'nin yayın günü kuraldır: izleyen ayın 3'ü, hafta sonuysa sonraki iş günü. | Duyuru 1 madde 2. Yayın tarihine hizalama istem §15'in şartı. | Yalnız `data/macro.py` değişir. | Bekliyor |
+| K-040 | Temel veri: tablolar İş Yatırım'ın herkese açık servisinden, yayın zamanları KAP'tan. Bir tablo, yayın zaman damgasından sonraki ilk kapanıştan itibaren kullanılır (18:00'den önce yayımlandıysa o gün, değilse sonraki işlem günü). Düzeltme varsa ilk yayın geçerli. | 479 dönemin %88'i 18:00'den sonra yayımlanmış; dönem sonu ya da yayın gününe göre hizalama geleceğe bakmak olurdu. | Kural tek fonksiyon (`known_from`). | Bekliyor |
+| K-041 | Metrik tanımları: FAVÖK = esas faaliyet kârı + amortisman; son 12 ay = dönem + önceki yıl sonu − önceki yılın aynı dönemi; reel büyüme TÜFE endeksiyle; banka ve sigorta için yalnız aktif, özkaynak, sermaye, gelir satırı ve net kâr eşlendi, sanayi oranları `None`. Pay sayısı dönemden sonra değiştiyse F/K, PD/DD ve FD/FAVÖK verilmez. Enflasyon muhasebesi 2023 yıl sonundan başlar; daha eski karşılaştırma uyarı alır. | İstem §14: banka analizinde sanayi oranları körü körüne kullanılmamalı. Anlık görüntüdeki fiyatlar bölünmeye göre düzeltilmiş olduğundan eski pay sayısıyla çarpmak yanlış piyasa değeri verir. | Tanım değişirse temel metrikler ve C–E varyantları yeniden hesaplanır. | Bekliyor |
+| K-042 | `fundamental_trend`: uygulanabilen denetimlerin (hasılat, kâr, marj, özkaynak kârlılığı; sanayide ayrıca kaldıraç ve nakit akışı) en az üçte ikisi olumluysa "Improving", en çok üçte biri olumluysa "Deteriorating", arası "Mixed"; üçten az denetim varsa eğilim yok. | Tek sayıya indirgemek yerine sayılabilir bir kural; C varyantının süzgeci bu. | Eşik değişirse C–E sonuçları değişir (protokolde sapma). | Bekliyor |
+| K-043 | Açıklama sonrası tepki: olay gününden önceki kapanıştan 1, 5 ve 20 işlem günü sonraki kapanışa; XU100'e ve hisse hariç peer sepetine göre anormal getiri. On altıncı bir araç açılmadı; tepki `calculate_fundamental_change` çıktısında. | Seans içi ve seans sonrası yayınları aynı pencereyle kapsar. İstem §22'de 15 araç var. | Pencere değişirse Senaryo 4 sonuçları değişir. | Bekliyor |
+| K-044 | KAP olay katmanı: yalnız özel durum açıklamalarının üst verisi (metin saklanmıyor), anahtar sözcük kurallarıyla konu etiketi, duygu etiketi yok. Etiketler dosya okunurken atanıyor. Gerçek veri görüldükten sonra üç kural hatası düzeltildi; E varyantının kullandığı `regulation_legal` kümesi değişmedi. | Duyuru 1 madde 3: KAP uygun kaynak; metinsel kaynak sayısal verinin yerini tutamaz. | Kurallar tek tablo. | Bekliyor |
+| K-045 | Özellik tablosu her katmanı bilginin kamuya açıldığı tarihe göre birleştirir. C–E varyantları temel veri gerektirdiği için 2025'ten itibaren çalışır ve bunu uyarıyla söyler. Faiz artışı penceresi 60 takvim günü, KAP penceresi 5 takvim günü. | Ön kayıt protokolündeki varyant tanımları. | Pencere sabitleri. | Bekliyor |
+| K-046 | Her veri katmanının kendi kurulum komutu var ve etkin anlık görüntüye eklenir; fiyat verisi ve önceki sonuç kimlikleri değişmez. | Sprint 2 sonuçları aynı `snapshot_id` ile tekrarlanabilir kalsın. | Yok. | Bekliyor |
+| K-047 | Sprint 3 kodu bağımsız bir inceleyiciye incelettirildi. Backtest zamanlaması, maliyet, çakışma kuralı, lag skoru ve özellik tablosunun geleceğe bakmadığı doğrulandı. 3 kritik ve 13 önemli bulgu çıktı; aşağıda hangilerinin düzeltildiği, hangilerinin geri çekildiği ve hangilerinin ertelendiği yazılı. | Tek oturumda yürütmenin tek ikinci gözü. | Yok. | Bekliyor |
+| K-048 | **Temel veri katmanı "yeniden düzeltilmiş" değerler veriyor; bu yüzden reel büyüme ve değerleme oranları geri çekildi.** İş Yatırım, bir dönemin rakamlarını bir sonraki yılın raporundaki karşılaştırmalı (enflasyona göre yeniden düzeltilmiş) değerle değiştiriyor: TUPRS 2024 yıl sonu hasılatı kaynakta 1.060.733 mn TL, oran Aralık 2025 / Aralık 2024 TÜFE oranına eşit. Araç çıktıları artık `RESTATED_SOURCE` uyarısı taşıyor; `*_real_yoy_pct` alanları boş; F/K, PD/DD, FD/FAVÖK boş (anlık görüntüdeki fiyatlar temettüye göre de düzeltilmiş olduğundan geçmiş piyasa değeri eksik çıkıyordu). | Yanlış sayıyı uyarıyla göstermektense göstermemek. Kaynağın zamana göre doğru olmadığı ancak incelemede anlaşıldı; K-040'taki "geri alma maliyeti" tahminim yanlıştı. | Katman, yayımlandığı günkü rakamlardan yeniden kurulmalı (KAP'taki finansal rapor bildirimlerinin kendisinden ya da TÜFE oranıyla geri çevirerek); Sprint 4'ün ilk işi. | Bekliyor |
+| K-049 | **Test dönemi (2025 – Kasım 2026) backtest'i ve Senaryo 4 olay çalışması çalıştırılmadı.** | Ön kayıt protokolü test döneminin bir kez çalıştırılmasını şart koşuyor; C–E varyantları ve Senaryo 4, kusurlu olduğu anlaşılan temel veriye dayanıyor. A ve B ayrı çalıştırılabilirdi; hepsinin birlikte ve bir kez çalışması için beklettim. | Yok; çalıştırma komutu hazır (`backtest/study.py`). | Bekliyor |
+| K-050 | Backtest düzeltmeleri: portföy ve kıyas artık endeksin ya da hisselerden birinin barı olan her günü kapsıyor (XU100 dosyasında beş gerçek seans eksik); "al-tut" bir kez alınıp hiç yeniden dengelenmeyen sepet oldu (keşif döneminde %1.804,85 yerine %1.548,88); işlem yokken "geride kaldı" bayrağı konmuyor. Keşif dönemi sonuçları yeniden üretildi (A %244,98, B %225,02). | İnceleme bulguları. İşlemlerin kendisi değişmedi. | Yok. | Bekliyor |
+| K-051 | Tarih düzeltmesi: bu gece yazdığım belgeleri "18 Kasım" diye tarihlemiştim; sistem saati ve commit'ler 17 Kasım 2026'yı gösteriyor. Metin içi tarihler 17 Kasım'a çevrildi; sonuç dosyalarının adları da. Sprint planlarının dosya adlarındaki tarihler planlanan sprint günleridir. | Ön kayıt protokolünün kanıtı commit sırası; belge tarihi commit tarihiyle tutmalı. | Yok. | Bekliyor |
+
+### Sprint 3 incelemesi: düzeltilenler
+
+Her biri önce kalan bir testle (`tests/test_sprint3_review.py`): reel büyüme ve değerlemenin geri çekilmesi ve `RESTATED_SOURCE` uyarısı; C–E çıktılarında `FUNDAMENTALS_NOT_POINT_IN_TIME` uyarısı; portföy takvimi; gerçek al-tut kıyası; işlemsiz backtest'te bayrak; dönem verinin öncesinde başlıyorsa uyarı (backtest, kur, KAP); kurun dönem başındaki değeri; haber aracında konu listesi şemaya girdi; "ihracat" ve "yatırımcı" yanlış etiketleri.
+
+### Sprint 3 incelemesi: ertelenenler (Sprint 4'ün başına)
+
+- **Temel veri katmanının yeniden kurulması** (K-048): yayımlandığı günkü rakamlar; son 12 ay ve bilanço oranlarında fiyat düzeyi karışıklığı; `CASH_FLOW_UP` ve `PROFIT_UP` denetimlerinin tutarlılığı; aynı gün yayımlanan konsolide ve solo raporlardan hangisinin alındığı; MAVI'nin dönem sonları (mali yılı Ocak'ta bitiyor).
+- **Anlık görüntüye düzeltilmemiş kapanış eklenmesi**: değerleme oranları için.
+- **Anlık görüntü kimliği eklenen katmanları sabitlemiyor**: makro, temel ve KAP dosyaları aynı `snapshot_id` altında yeniden kurulabiliyor ve `snapshot verify` yalnız fiyat dosyalarına bakıyor. Katmanların özetleri sonuç kimliğine girmeli.
+- **Kur verisinin saati**: Yahoo günlük kapanışı BIST kapanışından saatler sonra; özellik tablosunda bir gün gecikmeyle kullanılmalı. Hiçbir strateji varyantı bu sütunu kullanmıyor.
+- **TÜFE yayın günü kuralı tatilleri bilmiyor** (ör. Haziran 2023 verisi 3 Temmuz yerine 5 Temmuz'da yayımlandı): yayın tarihleri kayıtlı bir tablodan alınmalı.
+- **Motorun "bilgi tarihi" denetimi C–E için anlamsız**: tablo zaten o tarihe göre birleştiriliyor; denetim hiç tetiklenemez. Yeniden kurulan temel katmanla birlikte anlamlı bir denetime çevrilmeli.
+- Rekabet Kurulu onayları `regulation_legal` sayılıyor (3 bildirim) ve E varyantında girişi engelliyor; protokoldeki tanım bu olduğu için dokunmadım.
+- Politika faizi tablosundaki tarih kararın yürürlük günü (karardan bir gün sonra); alan adı `last_policy_decision_date`.
+- Yarım gün seanslarda 13:00–18:00 arasındaki yayın, kendisinden önce kapanan seansa yazılıyor (4 bildirim).
+- KAP ve temel veri kurulumunda üye kimliği bulunamazsa koruma yok.
+
+### Ön kayıt protokolüyle uyumsuzluklar
+
+İnceleme altı uyumsuzluk buldu; hepsi protokole "test dönemi çalıştırılmadan önceki düzeltmeler" başlığıyla işlendi: al-tut tanımı, A varyantında peer kıyası olmaması, temel verinin 2022 4. çeyrekten yüklenmesi, konu kurallarının protokolden sonra düzeltilmesi, temel verinin zamana göre doğru olmaması ve belge tarihi.
+
+### Bu gecenin bulguları (raporda kullanılabilir)
+
+- **Açıklama zamanı.** 479 finansal raporun %88'i 18:00'den sonra yayımlanmış; dönem sonundan ilk kullanılabilir güne medyan 41 gün. Dönem sonuna göre hizalanan bir backtest geleceğe bakar.
+- **Keşif dönemi backtest'i.** A ve B varyantları 2020–2024'te hisseleri tutmanın çok gerisinde (yaklaşık %245 ve %225'e karşı %1.549); ortalama işlem getirisi, piyasada kalmanın aynı sürede kazandırdığına yakın. Sektör koşulu işlemleri iyileştirmiyor.
+- **Kaynak tuzağı.** Herkese açık mali tablo servisi geçmiş dönemleri sonradan yeniden düzeltilmiş hâliyle veriyor; bu, enflasyon muhasebesi olan bir piyasada "zamana göre doğru" veri kurmanın neden zor olduğunu gösteren somut bir örnek.
+
 ### Senin vermen gereken kararlar (güncel)
 
-1. Temel model seçimi ve QLoRA deneme eğitimi: RTX 5070 gerekiyor (Sprint 2 planı Task 11, EC-005 ve EC-006 açık).
+1. Temel model seçimi ve QLoRA deneme eğitimi: RTX 5070 gerekiyor (EC-005, EC-006).
 2. Tasarım belgesinin onayı ve K-005, K-006, K-007.
 3. Sayı eşleştirme kuralı (K-008) ve katı sayı denetimi (K-015).
 4. Peer grubu listesi (K-020, K-031) ve olay tanımları (K-026, K-028).
-5. İstatistik seçimleri (K-029) ve ön kayıt protokolü (K-036): rapora girecekleri için okuyup sahiplenmen gerekiyor.
-6. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.
+5. İstatistik seçimleri (K-029) ve ön kayıt protokolü (K-036, protokoldeki düzeltmeler bölümüyle birlikte).
+6. Backtest kuralları (K-037, K-038) ve temel veri katmanının nasıl yeniden kurulacağı (K-048): KAP raporlarından mı, TÜFE oranıyla geri çevirerek mi.
+7. Test dönemi çalıştırmasının zamanı (K-049).
+8. `docs/ai_usage_log.md` içindeki "Verified by Burak" sütunu.

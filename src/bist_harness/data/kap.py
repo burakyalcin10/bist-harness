@@ -98,6 +98,9 @@ def _fold(text: str | None) -> str:
 def tag_topic(subject: str | None, summary: str | None) -> str:
     """Topic of a disclosure from its subject and summary lines."""
     text = f"{_fold(subject)} {_fold(summary)}"
+    # Words that contain a keyword but mean something else: an export is not an issue of
+    # securities, an investor is not an investment.
+    text = text.replace("ihracat", "dış satım").replace("yatırımcı", "")
     for topic, keywords in TOPIC_RULES:
         if any(keyword in text for keyword in keywords):
             return topic

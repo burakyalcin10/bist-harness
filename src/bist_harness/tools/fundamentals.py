@@ -15,8 +15,12 @@ ratios do not exist for them and are returned as ``None`` and listed in
 ``not_applicable``. Their "revenue" is net interest income and gross premiums.
 
 Inflation accounting (TMS 29) applies to non-bank statements from the 2023 year end on.
-Growth is given in nominal terms and, when a CPI index is supplied, in real terms: the
-earlier amount is first brought to the later period's price level.
+**The statement source is not point-in-time for such companies**: once the following
+year's report is out, it shows a period's figures as restated in that report (at the
+later price level). Every output therefore carries a ``RESTATED_SOURCE`` warning, real
+growth is not computed (it would deflate an already restated comparative a second time)
+and valuation ratios are withheld (prices in the snapshot are dividend-adjusted).
+Rebuilding this layer from as-published figures is the first task of the next sprint.
 """
 
 from __future__ import annotations
@@ -220,7 +224,7 @@ def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> 
     cash_flow = book.value(period, "operating_cash_flow")
 
     def growth(field: str, real: bool) -> float | None:
-        if real and factor is None:
+        if real:  # withheld: see _warnings (the source already restates the comparative)
             return None
         return _growth(
             book.value(period, field), book.value(earlier, field), factor if real else 1.0
@@ -257,31 +261,20 @@ def period_metrics(book: Book, period: Period, cpi: pd.Series | None = None) -> 
 
 
 def _valuation(book: Book, period: Period, close: pd.Series | None, as_of: str) -> dict:
-    """P/E, P/B and EV/EBITDA from the close on ``as_of`` and the period's share count.
+    """Valuation ratios are withheld.
 
-    Prices in the snapshot are adjusted for later splits and bonus issues, so the share
-    count must be the one those prices assume: when it changed after the period, the
-    ratios are withheld instead of being computed from mismatched numbers.
+    The snapshot holds prices adjusted for dividends as well as splits
+    (``auto_adjust=True``), so a past close is lower than the price that was quoted that
+    day, and close times share count understates the market value of the time. Until an
+    unadjusted close is stored, P/E, P/B and EV/EBITDA are not computed rather than
+    reported wrong.
     """
-    empty = {"market_cap_mn": None, "pe": None, "pb": None, "ev_ebitda": None}
-    shares = book.value(period, "paid_in_capital")
-    latest_shares = book.value(book.periods[-1], "paid_in_capital") if book.periods else None
-    if close is None or shares is None or latest_shares is None:
-        return {**empty, "valuation_note": "NO_PRICE_OR_SHARE_COUNT"}
-    if abs(shares - latest_shares) > 1e-6 * latest_shares:
-        return {**empty, "valuation_note": "SHARE_COUNT_CHANGED_AFTER_THE_PERIOD"}
-    prices = close.loc[: pd.Timestamp(as_of)].dropna()
-    if prices.empty:
-        return {**empty, "valuation_note": "NO_PRICE_OR_SHARE_COUNT"}
-    market_cap = float(prices.iloc[-1]) * shares
-    net_debt = _net_debt(book, period)
-    enterprise = None if net_debt is None else market_cap + net_debt
     return {
-        "market_cap_mn": _millions(market_cap),
-        "pe": _ratio(market_cap, book.ttm(period, "parent_net_profit")),
-        "pb": _ratio(market_cap, book.value(period, "parent_equity")),
-        "ev_ebitda": _ratio(enterprise, book.ttm(period, "ebitda")),
-        "valuation_note": None,
+        "market_cap_mn": None,
+        "pe": None,
+        "pb": None,
+        "ev_ebitda": None,
+        "valuation_note": "WITHHELD_PRICES_ARE_DIVIDEND_ADJUSTED",
     }
 
 
@@ -298,13 +291,23 @@ def _header(book: Book, row: pd.Series, period: Period) -> dict:
 
 def _warnings(book: Book, period: Period, cpi: pd.Series | None) -> list[str]:
     warnings = []
-    if book.group != "bank" and period.year_earlier() < TMS29_FIRST:
+    if book.group != "bank":
         warnings.append(
-            "COMPARATIVE_BEFORE_TMS29: the year-earlier period predates inflation "
-            "accounting; year-over-year changes mix two bases."
+            "RESTATED_SOURCE: the statement source replaces a period's figures with the "
+            "restated comparative of the following year's report (inflation accounting), "
+            "so amounts of earlier periods are at a later price level than the one "
+            "published at the time, and their changes are not the published ones."
         )
-    if cpi is None or _price_factor(cpi, period, period.year_earlier()) is None:
-        warnings.append("NO_CPI_FOR_REAL_GROWTH: real growth could not be computed.")
+        if period.year_earlier() < TMS29_FIRST:
+            warnings.append(
+                "COMPARATIVE_BEFORE_TMS29: the year-earlier period predates inflation "
+                "accounting; year-over-year changes mix two bases."
+            )
+    warnings.append(
+        "REAL_GROWTH_WITHHELD: for the latest year the stored comparative is already at "
+        "the current price level, so the year-over-year change is close to real growth; a "
+        "separate CPI adjustment would deflate twice and is not reported."
+    )
     return warnings
 
 

@@ -17,11 +17,11 @@ Active snapshot: `20261117-0722`.
 | Fetched | 2026-11-17 |
 | Corrections | `data/reference/price_adjustments.csv`: CCOLA 11-for-1 bonus issue of 2024-08-01, which the source did not apply. Applied when a series is read; its hash (`adjustments_id`) is part of every result |
 | Missing data | No interpolation. Days without a bar stay absent. Zero-volume days are kept and reported by the quality check |
-| Known issues | `docs/results/2026-11-18-data-quality.md`: price jumps in five reference stocks (excluded from sector medians when inside the window), SASA volume missing on 155 days |
+| Known issues | `docs/results/2026-11-17-data-quality.md`: price jumps in five reference stocks (excluded from sector medians when inside the window), SASA volume missing on 155 days |
 
 ## 2. Macro series
 
-Built with `uv run python -m bist_harness.data.macro build` on 2026-11-18 into
+Built with `uv run python -m bist_harness.data.macro build` on 2026-11-17 into
 `data/snapshots/20261117-0722/macro/` (with its own `manifest.json`: sources, row
 counts, hashes).
 
@@ -52,15 +52,15 @@ Assumptions to keep in mind:
 - **CPI release day is a rule, not a recorded timestamp.** TÜİK publishes on the 3rd of
   the month at 10:00; when the 3rd is a weekend the release moves to the next working
   day. Holidays that shift a release further are not modelled.
-- **No revisions.** The tables hold the values as published on 2026-11-18. Turkish CPI
+- **No revisions.** The tables hold the values as published on 2026-11-17. Turkish CPI
   is not revised in practice; the policy and Fed tables are decision records.
 - A decision or a figure counts from its date; nothing is used before it.
 
 ## 3. Financial statements and their publication times
 
-Built on 2026-11-18 into `data/snapshots/20261117-0722/fundamentals/`
+Built on 2026-11-17 into `data/snapshots/20261117-0722/fundamentals/`
 (`statements.parquet`, `calendar.parquet`, `manifest.json`). Coverage and timing
-statistics: `docs/results/2026-11-18-fundamentals-coverage.md`.
+statistics: `docs/results/2026-11-17-fundamentals-coverage.md`.
 
 | Item | Source | Notes |
 | --- | --- | --- |
@@ -85,7 +85,7 @@ Rules applied:
 
 ## 4. Company events (KAP disclosure metadata)
 
-Built on 2026-11-18 with `uv run python -m bist_harness.data.kap build 15 520` (two timed
+Built on 2026-11-17 with `uv run python -m bist_harness.data.kap build 15 520` (two timed
 runs) into `data/snapshots/20261117-0722/kap/disclosures.parquet`.
 
 | Item | Value |

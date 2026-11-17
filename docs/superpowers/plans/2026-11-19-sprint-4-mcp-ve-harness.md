@@ -54,6 +54,7 @@ src/bist_harness/eval/
 
 | Görev | Kart | Not |
 | --- | --- | --- |
+| 0 Sprint 3'ten devreden düzeltmeler ve test dönemi çalıştırması | EC-014, 025, 012 | Temel veri yeniden kurulmadan harness onu kullanmaz |
 | 1 Oturum kaydı ve kalan üç araç | EC-040 | `check_data_quality`, `build_evidence_bundle`, `get_speech_features` |
 | 2 Sözleşme testleri ve referans çıktılar | EC-041 | 15 aracın hepsi |
 | 3 Niyet çıkarımı ve rotalar | EC-042 | |
@@ -66,6 +67,17 @@ src/bist_harness/eval/
 | 10 Canlı uçtan uca deneme ve kapanış | — | Yerel model gerekir |
 
 ---
+
+### Task 0: Sprint 3'ten devreden düzeltmeler (EC-014, EC-025, EC-012) — önce bu
+
+Sprint 3 incelemesi temel veri kaynağının zamana göre doğru olmadığını gösterdi (karar K-048). Harness bu katmanı kullanmadan önce:
+
+- [ ] **Temel veri, yayımlandığı günkü rakamlardan yeniden kurulur.** Önce hangi yolun mümkün olduğu ölçülür: (a) KAP'taki "Finansal Rapor" bildiriminin kendisinden kalemleri okumak; (b) kaynaktaki yeniden düzeltilmiş değeri, bir sonraki yılın raporunun fiyat düzeyinden TÜFE oranıyla geri çevirmek. (b) seçilirse en az beş hisse ve iki dönem için sonuç, KAP'taki rapordaki rakamla karşılaştırılır ve fark belgelenir. Hangi dönemlerin yeniden düzeltildiği (gelir tablosu, bilanço, yıl sonu) hisse bazında saptanır; karışık fiyat düzeyli toplamlar (son 12 ay, özkaynak kârlılığı) aynı düzeye getirilir ya da verilmez.
+- [ ] Anlık görüntüye düzeltilmemiş kapanış eklenir; değerleme oranları onunla hesaplanır.
+- [ ] Makro, temel ve KAP katmanlarının özetleri `result_id` kimliğine girer; `snapshot verify` bu dosyaları da denetler.
+- [ ] TÜFE yayın günleri kayıtlı bir tablodan alınır; kur, özellik tablosunda bir gün gecikmeyle kullanılır.
+- [ ] `fundamental_trend` denetimleri (nakit akışı, zarardan kâra geçiş) tutarlı hâle getirilir; motorun bilgi tarihi denetimi gerçek bir denetime çevrilir.
+- [ ] Bunlar bittikten sonra, **bir kez**: `uv run python -m bist_harness.backtest.study test`; sonuç `docs/results/` altına, ön kayıt protokolündeki tanımlar değiştirilmeden yazılır.
 
 ### Task 1: Oturum kaydı ve kalan üç araç (EC-040)
 

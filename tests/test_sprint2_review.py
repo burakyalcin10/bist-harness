@@ -1,4 +1,4 @@
-"""Regression tests for the findings of the Sprint 2 code review (2026-11-18)."""
+"""Regression tests for the findings of the Sprint 2 code review (2026-11-17)."""
 
 import numpy as np
 import pandas as pd
