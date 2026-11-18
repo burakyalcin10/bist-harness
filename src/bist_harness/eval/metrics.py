@@ -119,6 +119,7 @@ from bist_harness.eval.number_check import (
     numbers_match,
     question_numbers,
 )
+from bist_harness.harness import memory
 from bist_harness.harness.evidence import DISCLAIMER, MINIMUM, Evidence, missing_requirements
 from bist_harness.harness.machine import HARNESS_STATES
 from bist_harness.harness.routes import ALLOWED_TOOLS, CANDIDATE_SCENARIOS, STATES
@@ -171,6 +172,7 @@ def _route_scenario(record: dict) -> str | None:
 
 # --- numbers ---------------------------------------------------------------------------
 def _strip_fixed(text: str) -> str:
+    text = memory.strip_section(text)  # the memory section is the harness's, not the model's
     for line in FIXED_LINES:
         text = text.replace(line, "\n")
     return text

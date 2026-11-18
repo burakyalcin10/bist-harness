@@ -358,3 +358,16 @@ close.
 | Layer (brief, section 10) | Planned content | Sprint |
 | --- | --- | --- |
 | Speech | Topics, claims and stance from approved public videos | 7 |
+
+## 16. The three memories
+
+| Memory | Where it lives | What it holds | Read through |
+| --- | --- | --- | --- |
+| Temporal | The Parquet layers of a snapshot (sections 1 to 14) | Market, technical, sector, fundamental, macro and KAP data, each row with the day it was known | The tool functions of the MCP server |
+| Episodic | SQLite `analyses`, `evidence` and `decisions` | Earlier analyses (as-of date, scenario, label) and the human decision about each | `harness.memory.recall`; experiment E only |
+| Procedural | Code: `harness.routes` (routes, permissions), `harness.evidence` (templates), `harness.actions` (label rules) | How an analysis is run, which tool each state may call, how a result is worded | The state machine |
+
+Episodic memory is shown to the user (the answer, the review screen, the decision log) as
+`memory` items `M1..Mn`; it is never in a prompt and never citable. It recalls only analyses
+of the same stock with an as-of date strictly before the new analysis's, stored before it, and
+a human decision only if it was made strictly before the new analysis was created.

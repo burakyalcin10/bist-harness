@@ -32,6 +32,7 @@ from bist_harness.backtest.periods import TEST as TEST_PERIOD
 from bist_harness.backtest.strategies import FEATURE_FILTERS
 from bist_harness.data import peers
 from bist_harness.errors import LLMUnavailableError
+from bist_harness.harness import memory as episodic
 from bist_harness.harness import session
 from bist_harness.harness.evidence import MINIMUM, build_evidence, missing_requirements
 from bist_harness.harness.gate import quality_gate
@@ -209,6 +210,7 @@ def run_analysis(
     evidence_fn: EvidenceFn = default_evidence,
     gate_fn: GateFn = quality_gate,
     explain_fn: ExplainFn = default_explanation,
+    memory: bool = False,
 ) -> session.Analysis:
     """Run one question through its route and return the recorded analysis.
 
@@ -216,6 +218,11 @@ def run_analysis(
     GENERATE_EXPLANATION steps (defaults: ``build_evidence``, ``quality_gate`` and
     ``generate_explanation``). The explain step gets the final evidence of RISK_GATE; its
     ``action`` becomes the outcome and its ``text`` the answer.
+
+    ``memory=True`` (experiment E, with a ``conn``) recalls the earlier analyses of the same
+    stock at BUILD_EVIDENCE: they are kept in that state's trail record and appended to the
+    shown answer after it was validated. No prompt and no evidence given to the gate or the
+    explanation step changes (``harness.memory``).
     """
     today = today or date.today().isoformat()
     analysis = session.new_analysis(question, model=getattr(client, "model", "unknown"))
@@ -261,7 +268,11 @@ def run_analysis(
         elif state == "BUILD_EVIDENCE":
             run.execute(call_tool, state, "build_evidence_bundle", dict(own_id), "harness")
             evidence = evidence_fn(analysis, language=language)
-            run.mark(state, "RAN")
+            if memory and conn is not None:
+                recalled = episodic.recall_for(conn, analysis)
+                run.mark(state, "RAN", memory=[dataclasses.asdict(e) for e in recalled])
+            else:
+                run.mark(state, "RAN")
         elif state == "PREVIEW_STRATEGIES":
             run.mark(state, "RAN", variants=list(STRATEGY_VARIANTS))
         elif state == "RISK_GATE":
@@ -314,6 +325,12 @@ def run_analysis(
     if blocked:
         run.close(route, ANALYSIS_UNSAFE)
     else:
+        if answer is not None:  # after validation: the model's text is already checked
+            section = episodic.answer_section(
+                episodic.items_of(analysis, language=language), language=language
+            )
+            if section:
+                answer = f"{answer}\n\n{section}"
         run.close(route, action or COMPLETED, answer)
     return analysis
 

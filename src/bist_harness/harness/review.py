@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from datetime import UTC, datetime
 
-from bist_harness.harness import session
+from bist_harness.harness import memory, session
 from bist_harness.harness.evidence import build_evidence
 from bist_harness.storage import db
 
@@ -102,7 +102,11 @@ def decision_log(analysis: session.Analysis, conn: sqlite3.Connection) -> dict:
     language = intent.get("language") if intent.get("language") in ("tr", "en") else "en"
     calls = analysis.tool_calls
     states = {r.state: r.status for r in analysis.trail}
-    evidence = [dataclasses.asdict(e) for e in build_evidence(analysis, language=language)]
+    shown = [
+        *build_evidence(analysis, language=language),
+        *memory.items_of(analysis, language=language),
+    ]
+    evidence = [dataclasses.asdict(e) for e in shown]
     backtests = _calls(analysis, "run_backtest")
     sources = [
         {"seq": c.seq, "tool": c.tool, "arguments": c.arguments, "output": c.output}

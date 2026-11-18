@@ -464,6 +464,7 @@ def run_one(
             today=today,
             max_attempts=max_attempts,
             conn=memory if experiment == "E" else None,
+            memory=experiment == "E",
         )
     else:
         raise ValueError(f"unknown experiment: {experiment}")
