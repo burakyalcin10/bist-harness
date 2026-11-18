@@ -289,8 +289,26 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
 
 Masaüstünde, deponun kökünde (Git Bash). Uzak makinenin adresi hiçbir dosyaya yazılmaz;
 harness modele yalnız `BIST_LLM_BASE_URL` (ortam ya da git dışı `.env`) ile ulaşır.
+Dizüstünden geçitle ölçerken `BIST_LLM_API=openai` gerekir: geçit yalnız
+`/v1/chat/completions`'ı geçirir, `/api/chat`'i değil
+(`docs/results/2026-11-18-base-model-selection.md`). Masaüstünde yerel Ollama'yla gerekmez.
+
+Masaüstündeki Ollama 0.40.4, resmî Windows ZIP'inden `C:\AI-Server\ollama` klasörüne
+kurulmuştur, oturum açılışında zamanlanmış görevle başlar ve **PATH'te değildir**
+(`%LOCALAPPDATA%\Programs\Ollama`'da da değildir). Aşağıdaki her `ollama` komutu tam yolla
+(`"$OLLAMA"`) yazılmıştır. `export` ise Ollama'yı (sürüm, `llama-server` commit'i,
+`ollama create`, yükleme denemesi) PATH'te arar (`shutil.which("ollama")`; bulamazsa yalnız
+`%LOCALAPPDATA%\Programs\Ollama`'ya bakar), bu yüzden adım 0'da klasör o kabuğun PATH'ine
+eklenir. PowerShell'de karşılığı: `$ollama = "C:\AI-Server\ollama\ollama.exe"` ve
+`$env:Path += ";C:\AI-Server\ollama"`.
 
 ```bash
+# 0. Ollama'nın yolu (her yeni Git Bash kabuğunda)
+OLLAMA="/c/AI-Server/ollama/ollama.exe"
+OLLAMA_DIR="/c/AI-Server/ollama"
+export PATH="$PATH:$OLLAMA_DIR"   # export.py ollama'yı PATH'te arar
+"$OLLAMA" --version              # 0.40.4 beklenir
+
 # 1. Depo ve kütüphaneler
 git clone <depo> bist-harness   # ilk kez; sonra: git pull
 cd bist-harness
@@ -310,9 +328,19 @@ unzip runs/finetune-bundle-<gün>.zip -d .   # data/finetune/ ve configs/qlora/ 
 # 3. Task 7'nin seçtiği modeli iki ayar dosyasına yaz (base_model, revision; Qwen3.5
 #    dışı bir aile seçildiyse target_modules da)
 
-# 4. Önce 20 adımlık deneme (EC-006): boru hattı masaüstünde de uçtan uca çalışıyor mu
+# 4. Önce 20 adımlık deneme (EC-006): boru hattı masaüstünde de uçtan uca çalışıyor mu.
+#    Eğitim sırasında 5070'te Ollama model tutmamalı (12 GB'ın tamamı gerekir):
+#    önce `"$OLLAMA" stop <model>` (çalışan modeller: `"$OLLAMA" ps`).
 uv run --group train python -m bist_harness.finetune.train run \
   --config configs/qlora/laptop-trial.toml --data data/finetune --out runs/finetune-laptop-trial
+#    4b. Seçilen modelle 20 adım: 12 GB'a sığıyor mu (Task 7'nin bellek tahmini ölçülür).
+#    r16-e2.toml'u kopyala, kopyada max_steps = 20, train_limit = 80, val_limit = 16 yap.
+cp configs/qlora/r16-e2.toml runs/desktop-trial.toml   # runs/ git dışı
+uv run --group train python -m bist_harness.finetune.train run \
+  --config runs/desktop-trial.toml --data data/finetune --out runs/finetune-desktop-trial
+#    run.json → peak_vram_gb.allocated 11 GB'ı aşıyorsa ya da reserved 12 GB'a dayanıyorsa
+#    Windows belleği paylaşılan RAM'e taşır (dizüstündeki gibi çalışır ama çok yavaşlar):
+#    tam koşulardan önce haber ver.
 
 # 5. İki ayar
 uv run --group train python -m bist_harness.finetune.train run \
@@ -321,10 +349,17 @@ uv run --group train python -m bist_harness.finetune.train run \
   --config configs/qlora/r32-e3.toml --data data/finetune --out runs/finetune-r32-e3
 
 # 6. Ollama sürümü ve llama.cpp; <taban> Task 7'nin Ollama etiketi (ör. qwen3.5:4b)
-#    Ollama Windows'ta kendini günceller: sürüm dizüstüyle aynı olmayabilir, her dışa
-#    aktarmadan önce bak. Dizüstü denemesi: 0.40.16, llama.cpp 6c01da627.
-ollama --version
-"$LOCALAPPDATA/Programs/Ollama/lib/ollama/llama-server.exe" --version   # "commit <kısa>"
+#    Masaüstündeki Ollama 0.40.4'tür (18 Kasım 2026, geçitten /api/version), dizüstününki
+#    0.40.16 (llama.cpp 6c01da627). Dizüstünün commit'i masaüstünde GEÇERSİZDİR: dönüştürücü
+#    0.40.4'ün kendi commit'ine sabitlenir ve şablon denetimi 0.40.4'te yeniden koşulur.
+#    ZIP kurulumu kendini güncellemez. `export` llama-server'ı PATH'te bulduğu `ollama`nın
+#    klasöründen okur; adım 0'daki PATH eklemesi bu kabukta yapılmış olmalı:
+command -v ollama                                         # /c/AI-Server/ollama/ollama göstermeli
+"$OLLAMA" --version                                       # 0.40.4 beklenir; değiştiyse bu adımlar o sürümle
+ls "$OLLAMA_DIR/lib/ollama/"                              # llama-server.exe ve llama-quantize.exe var mı
+"$OLLAMA_DIR/lib/ollama/llama-server.exe" --version       # "commit <kısa>"
+#    llama-server.exe ya da llama-quantize.exe 0.40.4'te yoksa dur ve haber ver: export
+#    commit'i okuyamaz ve başlamaz (bu dosyalar yalnız 0.40.16'da doğrulandı).
 #    Kısa hash'ten tam commit: GitHub yalnız tam adla getirir, bu yüzden geçmiş gerekir
 #    (ya da tarayıcıda https://github.com/ggml-org/llama.cpp/commit/<kısa> tam adı gösterir).
 git clone -c core.longpaths=true --filter=blob:none https://github.com/ggml-org/llama.cpp tools/llama.cpp  # bir kez
@@ -332,16 +367,19 @@ git -C tools/llama.cpp fetch origin   # sonraki dışa aktarmalarda
 git -C tools/llama.cpp checkout "$(git -C tools/llama.cpp rev-parse '<kısa>^{commit}')"
 git -C tools/llama.cpp rev-parse HEAD   # <kısa> ile başlamalı
 #    Şablon denetimi (Task 7 modeli ve bu Ollama ile; çıkış kodu 0 = hepsi bayt bayt aynı).
-#    BIST_LLM_BASE_URL boş ya da yerel Ollama olmalı.
+#    BIST_LLM_BASE_URL boş ya da yerel Ollama olmalı. 0.40.4 `_debug_render_only`'yi
+#    tanımıyorsa denetim bunu açıkça söyler ve durur: sonucu haber ver, dışa aktarmaya geçme.
 uv run --group train python -m bist_harness.finetune.template_check --data data/finetune \
   --base-model <HF deposu> --revision <commit> --ollama-model <taban> \
   --out runs/template-check-<taban>.json
 #    Dışa aktarma; commit uyuşmazsa başlamaz, model yüklenmezse sonda hata verir
 uv run --group train python -m bist_harness.finetune.export \
-  --adapter runs/finetune-r16-e2/adapter --name bist-r16-e2 --template-from <taban>
+  --adapter runs/finetune-r16-e2/adapter --name bist-r16-e2 --template-from <taban> \
+  --llama-quantize "$OLLAMA_DIR/lib/ollama/llama-quantize.exe"
 uv run --group train python -m bist_harness.finetune.export \
-  --adapter runs/finetune-r32-e3/adapter --name bist-r32-e3 --template-from <taban>
-ollama list   # bist-r16-e2 ve bist-r32-e3 görünmeli; "load_check": "passed" export.json'da
+  --adapter runs/finetune-r32-e3/adapter --name bist-r32-e3 --template-from <taban> \
+  --llama-quantize "$OLLAMA_DIR/lib/ollama/llama-quantize.exe"
+"$OLLAMA" list   # bist-r16-e2 ve bist-r32-e3 görünmeli; "load_check": "passed" export.json'da
 
 # 7. Dizüstüne geri getir: her koşudan adapter/, loss.csv, run.json (checkpoints/ gerekmez)
 #    runs/finetune-r16-e2/ ve runs/finetune-r32-e3/ altına aynı yollarla koy
