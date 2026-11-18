@@ -16,9 +16,12 @@ Steps:
    (``TeacherError`` or ``ValueError``: ``teacher_errors``) or when any of its records
    carries a date of the pre-registered test period (on or after 2025-01-01) in a
    message, a tool schema or the target (``test_period_date``).
-4. ``split_by_family`` splits by paraphrase: a question's turns stay in one split, and
+4. ``qc.dedupe_report`` drops near-duplicate questions (same folded text, same targets) and
+   questions whose text another family teaches with a different target
+   (``near_duplicate``, ``conflicting_targets``); all turns of a question go together.
+5. ``split_by_family`` splits by paraphrase: a question's turns stay in one split, and
    ``val``/``test`` hold paraphrases that ``train`` never sees.
-5. ``train.jsonl``, ``val.jsonl``, ``test.jsonl`` (``TrainingRecord`` lines),
+6. ``train.jsonl``, ``val.jsonl``, ``test.jsonl`` (``TrainingRecord`` lines),
    ``dev_questions.jsonl`` (the test questions in the frozen-set format, for
    ``run_eval --questions-file``) and ``manifest.json`` (counts, drops, versions,
    SHA-256 of every file, seed, wall time).
@@ -288,6 +291,15 @@ def build(
         runs[question.question_id] = (question, turns, analysis)
         records.extend(turns)
 
+    from bist_harness.finetune import qc  # qc imports this module: import it late
+
+    records, dedupe = qc.dedupe_report(records)
+    for dropped in (
+        *dedupe["dropped"]["near_duplicate"],
+        *dedupe["dropped"]["conflicting_targets"],
+    ):
+        runs.pop(dropped["question_id"], None)
+
     splits = split_by_family(records, seed=seed)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -316,11 +328,18 @@ def build(
             "by_split": {name: len({r.question_id for r in rs}) for name, rs in splits.items()},
         },
         "records": {name: len(rs) for name, rs in splits.items()},
-        "dropped": {"overlap": overlap, "test_period_date": test_period},
+        "dropped": {
+            "overlap": overlap,
+            "test_period_date": test_period,
+            "near_duplicate": dedupe["dropped"]["near_duplicate"],
+            "conflicting_targets": dedupe["dropped"]["conflicting_targets"],
+        },
         "teacher_errors": teacher_errors,
         "dropped_counts": {
             "overlap": len(overlap),
             "test_period_date": len(test_period),
+            "near_duplicate": dedupe["near_duplicate_questions"],
+            "conflicting_targets": dedupe["conflicting_target_questions"],
             "teacher_errors": len(teacher_errors),
         },
         "counts": _counts(splits),

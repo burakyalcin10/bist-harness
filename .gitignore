@@ -14,3 +14,4 @@ data/snapshots/
 data/*.sqlite
 reference/instructor/*.py
 .worktrees/
+data/finetune/

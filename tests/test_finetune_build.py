@@ -468,3 +468,14 @@ def test_a_question_with_its_own_today_runs_on_that_day(monkeypatch):
         with pytest.raises(RuntimeError):
             run_eval.run_one("D", q, 0, object(), call_tool=lambda n, a: {}, today="2026-11-17")
     assert days == ["2024-03-01", "2026-11-17"]
+
+
+def test_the_built_files_hold_no_duplicates_and_the_manifest_counts_the_dedupe(built):
+    from bist_harness.finetune import qc
+
+    out, manifest = built
+    everything = [r for rs in records_of(out).values() for r in rs]
+    assert qc.dedupe(everything)[1] == 0
+    counts = manifest["dropped_counts"]
+    assert counts["near_duplicate"] == len(manifest["dropped"]["near_duplicate"])
+    assert counts["conflicting_targets"] == len(manifest["dropped"]["conflicting_targets"])
