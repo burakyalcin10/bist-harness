@@ -484,6 +484,19 @@ def run_one(
     )
 
 
+def summarize_records(
+    records: Sequence[dict], *, call_tool: ToolCaller | None, backtest_accuracy: bool = False
+) -> dict[str, dict]:
+    """The metrics of each experiment; with ``backtest_accuracy`` each also gets the
+    ``backtest_accuracy`` block (every executed backtest re-run through ``call_tool``)."""
+    result = metrics.summarize(records)
+    if backtest_accuracy:
+        for name, values in result.items():
+            own = [r for r in records if r["experiment"] == name]
+            values["backtest_accuracy"] = metrics.backtest_check(own, call_tool)
+    return result
+
+
 def run_eval(
     questions: Sequence[dict],
     client,
@@ -498,12 +511,15 @@ def run_eval(
     endpoint: str = "not recorded",
     progress: Callable[[dict], None] | None = None,
     question_set_sha256: str | None = None,
+    backtest_accuracy: bool = False,
 ) -> dict:
     """Run every experiment on every question ``repeats`` times; write ``records.jsonl``
     and ``summary.json`` under ``out_dir`` and return the summary.
 
     ``question_set_sha256`` names the question file in the summary (default: the frozen
-    set's recorded hash)."""
+    set's recorded hash). ``backtest_accuracy`` re-runs every executed backtest of the
+    records after the grading and adds the ``backtest_accuracy`` block to each experiment's
+    metrics (slow, so off by default)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now(UTC).isoformat(timespec="seconds")
     memory = db.connect(out_dir / "memory.sqlite") if "E" in experiments else None
@@ -548,7 +564,9 @@ def run_eval(
             "started_at": started,
             "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
         },
-        "metrics": metrics.summarize(records),
+        "metrics": summarize_records(
+            records, call_tool=call_tool, backtest_accuracy=backtest_accuracy
+        ),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8", newline="\n") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
@@ -611,7 +629,7 @@ def _print_record(record: dict) -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[2])
     parser.add_argument("--experiments", default=",".join(EXPERIMENTS))
     parser.add_argument("--repeats", type=int, default=2)
@@ -628,7 +646,17 @@ def main(argv: list[str] | None = None) -> int:
         help="questions in the frozen-set format, e.g. the fine-tuning dev questions "
         "(default: the frozen set, verified)",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--backtest-accuracy",
+        action="store_true",
+        help="re-run every executed backtest and report how many reproduce exactly "
+        "(slow; off by default)",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     try:
         chosen = load_question_set(args.questions_file)
@@ -670,6 +698,7 @@ def main(argv: list[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         endpoint=endpoint,
         progress=_print_record,
+        backtest_accuracy=args.backtest_accuracy,
         question_set_sha256=(
             question_set.file_sha256(args.questions_file) if args.questions_file else None
         ),

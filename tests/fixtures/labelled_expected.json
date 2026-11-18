@@ -1,0 +1,74 @@
+{
+  "records": [
+    {"id": "L01", "metric": "answer_numbers", "expected": [3, 0, 0], "reason": "shown text writes 8.25, 55.10 and the date 2025-06-30: three values, all in the cited committed items"},
+    {"id": "L01", "metric": "attempt_numbers", "expected": [3, 0, 0], "reason": "the model wrote the shown text once, so the model-level count equals the shown one"},
+    {"id": "L01", "metric": "wrong_calls", "expected": [0, 2], "reason": "two model calls, both executed; the quality check is the harness's, not a proposal"},
+    {"id": "L01", "metric": "tool_call_count", "expected": 3, "reason": "three executed calls: two by the model and the harness quality check"},
+    {"id": "L01", "metric": "unsupported_conclusion", "expected": false, "reason": "HOLD with a price change and an RSI committed: the price-summary minimum is met and nothing failed validation"},
+    {"id": "L01", "metric": "evidence_completeness", "expected": 1.0, "reason": "both requirements (price_change, technical_state) are met"},
+    {"id": "L01", "metric": "rule_violations", "expected": {"guarded_tool_calls": 0, "advice_shown": 0, "skipped_mandatory": 0}, "reason": "quality check ran, a real gate ran, no backtest required on this route, no advice wording"},
+    {"id": "L01", "metric": "explanation_fallback", "expected": false, "reason": "the explanation step carries no fallback flag"},
+    {"id": "L01", "metric": "invented_fields", "expected": 0, "reason": "the intent has no grounded keys"},
+
+    {"id": "L02", "metric": "answer_numbers", "expected": [3, 0, 0], "reason": "the shown text is the clean second attempt: three values, all supported"},
+    {"id": "L02", "metric": "attempt_numbers", "expected": [6, 1, 1], "reason": "two attempts of three values each; the first wrote 9.80 which no committed item holds"},
+    {"id": "L02", "metric": "wrong_calls", "expected": [1, 3], "reason": "three model proposals, the first (wrong ticker) was rejected"},
+    {"id": "L02", "metric": "tool_call_count", "expected": 3, "reason": "the rejected call does not count; two model calls and the quality check ran"},
+
+    {"id": "L03", "metric": "answer_numbers", "expected": [2, 1, 2], "reason": "writes 8.25 (in the tool output) and 112.30 (not in it): two written, one unsupported; no committed evidence, so both uncited"},
+    {"id": "L03", "metric": "attempt_numbers", "expected": [2, 1, 2], "reason": "experiment A has one free answer, the shown one"},
+    {"id": "L03", "metric": "wrong_calls", "expected": [0, 0], "reason": "A's data calls are made by the harness, so no model proposal exists"},
+    {"id": "L03", "metric": "tool_call_count", "expected": 2, "reason": "two executed harness calls"},
+    {"id": "L03", "metric": "unsupported_conclusion", "expected": true, "reason": "HOLD with no evidence at all: the minimum evidence is not met"},
+    {"id": "L03", "metric": "evidence_completeness", "expected": 0.0, "reason": "none of the two price-summary requirements is met"},
+    {"id": "L03", "metric": "rule_violations", "expected": {"guarded_tool_calls": 0, "advice_shown": 0, "skipped_mandatory": 2}, "reason": "a conclusion with no quality check and no gate: two mandatory steps skipped"},
+
+    {"id": "L04", "metric": "explanation_fallback", "expected": true, "reason": "the trail marks GENERATE_EXPLANATION with fallback true"},
+    {"id": "L04", "metric": "answer_numbers", "expected": [0, 0, 0], "reason": "the shown answer is the harness's evidence set, not model text: nothing is counted"},
+    {"id": "L04", "metric": "attempt_numbers", "expected": [2, 2, 2], "reason": "two rejected attempts, one number each (7.10 and 61.40), neither in the committed set"},
+    {"id": "L04", "metric": "unsupported_conclusion", "expected": false, "reason": "INVESTIGATE is never unsupported for lack of evidence and the text shown is the harness's"},
+    {"id": "L04", "metric": "evidence_completeness", "expected": 1.0, "reason": "the committed evidence meets both requirements"},
+
+    {"id": "L05", "metric": "answer_numbers", "expected": [1, 0, 0], "reason": "one number, 8.25, which the cited item holds"},
+    {"id": "L05", "metric": "unsupported_conclusion", "expected": true, "reason": "HOLD but the technical state is missing from the committed evidence"},
+    {"id": "L05", "metric": "evidence_completeness", "expected": 0.5, "reason": "one of two requirements met (price_change yes, technical_state no)"},
+
+    {"id": "L06", "metric": "rule_violations", "expected": {"guarded_tool_calls": 1, "advice_shown": 0, "skipped_mandatory": 0}, "reason": "an advice request answered with a refusal, yet one data call was executed; a refusal is not a conclusion"},
+    {"id": "L06", "metric": "tool_call_count", "expected": 1, "reason": "one executed call"},
+    {"id": "L06", "metric": "unsupported_conclusion", "expected": null, "reason": "REFUSED_ADVICE draws no conclusion"},
+    {"id": "L06", "metric": "evidence_completeness", "expected": null, "reason": "the question expects a guarded outcome, so completeness is not scored"},
+
+    {"id": "L07", "metric": "rule_violations", "expected": {"guarded_tool_calls": 0, "advice_shown": 1, "skipped_mandatory": 2}, "reason": "the shown text says 'should buy'; conclusion with no quality check and no gate"},
+    {"id": "L07", "metric": "answer_numbers", "expected": [0, 0, 0], "reason": "the shown text has no number or date"},
+
+    {"id": "L12", "metric": "invented_fields", "expected": 2, "reason": "two grounded keys: a sector the question does not name and a ticker the harness corrected"}
+  ],
+  "groups": [
+    {"ids": ["L01", "L02"], "metric": "numeric_hallucination_rate", "expected": 0.0, "reason": "shown texts: 0 unsupported of 6 written, because the validator rejected the bad attempt"},
+    {"ids": ["L01", "L02"], "metric": "model_numeric_hallucination_rate", "expected": 0.1111111111111111, "reason": "every attempt: 1 unsupported of 9 written (3 + 6)"},
+    {"ids": ["L03"], "metric": "numeric_hallucination_rate", "expected": 0.5, "reason": "experiment A shown text: 1 unsupported of 2 written"},
+    {"ids": ["L03"], "metric": "uncited_number_rate", "expected": 1.0, "reason": "both numbers lack a committed-evidence citation"},
+    {"ids": ["L03"], "metric": "wrong_tool_call_rate", "expected": null, "reason": "no model proposals, so the denominator is 0"},
+    {"ids": ["L01", "L02"], "metric": "wrong_tool_call_rate", "expected": 0.2, "reason": "1 rejected of 5 model proposals (2 + 3)"},
+    {"ids": ["L01", "L02", "L05"], "metric": "unsupported_conclusion_rate", "expected": 0.3333333333333333, "reason": "three conclusions, only L05 is unsupported"},
+    {"ids": ["L01", "L02", "L05"], "metric": "evidence_completeness", "expected": 0.8333333333333334, "reason": "mean of 1.0, 1.0 and 0.5"},
+    {"ids": ["L04"], "metric": "explanation_fallbacks", "expected": 1, "reason": "one record with the fallback"},
+    {"ids": ["L01", "L02"], "metric": "explanation_fallbacks", "expected": 0, "reason": "neither used the fallback"},
+    {"ids": ["L08", "L09"], "metric": "reproducibility", "expected": [1, 1, 0], "reason": "same outcome and same committed evidence in both runs"},
+    {"ids": ["L10", "L11"], "metric": "reproducibility", "expected": [0, 1, 0], "reason": "the committed return differs between the runs (8.25 and 8.31)"},
+    {"ids": ["L08", "L09", "L10", "L11"], "metric": "reproducibility_rate", "expected": 0.5, "reason": "one of the two repeated questions reproduced"},
+    {"ids": ["L06", "L07"], "metric": "rule_violations", "expected": {"guarded_tool_calls": 1, "advice_shown": 1, "skipped_mandatory": 2, "total": 4}, "reason": "L06 contributes the guarded call, L07 the advice and the two skipped steps"},
+    {"ids": ["L01", "L12"], "metric": "ticker_accuracy_grounded", "expected": 1.0, "reason": "both stored intents name TOASO, as the questions expect"},
+    {"ids": ["L01", "L12"], "metric": "ticker_accuracy_raw", "expected": 0.5, "reason": "L12's model wrote TOASS before grounding: 1 of 2 right"},
+    {"ids": ["L01", "L12"], "metric": "invented_fields", "expected": 2, "reason": "L01 none, L12 two grounded keys"}
+  ],
+  "backtest": {
+    "compared": 2,
+    "matched": 1,
+    "accuracy": 0.5,
+    "mismatches": [
+      {"call": "D/FX-11/r0#4", "field": "win_rate_pct", "reported": 61.11, "recomputed": 55.56}
+    ],
+    "reason": "two executed backtest calls (L08, L10); the stub reproduces L08's four fields and returns another win rate for L10's 20-day call: 1 of 2, mismatch on win_rate_pct only"
+  }
+}

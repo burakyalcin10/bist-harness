@@ -99,6 +99,16 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
   named stock's group) and ``language_grounded`` (records whose language label the
   question text corrected) are counted separately.
 * **Latency.** Seconds of one run (``latency_s``): median, mean and maximum.
+* **Backtest accuracy** (``backtest_accuracy``, ``backtest_check``): every executed
+  ``run_backtest`` call of the records (allowed, output without ``error``) is re-run with
+  the same arguments through a tool caller; a call matches when ``cumulative_return_pct``,
+  ``win_rate_pct``, ``max_drawdown_pct`` and ``trades`` are all exactly equal to the reported
+  ones. Accuracy = matched / compared (None when no call was compared); the mismatches are
+  listed with the call id and the field. Opt-in in ``run_eval`` (``--backtest-accuracy``):
+  re-running backtests is slow.
+
+The same definitions in report prose, with numerator, denominator and what each experiment
+can structurally show, are in docs/metrics.md; the two must not contradict.
 
 The *scoring scenario* is the intent's scenario when the question accepts it, else the
 question's first expected scenario.
@@ -355,6 +365,69 @@ def rule_violations(record: dict) -> dict[str, int]:
         "advice_shown": advice,
         "skipped_mandatory": skipped,
     }
+
+
+# --- backtest accuracy ---------------------------------------------------------------------
+BACKTEST_FIELDS = ("cumulative_return_pct", "win_rate_pct", "max_drawdown_pct", "trades")
+
+
+def _call_id(record: dict, call: dict) -> str:
+    return f"{record['experiment']}/{record['question_id']}/r{record['repeat']}#{call['seq']}"
+
+
+def backtest_check(records: Iterable[dict], call_tool) -> dict:
+    """Re-run every executed ``run_backtest`` call of ``records`` and compare the reported
+    fields (``BACKTEST_FIELDS``) with the recomputed ones.
+
+    The re-run uses the same tool, arguments and data version, so it is an independent
+    recomputation of the reported values (a fresh run of the engine, not the stored output).
+    Returns ``{"compared", "matched", "accuracy", "mismatches"}``; a mismatch is
+    ``{"call", "field", "reported", "recomputed"}`` and a re-run that raises or returns an
+    error is one mismatch with the field ``rerun``.
+    """
+    compared = matched = 0
+    mismatches: list[dict] = []
+    for record in records:
+        for call in record.get("tool_calls") or []:
+            output = call.get("output")
+            if call.get("tool") != "run_backtest" or not call.get("allowed"):
+                continue
+            if not isinstance(output, dict) or "error" in output:
+                continue
+            compared += 1
+            name = _call_id(record, call)
+            try:
+                again = call_tool("run_backtest", dict(call.get("arguments") or {}))
+            except Exception:  # a tool that fails now cannot reproduce the report
+                again = None
+            if not isinstance(again, dict) or "error" in again:
+                mismatches.append(
+                    {"call": name, "field": "rerun", "reported": None, "recomputed": None}
+                )
+                continue
+            differing = [
+                {
+                    "call": name,
+                    "field": field,
+                    "reported": output.get(field),
+                    "recomputed": again.get(field),
+                }
+                for field in BACKTEST_FIELDS
+                if output.get(field) != again.get(field)
+            ]
+            mismatches.extend(differing)
+            matched += not differing
+    return {
+        "compared": compared,
+        "matched": matched,
+        "accuracy": _rate(matched, compared),
+        "mismatches": mismatches,
+    }
+
+
+def backtest_accuracy(records: Iterable[dict], call_tool) -> float | None:
+    """Matched / compared backtest calls (see ``backtest_check``); None if none compared."""
+    return backtest_check(records, call_tool)["accuracy"]
 
 
 # --- summary -------------------------------------------------------------------------------
