@@ -435,8 +435,9 @@ REVERSAL_FORWARD_DAYS = 5
 WEEKDAY_PATTERN = "WEEKDAY_MEANS"
 # The variant whose feature layers match the scenario; A_TECHNICAL for the rest.
 DEFAULT_STRATEGY = {"SECTOR_LAGGARD": "B_TECH_SECTOR", "FUNDAMENTAL_REACTION": "C_TECH_SECTOR_FUND"}
-# The fundamentals variant is defined from the test period on (``run_backtest`` rejects it
-# for an earlier period); a period that starts before falls back to the sector variant.
+# The fundamentals variants are defined from the test period on: ``run_backtest`` rejects
+# a period that ends before it (and clamps one that only starts before it), so a period
+# ending before the test period falls back to the sector variant.
 FUNDAMENTALS_FROM = TEST_PERIOD[0]
 PRE_FUNDAMENTALS_STRATEGY = "B_TECH_SECTOR"
 MALFORMED_TOOL = "(malformed)"  # tool name recorded for a call that could not be parsed
@@ -507,7 +508,7 @@ def canonical_calls(state: str, intent: Intent, *, question: str = "") -> list[t
         else:
             universe = []
         strategy = DEFAULT_STRATEGY.get(intent.scenario, "A_TECHNICAL")
-        if strategy in FEATURE_FILTERS and (intent.start or "") < FUNDAMENTALS_FROM:
+        if strategy in FEATURE_FILTERS and (intent.end or "") < FUNDAMENTALS_FROM:
             strategy = PRE_FUNDAMENTALS_STRATEGY
         return [("run_backtest", {"strategy": strategy, "universe": universe, **period})]
     return []

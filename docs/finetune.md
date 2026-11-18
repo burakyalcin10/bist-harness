@@ -72,7 +72,8 @@ etiketi başka senaryoda çıkmaz). Ulaşılamayan hücreler gerekçesiyle bu b�
 sayılmaz; sayılar üretim manifestinden gelir.
 
 Temel veri kullanan C–E stratejileri yalnız ön kayıtlı test dönemi (2025-01-01 ve
-sonrası) için tanımlıdır. Eğitim tarihleri 2025'ten önce kaldığı için
-`FUNDAMENTAL_REACTION` sorularının kanonik backtest'i bu dönemde `B_TECH_SECTOR`'dür
-(`machine.canonical_calls`); aday etiketi bu backtest'le değerlendirilir. Bu hücrenin
+sonrası) için tanımlıdır. 2025'ten önce biten dönemlerde `FUNDAMENTAL_REACTION`
+sorularının kanonik backtest'i `B_TECH_SECTOR`'dür (`machine.canonical_calls`); eğitim
+tarihleri 2025'ten önce kaldığı için eğitim verisinde aday etiketi bu backtest'le
+değerlendirilir. Bu hücrenin
 gerçek veride dolup dolmadığı üretim manifestinden okunur.
