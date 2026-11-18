@@ -674,16 +674,38 @@ _EN_WORDS = frozenset(
 )
 
 
+_TURKISH_LETTER = re.compile(r"[ıİşŞğĞüÜöÖçÇ]")
+
+
+def _without_names(question: str) -> str:
+    """The question without stock codes and the words of known company names written
+    with Turkish letters ("Koç", "Türk", "Ereğli"), as written (case-sensitive): an
+    English question may name a Turkish company."""
+    text = _UPPER_TOKEN.sub(" ", question)
+    words = {
+        word
+        for names in _company_names().values()
+        for name in names
+        for word in name.split()
+        if _TURKISH_LETTER.search(word)
+    }
+    for word in sorted(words, key=len, reverse=True):
+        text = re.sub(rf"(?<!\w){re.escape(word)}(?:'\w*)?(?!\w)", " ", text)
+    return text
+
+
 def detect_language(question: str) -> str | None:
     """``"tr"`` or ``"en"`` from the question text alone, ``None`` when nothing tells.
 
-    Turkish letters decide for Turkish; otherwise the more frequent of the Turkish and
-    English marker words decides (a tie, none included, tells nothing).
+    Stock codes and known company names are left out first (``_without_names``). Then
+    Turkish evidence (the Turkish marker words, plus every word written with a Turkish
+    letter, such as an unknown company name) is weighed against the English marker
+    words; the larger decides, a tie (none included) tells nothing.
     """
-    if re.search(r"[ıİşŞğĞüÜöÖçÇ]", question):
-        return "tr"
-    words = fold_text(question).split()
+    text = _without_names(question)
+    words = fold_text(text).split()
     turkish = sum(1 for w in words if w in _TR_WORDS)
+    turkish += sum(1 for w in text.split() if _TURKISH_LETTER.search(w))
     english = sum(1 for w in words if w in _EN_WORDS)
     if turkish == english:
         return None

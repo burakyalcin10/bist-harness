@@ -688,3 +688,38 @@ def test_experiment_a_keeps_the_model_language():
     client = FakeClient(payload(language="en"))
     intent = parse_intent("THYAO son üç ayda nasıl gitti?", client, today=TODAY, guard=False)
     assert intent.language == "en" and intent.grounded == {}
+
+
+# --- M3 follow-up: a company name's Turkish letters do not make a question Turkish ---------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "How did Koç Holding trade over the last quarter?",
+        "Did Türk Telekom lag its sector in 2025?",
+        "What was the RSI of Ereğli after its results?",
+        "How did Şişecam react to the policy rate decision?",
+        "Has Tüpraş bounced after touching its lower Bollinger band?",
+        "Tell me about Türk Hava Yolları.",
+    ],
+)
+def test_an_english_question_naming_a_turkish_company_is_english(text):
+    from bist_harness.harness.intent import detect_language
+
+    assert detect_language(text) == "en"
+    intent, _ = ask(text, language="en")
+    assert intent.language == "en" and "language" not in intent.grounded
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Koç Holding son 3 ayda nasil gitti?",
+        "Türk Telekom sektorunde geride mi kaldi?",
+        "Ereğli hissesi icin destek seviyesi ne?",
+        "Şişecam fiyatı ne oldu?",
+    ],
+)
+def test_a_turkish_question_naming_a_company_is_still_turkish(text):
+    from bist_harness.harness.intent import detect_language
+
+    assert detect_language(text) == "tr"
