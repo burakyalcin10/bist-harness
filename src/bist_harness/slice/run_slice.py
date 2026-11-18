@@ -185,7 +185,10 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.from_env()
     client = OllamaClient(
-        settings.llm_base_url, args.model or settings.llm_model, timeout_s=args.timeout
+        settings.llm_base_url,
+        args.model or settings.llm_model,
+        timeout_s=args.timeout,
+        api=settings.llm_api,
     )
     report(run_slice(args.question, client))
     return 0

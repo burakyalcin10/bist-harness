@@ -47,3 +47,24 @@ def test_no_cloud_ai_dependencies():
     text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
     for name in ("openai", "anthropic", "google-generativeai", "cohere", "mistralai"):
         assert name not in text
+
+
+def test_llm_api_defaults_to_native_ollama(monkeypatch, tmp_path):
+    monkeypatch.delenv("BIST_LLM_API", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert Settings.from_env().llm_api == "ollama"
+
+
+def test_llm_api_can_select_the_openai_compatible_route(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BIST_LLM_API", "OpenAI")
+    assert Settings.from_env().llm_api == "openai"
+
+
+def test_unknown_llm_api_is_refused(monkeypatch, tmp_path):
+    import pytest
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BIST_LLM_API", "grpc")
+    with pytest.raises(ValueError, match="BIST_LLM_API"):
+        Settings.from_env()

@@ -1,6 +1,10 @@
 """Minimal client for an Ollama-compatible chat endpoint.
 
-Only the native ``/api/chat`` and ``/api/tags`` routes are used. Every call is
+The native ``/api/chat`` and ``/api/tags`` routes are used; with ``api="openai"`` the chat
+goes to Ollama's OpenAI-compatible ``/v1/chat/completions`` instead (for a gateway that
+passes only that route), with the same model, messages, tools, schema, temperature, seed
+and thinking switch (``reasoning_effort: "none"`` is Ollama's ``think: false`` there). The
+context size cannot be set on that route. Every call is
 deterministic by default (temperature 0, fixed seed, no thinking output), so the same
 question against the same data gives the same tool calls.
 """
@@ -10,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -140,8 +145,12 @@ class OllamaClient:
         *,
         timeout_s: float = 300.0,
         transport: httpx.BaseTransport | None = None,
+        api: str = "ollama",
     ) -> None:
+        if api not in ("ollama", "openai"):
+            raise ValueError(f"unknown api {api!r}: use 'ollama' or 'openai'")
         self.model = model
+        self.api = api
         try:
             self._http = httpx.Client(
                 base_url=base_url.rstrip("/"), timeout=timeout_s, transport=transport
@@ -179,6 +188,16 @@ class OllamaClient:
         response_format: dict | None = None,
         num_ctx: int | None = None,
     ) -> ChatResult:
+        if self.api == "openai":
+            return self._chat_compat(
+                messages,
+                tools,
+                temperature=temperature,
+                seed=seed,
+                think=think,
+                response_format=response_format,
+                num_ctx=num_ctx,
+            )
         options: dict = {"temperature": temperature, "seed": seed}
         if num_ctx is not None:
             options["num_ctx"] = num_ctx
@@ -205,6 +224,56 @@ class OllamaClient:
             completion_tokens=eval_count,
             total_duration_s=int(raw.get("total_duration") or 0) / 1e9,
             eval_tokens_per_s=(eval_count / (eval_ns / 1e9)) if eval_ns else None,
+            raw=raw,
+            malformed_tool_call=looks_like_tool_call(message),
+        )
+
+    def _chat_compat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        *,
+        temperature: float,
+        seed: int,
+        think: bool,
+        response_format: dict | None,
+        num_ctx: int | None,
+    ) -> ChatResult:
+        """The same request on the OpenAI-compatible route. The route reports no
+        generation time, so the duration is the request's wall time and the speed is None."""
+        if num_ctx is not None:
+            raise ValueError("num_ctx cannot be set on the OpenAI-compatible route")
+        payload: dict = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+            "seed": seed,
+        }
+        if not think:
+            payload["reasoning_effort"] = "none"
+        if tools:
+            payload["tools"] = tools
+        if response_format is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": response_format},
+            }
+        started = time.perf_counter()
+        raw = self._request("POST", "/v1/chat/completions", json=payload)
+        elapsed = time.perf_counter() - started
+        choices = raw.get("choices") or []
+        if not choices:
+            raise LLMUnavailableError("LLM endpoint returned no choices")
+        message = choices[0].get("message") or {}
+        usage = raw.get("usage") or {}
+        return ChatResult(
+            content=message.get("content") or "",
+            tool_calls=parse_tool_calls(message),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            total_duration_s=elapsed,
+            eval_tokens_per_s=None,
             raw=raw,
             malformed_tool_call=looks_like_tool_call(message),
         )

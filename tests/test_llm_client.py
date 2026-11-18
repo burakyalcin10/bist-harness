@@ -153,3 +153,120 @@ def test_http_library_logging_does_not_reveal_the_endpoint(caplog):
         client.chat([])
         client.list_models()
     assert "secret-host" not in caplog.text
+
+
+# --- the OpenAI-compatible route (a gateway that passes only /v1/chat/completions) -------
+def _compat_client(handler) -> OllamaClient:
+    return OllamaClient(
+        "http://llm.test", "m", api="openai", transport=httpx.MockTransport(handler)
+    )
+
+
+def _compat_reply(message: dict, usage: dict | None = None) -> httpx.Response:
+    body = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "model": "m",
+        "choices": [{"index": 0, "message": {"role": "assistant", **message}}],
+    }
+    if usage is not None:
+        body["usage"] = usage
+    return httpx.Response(200, json=body)
+
+
+def test_compat_route_sends_the_same_deterministic_request():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["body"] = json.loads(request.content)
+        return _compat_reply({"content": "ok"})
+
+    tools = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
+    schema = {"type": "object", "properties": {}}
+    _compat_client(handler).chat(
+        [{"role": "user", "content": "hi"}], tools=tools, response_format=schema
+    )
+
+    body = seen["body"]
+    assert seen["url"] == "http://llm.test/v1/chat/completions"
+    assert body["model"] == "m"
+    assert body["messages"] == [{"role": "user", "content": "hi"}]
+    assert body["stream"] is False
+    assert body["reasoning_effort"] == "none"  # Ollama's think: false on this route
+    assert (body["temperature"], body["seed"]) == (0.0, 42)
+    assert body["tools"] == tools
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "response", "schema": schema},
+    }
+
+
+def test_compat_route_without_format_or_tools_sends_neither():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return _compat_reply({"content": "ok"})
+
+    _compat_client(handler).chat([], think=True)
+    assert "tools" not in seen["body"]
+    assert "response_format" not in seen["body"]
+    assert "reasoning_effort" not in seen["body"]  # thinking left at the model's default
+
+
+def test_compat_route_cannot_set_the_context_size():
+    client = _compat_client(lambda request: _compat_reply({"content": "x"}))
+    with pytest.raises(ValueError, match="num_ctx"):
+        client.chat([], num_ctx=8192)
+
+
+def test_compat_route_tool_calls_and_token_counts_are_read():
+    def handler(request: httpx.Request) -> httpx.Response:
+        call = {
+            "id": "call_1",
+            "index": 0,
+            "type": "function",
+            "function": {"name": "get_stock_history", "arguments": '{"ticker":"ASELS"}'},
+        }
+        return _compat_reply(
+            {"content": "", "tool_calls": [call]},
+            usage={"prompt_tokens": 300, "completion_tokens": 40, "total_tokens": 340},
+        )
+
+    result = _compat_client(handler).chat([])
+    assert result.tool_calls == (ToolCall("get_stock_history", {"ticker": "ASELS"}),)
+    assert (result.prompt_tokens, result.completion_tokens) == (300, 40)
+    assert result.eval_tokens_per_s is None  # the route reports no generation time
+    assert result.total_duration_s >= 0.0
+    assert result.malformed_tool_call is False
+
+
+def test_compat_route_text_tool_call_is_still_recovered():
+    content = '<tool_call>{"name": "get_stock_history", "arguments": {"ticker": "ASELS"}}'
+    result = _compat_client(lambda request: _compat_reply({"content": content})).chat([])
+    assert result.tool_calls == (ToolCall("get_stock_history", {"ticker": "ASELS"}),)
+
+
+def test_compat_route_errors_name_no_address():
+    client = OllamaClient(
+        "http://secret-host.test",
+        "m",
+        api="openai",
+        transport=httpx.MockTransport(lambda request: httpx.Response(404, text="secret-host")),
+    )
+    with pytest.raises(LLMUnavailableError) as excinfo:
+        client.chat([])
+    assert "404" in str(excinfo.value)
+    assert "secret-host" not in str(excinfo.value)
+
+
+def test_compat_route_without_choices_is_unavailable():
+    client = _compat_client(lambda request: httpx.Response(200, json={"object": "error"}))
+    with pytest.raises(LLMUnavailableError, match="no choices"):
+        client.chat([])
+
+
+def test_unknown_api_is_refused():
+    with pytest.raises(ValueError, match="api"):
+        OllamaClient("http://llm.test", "m", api="grpc")

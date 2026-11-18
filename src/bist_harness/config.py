@@ -3,6 +3,10 @@
 The LLM endpoint is always an Ollama-compatible server the student controls:
 the laptop's own Ollama by default, or a private machine set through
 ``BIST_LLM_BASE_URL``. No cloud AI provider is ever contacted.
+
+``BIST_LLM_API`` picks the route on that server: ``ollama`` (default, the native
+``/api/chat``) or ``openai`` (Ollama's OpenAI-compatible ``/v1/chat/completions``, for a
+gateway that passes only that route).
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from pathlib import Path
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3.5:9b-q4_K_M"
+LLM_APIS = ("ollama", "openai")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -34,6 +39,7 @@ def _read_dotenv(path: Path) -> dict[str, str]:
 class Settings:
     llm_base_url: str = DEFAULT_BASE_URL
     llm_model: str = DEFAULT_MODEL
+    llm_api: str = "ollama"
     temperature: float = 0.0
     seed: int = 42
     data_dir: Path = Path("data")
@@ -48,8 +54,12 @@ class Settings:
 
         base_url = (get("BIST_LLM_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         data_dir = get("BIST_DATA_DIR")
+        api = (get("BIST_LLM_API") or "ollama").strip().lower()
+        if api not in LLM_APIS:
+            raise ValueError(f"BIST_LLM_API must be one of {', '.join(LLM_APIS)}")
         return cls(
             llm_base_url=base_url,
             llm_model=get("BIST_LLM_MODEL") or DEFAULT_MODEL,
+            llm_api=api,
             data_dir=Path(data_dir) if data_dir else REPO_ROOT / "data",
         )
