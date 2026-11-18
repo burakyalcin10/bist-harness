@@ -48,3 +48,25 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.5",
 ]
+# QLoRA training and merge (finetune/train.py, finetune/export.py). Not installed by
+# default and never imported by the harness: `uv sync --group train`.
+train = [
+    "torch==2.11.0",
+    "transformers>=5.23.0",
+    "peft>=0.21.3",
+    "bitsandbytes>=0.50.2",
+    "accelerate>=1.16.0",
+    "safetensors>=0.7.0",
+    "sentencepiece>=0.2.1",
+    "protobuf>=6.33.0",
+]
+
+# torch built for CUDA 12.8 (Blackwell sm_120 needs 12.8 or later). Only the train group
+# pulls torch; the index is explicit, so no other package is resolved from it.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]

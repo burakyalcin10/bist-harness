@@ -15,3 +15,6 @@ data/*.sqlite
 reference/instructor/*.py
 .worktrees/
 data/finetune/
+
+# llama.cpp checkout for the GGUF export (never committed)
+tools/llama.cpp/
