@@ -2,8 +2,9 @@
 
 A record holds the messages and tool schemas exactly as the harness sent them to the model
 in that turn, and the target reply. Training therefore sees the same format as inference.
-Files are JSON Lines, one record per line, keys sorted, written with ``\\n`` only, so the
-same records always give the same bytes (and the same SHA-256).
+Files are JSON Lines, one record per line, written with ``\\n`` only. Keys keep the order
+in which they were built (the harness's order for messages and tool schemas, which the
+chat template renders), so the same records always give the same bytes (and SHA-256).
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ class TrainingRecord:
 
 
 def _line(record: TrainingRecord) -> str:
-    return json.dumps(dataclasses.asdict(record), ensure_ascii=False, sort_keys=True)
+    return json.dumps(dataclasses.asdict(record), ensure_ascii=False)
 
 
 def write_jsonl(records: Iterable[TrainingRecord], path: Path) -> str:

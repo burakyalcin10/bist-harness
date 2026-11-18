@@ -18,7 +18,13 @@ from bist_harness.data import macro as macro_data
 from bist_harness.data import snapshot as snapshot_module
 from bist_harness.eval import questions as frozen
 from bist_harness.finetune.record import TURN_KINDS, TrainingRecord, read_jsonl, write_jsonl
-from bist_harness.finetune.teacher import CapturingClient, Gold, TeacherClient, TeacherError
+from bist_harness.finetune.teacher import (
+    CapturingClient,
+    Gold,
+    TeacherClient,
+    TeacherError,
+    choose_action,
+)
 from bist_harness.harness import machine, session
 from bist_harness.harness.intent import INTENT_SCHEMA, INTENT_SYSTEM_PROMPT
 from bist_harness.harness.routes import ALLOWED_TOOLS, ROUTES
@@ -94,6 +100,10 @@ UNDATED = (
     "How did THYAO move after it touched its lower band?",
     gold("TECHNICAL_REVERSAL", "THYAO", None, None, "en"),
 )
+SECTOR_ONLY = (
+    "2024-01-02 ile 2024-06-28 arasında bankacılık sektöründe geride kalan hisseler hangileri?",
+    gold("SECTOR_LAGGARD", None, "2024-01-02", "2024-06-28", "tr", sector="Banking"),
+)
 ADVICE = (
     "Bu hafta THYAO hissesini almalı mıyım, ne dersin?",
     gold("ADVICE_REQUEST", "THYAO", None, None, "tr"),
@@ -126,7 +136,7 @@ def capture_explanation(seen: dict):
 
 
 def test_question_wordings_are_not_frozen():
-    texts = [q for q, _ in (*CASES.values(), UNDATED, ADVICE)]
+    texts = [q for q, _ in (*CASES.values(), UNDATED, SECTOR_ONLY, ADVICE)]
     assert frozen.overlaps(texts) == []
 
 
@@ -213,9 +223,10 @@ def test_teacher_explanation_passes_validator(case):
         defaulted_bound=intent["defaulted_bound"],
     )
     assert problems == []
-    # the harness took the first reply; with no gold action the first eligible label
+    # the harness took the first reply; with no gold action the preferred eligible label
     assert (result.attempts, result.fallback) == (1, False)
-    assert target["action"] == result.eligible[0] == teacher.turns[-1].meta["action"]
+    assert result.eligible == ["HOLD", "WATCH", "INVESTIGATE"]
+    assert target["action"] == "WATCH" == teacher.turns[-1].meta["action"]
     assert teacher.turns[-1].meta["eligible"] == result.eligible
 
     lines = target["explanation"].split("\n")
@@ -288,6 +299,56 @@ def test_a_gold_action_that_is_not_eligible_raises_teacher_error():
         run(question, wrong)
 
 
+def test_an_eligible_gold_action_wins():
+    question, teacher_gold = CASES["TECHNICAL_REVERSAL"]
+    teacher, analysis = run(question, Gold(intent=teacher_gold.intent, action="INVESTIGATE"))
+    assert json.loads(teacher.turns[-1].target["content"])["action"] == "INVESTIGATE"
+    assert analysis.outcome == "INVESTIGATE"
+
+
+@pytest.mark.parametrize(
+    ("eligible", "chosen"),
+    [
+        (["HOLD", "WATCH", "INVESTIGATE"], "WATCH"),
+        (
+            ["HOLD", "WATCH", "INVESTIGATE", "TECHNICAL_REVERSAL_CANDIDATE"],
+            "TECHNICAL_REVERSAL_CANDIDATE",
+        ),
+        (["HOLD", "INVESTIGATE", "REJECT_SIGNAL"], "REJECT_SIGNAL"),
+        (["REJECT_SIGNAL"], "REJECT_SIGNAL"),
+        (["HOLD", "INVESTIGATE"], "HOLD"),
+        (["INVESTIGATE"], "INVESTIGATE"),
+    ],
+)
+def test_default_label_preference(eligible, chosen):
+    assert choose_action(eligible, None) == chosen
+
+
+def test_explicit_action_and_never_analysis_unsafe():
+    assert choose_action(["HOLD", "WATCH", "INVESTIGATE"], "HOLD") == "HOLD"
+    with pytest.raises(TeacherError, match="WATCH"):
+        choose_action(["HOLD", "INVESTIGATE"], "WATCH")
+    with pytest.raises(TeacherError):
+        choose_action(["ANALYSIS_UNSAFE"], None)
+
+
+# --- a state without a canonical call -------------------------------------------------------
+def test_a_state_without_a_canonical_call_writes_no_record():
+    question, teacher_gold = SECTOR_ONLY
+    teacher, analysis = run(question, teacher_gold)
+    states = [r.state for r in teacher.turns if r.turn == "tool_call"]
+    assert "CALCULATE_TECHNICALS" not in states  # needs a stock; the question names none
+    assert [r.turn for r in teacher.turns] == [
+        "intent",
+        *["tool_call"] * len(states),
+        "explanation",
+    ]
+    assert states == [s for s in model_states("SECTOR_LAGGARD") if s != "CALCULATE_TECHNICALS"]
+    detail = next(r.detail for r in analysis.trail if r.state == "CALCULATE_TECHNICALS")
+    assert detail["fallback"] is True  # the harness's own fallback, not the teacher's record
+    assert analysis.outcome == json.loads(teacher.turns[-1].target["content"])["action"]
+
+
 def test_gold_intent_must_fit_the_schema():
     with pytest.raises(ValueError):
         Gold(intent={"scenario": "PRICE_SUMMARY", "ticker": "THYAO"}, action=None)
@@ -312,7 +373,43 @@ def test_records_round_trip_with_a_stable_hash(tmp_path):
     assert len(digest) == 64
     raw = first.read_bytes()
     assert b"\r\n" not in raw and raw.count(b"\n") == len(records)
-    line = json.loads(raw.decode("utf-8").splitlines()[0])
-    assert list(line) == sorted(line)
     assert read_jsonl(first) == records
     assert all(isinstance(r, TrainingRecord) for r in read_jsonl(first))
+
+
+def test_records_keep_the_key_order_the_harness_sent(tmp_path):
+    tool = {"type": "function", "function": {"name": "zeta", "parameters": {"z": 1, "a": 2}}}
+    record = TrainingRecord(
+        record_id="q-00",
+        question_id="q",
+        family="f",
+        language="en",
+        scenario="PRICE_SUMMARY",
+        turn="tool_call",
+        state="LOAD_MARKET_DATA",
+        messages=[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+        tools=[tool],
+        target={
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "zeta",
+                        "arguments": {"ticker": "X", "end": "e", "start": "s"},
+                    }
+                }
+            ],
+        },
+        meta={"today": "t", "action": None},
+    )
+    first, second = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    write_jsonl([record], first)
+    write_jsonl([record], second)
+    assert first.read_bytes() == second.read_bytes()
+    (back,) = read_jsonl(first)
+    assert list(back.tools[0]) == ["type", "function"]
+    assert list(back.tools[0]["function"]["parameters"]) == ["z", "a"]
+    arguments = back.target["tool_calls"][0]["function"]["arguments"]
+    assert list(arguments) == ["ticker", "end", "start"]
+    assert list(back.messages[0]) == ["role", "content"]
+    assert list(back.meta) == ["today", "action"]

@@ -16,8 +16,10 @@ değişirse veri yeniden üretilir.
 
 ### Kayıt biçimi
 
-Her satır bir `TrainingRecord`'dur (`finetune/record.py`, JSON Lines, anahtarlar sıralı,
-satır sonu `\n`; aynı kayıtlar aynı baytları ve aynı SHA-256'yı verir):
+Her satır bir `TrainingRecord`'dur (`finetune/record.py`, JSON Lines, satır sonu
+`\n`). Anahtarlar sıralanmaz: mesajlar ve araç şemaları harness'in kurduğu sırayla
+yazılır, çünkü sohbet şablonu onları bu sırayla işler. Aynı kayıtlar aynı baytları ve
+aynı SHA-256'yı verir.
 
 | Alan | İçerik |
 | --- | --- |
@@ -40,7 +42,15 @@ satır sonu `\n`; aynı kayıtlar aynı baytları ve aynı SHA-256'yı verir):
 (`ground_intent` hiçbir alanı değiştirmemeli), araç çağrıları `check_call`'dan,
 açıklama `validate_explanation`'dan geçmeli. Geçmeyen hedef yazılmaz (`TeacherError`);
 harness bir cevabı reddedip aynı turu yeniden sorarsa da öğretmen durur ve o soru veriden
-çıkar. Altın etiket verilmemişse uygun etiketlerin ilki seçilir.
+çıkar.
+
+Altın etiket verilmemişse uygun etiketler arasından sabit bir öncelikle seçilir: herhangi
+bir `*_CANDIDATE` > `REJECT_SIGNAL` > `WATCH` > `HOLD` > `INVESTIGATE`. Öğretmen
+`ANALYSIS_UNSAFE`'i kendiliğinden seçmez. Verilen altın etiket uygunsa her zaman o kullanılır.
+
+Kanonik çağrısı olmayan bir araç durumunda (ör. hisse adı geçmeyen bir sektör sorusunda
+hisse isteyen durum) öğretmen boş cevap verir ve o tur için kayıt yazmaz: öğretilecek
+doğru bir çağrı yoktur. Harness kendi geri dönüşünü çalıştırır, soru veride kalır.
 
 ### Kapsama
 
@@ -60,3 +70,9 @@ Kapsama tablosu dört boyutludur:
 Senaryo × etiket tablosunun her hücresi dolu olmayabilir (ör. bir senaryonun aday
 etiketi başka senaryoda çıkmaz). Ulaşılamayan hücreler gerekçesiyle bu bölüme yazılır ve
 sayılmaz; sayılar üretim manifestinden gelir.
+
+Ulaşılamayan hücreler:
+
+| Senaryo × etiket | Gerekçe |
+| --- | --- |
+| `FUNDAMENTAL_REACTION` × `FUNDAMENTAL_IMPROVEMENT_CANDIDATE` | Temel veri kullanan C–E stratejileri yalnız ön kayıtlı test dönemi (2025-01-01 ve sonrası) için tanımlıdır; eğitim tarihleri 2025'ten önce kaldığı için bu senaryonun backtest'i hata verir ve aday etiketi uygun etiketler arasına girmez. |

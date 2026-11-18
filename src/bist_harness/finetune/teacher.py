@@ -14,9 +14,12 @@ The turn kind is recognised from what the harness sent, by its shared constants:
   labels as advice or prediction must have that scenario.
 - ``tool_call``: the system message starts with ``machine.TOOL_STATE_PROMPT``; the state is
   read from the prompt, which must re-render exactly. Target: ``canonical_calls(state,
-  intent, question=...)``, each one checked with ``machine.check_call``.
+  intent, question=...)``, each one checked with ``machine.check_call``. A state with no
+  canonical call (a sector question in a state that needs a stock) gets an empty reply,
+  also when the harness asks again, and no record: there is no correct call to teach; the
+  harness's own fallback runs and the question is kept.
 - ``explanation``: called with ``validator.explanation_schema(eligible)``. Target: the
-  action (``Gold.action``; when it is None, the first eligible label) and one line per
+  action (``choose_action``) and one line per
   committed evidence item, the item's sentence copied as written (numbers with their sign)
   and cited ``[En]``; then the period note when the period was defaulted, and the
   disclaimer line, both in the validator's exact wording.
@@ -27,7 +30,7 @@ stops and the caller drops the question):
 
 - a target that fails its own check (grounding, guard, ``check_call``, an action that is
   not eligible, ``validate_explanation``);
-- a second request for the same turn: the harness rejected the teacher's reply.
+- a second request for a turn the teacher answered: the harness rejected its reply.
 
 The explanation check runs ``validate_explanation`` with the eligible labels, question,
 language and period flags of the prompt (each confirmed by re-rendering the prompt) and
@@ -40,6 +43,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from bist_harness.harness.evidence import DISCLAIMER, LANGUAGES, Evidence
@@ -70,7 +74,7 @@ from bist_harness.tools.schemas import ACTIONS
 
 from .record import TrainingRecord
 
-__all__ = ["CapturingClient", "Gold", "TeacherClient", "TeacherError"]
+__all__ = ["CapturingClient", "Gold", "TeacherClient", "TeacherError", "choose_action"]
 
 _GUARDED = ("ADVICE_REQUEST", "PREDICTION_REQUEST")
 _STATE = re.compile(r"^Current state: ([A-Z_]+)\.", re.MULTILINE)
@@ -82,6 +86,15 @@ _VALUES = re.compile(
 # (defaulted_period, defaulted_bound) of an intent, as the explanation prompt renders them.
 _PERIOD_CASES = ((False, None), (True, None), (True, "start"), (True, "end"))
 _QUESTION, _EVIDENCE = "Question: ", "\n\nEvidence:\n"
+# The default label, most informative first: any candidate (in ACTIONS order), then
+# REJECT_SIGNAL, WATCH, HOLD, INVESTIGATE. ANALYSIS_UNSAFE is never chosen by default.
+DEFAULT_PREFERENCE = (
+    *(label for label in ACTIONS if label.endswith("_CANDIDATE")),
+    "REJECT_SIGNAL",
+    "WATCH",
+    "HOLD",
+    "INVESTIGATE",
+)
 
 
 class TeacherError(RuntimeError):
@@ -93,10 +106,7 @@ class Gold:
     """The correct answers for one question.
 
     ``intent`` fits ``INTENT_SCHEMA`` (all seven keys). ``action`` is the label of the
-    explanation turn; when it is None and the harness allows several labels, the teacher
-    takes the first one of the eligible list (``actions.eligible_actions`` keeps the order
-    of ``ACTIONS``, so HOLD comes first when it is allowed). A gold action that the harness
-    does not allow for the run raises ``TeacherError``.
+    explanation turn; None leaves it to the fixed preference of ``choose_action``.
     """
 
     intent: dict
@@ -115,6 +125,24 @@ class Gold:
                 raise ValueError(f"{key} is a string or None")
         if self.action is not None and self.action not in ACTIONS:
             raise ValueError(f"unknown action label: {self.action!r}")
+
+
+def choose_action(eligible: Sequence[str], action: str | None) -> str:
+    """The label of the explanation target.
+
+    An explicit gold ``action`` wins when the harness allows it and raises ``TeacherError``
+    when it does not. Without one, the first label of ``DEFAULT_PREFERENCE`` that is
+    eligible: any ``*_CANDIDATE`` > REJECT_SIGNAL > WATCH > HOLD > INVESTIGATE. The teacher
+    never picks ANALYSIS_UNSAFE by default; an eligible list with nothing else raises.
+    """
+    if action is not None:
+        if action not in eligible:
+            raise TeacherError(f"gold action {action} is not eligible: {', '.join(eligible)}")
+        return action
+    for label in DEFAULT_PREFERENCE:
+        if label in eligible:
+            return label
+    raise TeacherError(f"no label the teacher may choose by default: {', '.join(eligible)}")
 
 
 def _reply(content: str = "", calls: tuple[ToolCall, ...] = ()) -> ChatResult:
@@ -165,13 +193,18 @@ class TeacherClient:
             kind = "explanation"
         else:
             raise ValueError("not a model turn of the harness: no known prompt or schema")
+        if kind == "tool_call":
+            state, intent = self._state_intent(system)
+            calls = canonical_calls(state, intent, question=messages[1]["content"])
+            if not calls:  # nothing correct to call: an empty reply and no record
+                return _reply()
         if len(messages) != 2:  # system and question; more means a rejected reply
             last = messages[-1].get("content", "")
             raise TeacherError(f"the harness rejected the teacher's {kind} reply: {last}")
         if kind == "intent":
             return self._intent(messages, response_format)
         if kind == "tool_call":
-            return self._tool_call(messages, tools)
+            return self._tool_call(messages, tools, state, intent, calls)
         return self._explanation(messages, response_format)
 
     # --- the three turns -----------------------------------------------------------------
@@ -193,12 +226,15 @@ class TeacherClient:
         self._record("intent", None, messages, [], {"role": "assistant", "content": content})
         return _reply(content)
 
-    def _tool_call(self, messages: list[dict], tools: list[dict] | None) -> ChatResult:
-        system, question = messages[0]["content"], messages[1]["content"]
-        state, intent = self._state_intent(system)
-        calls = canonical_calls(state, intent, question=question)
-        if not calls:
-            raise TeacherError(f"no canonical call in {state} for this intent")
+    def _tool_call(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None,
+        state: str,
+        intent: Intent,
+        calls: list[tuple[str, dict]],
+    ) -> ChatResult:
+        question = messages[1]["content"]
         for name, arguments in calls:
             problem = check_call(state, name, arguments, intent, analysis_id="", question=question)
             if problem is not None:
@@ -217,9 +253,7 @@ class TeacherClient:
         eligible = _eligible_of(response_format) or []
         language, defaulted, bound = _explanation_flags(messages[0]["content"], eligible)
         question, committed = _listed_evidence(messages[1]["content"])
-        action = self.gold.action or eligible[0]
-        if action not in eligible:
-            raise TeacherError(f"gold action {action} is not eligible: {', '.join(eligible)}")
+        action = choose_action(eligible, self.gold.action)
         lines = [f"{e.sentence} [{e.label}]" for e in committed]
         if defaulted:
             lines.append(period_note(language, bound))
