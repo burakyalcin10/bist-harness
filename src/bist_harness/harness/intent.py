@@ -73,6 +73,8 @@ _SYSTEM_PROMPT = (
     "else). Use ISO dates (YYYY-MM-DD) only when the question states them, otherwise null. "
     "Tickers are upper-case BIST codes such as THYAO. language is tr or en. Answer with JSON only."
 )
+# Public name of the START prompt: the fine-tuning teacher recognises the intent turn by it.
+INTENT_SYSTEM_PROMPT = _SYSTEM_PROMPT
 
 
 @dataclass(frozen=True)

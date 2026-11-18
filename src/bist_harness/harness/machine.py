@@ -506,9 +506,13 @@ def canonical_calls(state: str, intent: Intent, *, question: str = "") -> list[t
 
 
 # --- model states ----------------------------------------------------------------------
+# First line of every tool-state prompt: the fine-tuning teacher recognises the turn by it.
+TOOL_STATE_PROMPT = "You are the tool-calling step of an educational BIST 100 analysis harness."
+
+
 def _state_prompt(state: str, intent: Intent) -> str:
     lines = [
-        "You are the tool-calling step of an educational BIST 100 analysis harness.",
+        TOOL_STATE_PROMPT,
         f"Current state: {state}. Call one or more of these tools: "
         f"{', '.join(ALLOWED_TOOLS[state])}.",
         "Use exactly these values from the question's intent: "
