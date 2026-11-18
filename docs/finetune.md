@@ -77,3 +77,34 @@ sorularının kanonik backtest'i `B_TECH_SECTOR`'dür (`machine.canonical_calls`
 tarihleri 2025'ten önce kaldığı için eğitim verisinde aday etiketi bu backtest'le
 değerlendirilir. Bu hücrenin
 gerçek veride dolup dolmadığı üretim manifestinden okunur.
+
+## Soru üretimi
+
+Sorular şablonlardan üretilir (`finetune/questions.py`, `generate(n, seed=42)`); her
+aile Türkçe ve İngilizce, resmî ve günlük en az 6 parafraz taşır, Türkçe günlük
+biçimlerin bir kısmı aksansızdır (ayrıca üretimde Türkçe sorunun yaklaşık beşte biri
+aksansız yazılır). Aile başına `n` soru, diller dönüşümlü. Gold niyet yalnız sorunun
+adlandırdığını taşır: hisse kodla, şirket adıyla ya da küçük harfli kodla; tarih yalnız
+metinde yazılıysa; sektör yok. `ground_intent` bir gold'u değiştirirse soru yeniden çekilir.
+
+| Aile | Gold senaryo | Not |
+| --- | --- | --- |
+| `{sector_laggard, calendar_pattern, technical_reversal, fundamental_reaction}_{dated, undated, company, lowercase}` | ilgili senaryo | 16 aile: tarihli, tarihsiz (varsayılan dönem), şirket adıyla, küçük harfli kodla |
+| `backtest`, `price_summary`, `macro_context`, `news_context` | `BACKTEST`, `PRICE_SUMMARY`, `MACRO_CONTEXT`, `NEWS_CONTEXT` | tarihli ya da tarihsiz |
+| `price_summary_hold`, `macro_context_hold` | `PRICE_SUMMARY`, `MACRO_CONTEXT` | gold etiketi açıkça `HOLD` (varsayılan öncelikte `HOLD` hiç seçilmez) |
+| `advice_request`, `prediction_request` | `ADVICE_REQUEST`, `PREDICTION_REQUEST` | anahtar sözcük koruması aynı etiketi verir |
+| `out_of_universe` | `PRICE_SUMMARY`, evren dışı kod | harness `UNKNOWN_TICKER` ile kapatır |
+| `future_date` | `PRICE_SUMMARY` | dönem `today`'den sonra, yine de 2025'ten önce |
+| `no_tool_greeting`, `no_tool_off_topic` | `OUT_OF_SCOPE` | araç gerekmez |
+| `missing_information` | senaryo, `ticker` boş | hisse adı geçmez |
+
+**Tarih kuralı:** her gold tarihi ve her `today` 2025-01-01'den öncedir; üretilen dönem
+`today`'de ya da öncesinde biter (`future_date` bunun tek istisnasıdır).
+`ANALYSIS_UNSAFE` kapıdan gerçek veride çıkar, soru ailesiyle seçilmez; `HOLD` yalnız
+açık gold'la; kapsama Task 3'te gerçek çıktıyla doğrulanır.
+
+**Çakışma kuralı:** `drop_overlaps`, donmuş sete `eval.questions.overlaps` eşiğiyle
+benzeyen soruyu ya da gold (hisse, başlangıç, bitiş) üçlüsü donmuş bir sorunun beklenen
+üçlüsüne eşit olan soruyu atar; atılanlar nedenle (`text_overlap`, `expected_triple`)
+ve donmuş soru kimliğiyle döner.
+
