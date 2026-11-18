@@ -215,10 +215,86 @@ def test_compat_route_without_format_or_tools_sends_neither():
     assert "reasoning_effort" not in seen["body"]  # thinking left at the model's default
 
 
-def test_compat_route_cannot_set_the_context_size():
-    client = _compat_client(lambda request: _compat_reply({"content": "x"}))
-    with pytest.raises(ValueError, match="num_ctx"):
-        client.chat([], num_ctx=8192)
+def test_compat_route_drops_the_context_size():
+    """The route has no context-size field: the model's own context applies, and a caller
+    that sets one (the slice does) still works."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return _compat_reply({"content": "x"})
+
+    assert _compat_client(handler).chat([], num_ctx=8192).content == "x"
+    assert "num_ctx" not in json.dumps(seen["body"])
+    assert "options" not in seen["body"]
+
+
+def test_compat_route_translates_tool_history_to_openai_shape():
+    """Native history (dict arguments, no ids, ``tool_name``) becomes OpenAI history: each
+    assistant call gets an id, ``type`` and string arguments; each tool result is paired with
+    its call's id, by name when the message names its tool, else in order."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return _compat_reply({"content": "done"})
+
+    history = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "a", "arguments": {"ticker": "ASELS"}}},
+                {"function": {"name": "b", "arguments": {"n": 1}}},
+            ],
+        },
+        {"role": "tool", "tool_name": "b", "content": "out-b"},
+        {"role": "tool", "tool_name": "a", "content": "out-a"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"function": {"name": "a", "arguments": {"ticker": "THYAO"}}}],
+        },
+        {"role": "tool", "content": "out-a2"},  # experiment B: no tool name
+    ]
+    _compat_client(handler).chat(history)
+    sent = seen["body"]["messages"]
+
+    assert sent[:2] == history[:2]
+    first = sent[2]["tool_calls"]
+    assert [c["type"] for c in first] == ["function", "function"]
+    assert [c["function"]["name"] for c in first] == ["a", "b"]
+    assert [json.loads(c["function"]["arguments"]) for c in first] == [
+        {"ticker": "ASELS"},
+        {"n": 1},
+    ]
+    assert all(isinstance(c["function"]["arguments"], str) for c in first)
+    ids = [c["id"] for c in first]
+    assert len(set(ids)) == 2
+    assert sent[3] == {"role": "tool", "tool_call_id": ids[1], "content": "out-b"}
+    assert sent[4] == {"role": "tool", "tool_call_id": ids[0], "content": "out-a"}
+    second = sent[5]["tool_calls"][0]
+    assert second["id"] not in ids
+    assert sent[6] == {"role": "tool", "tool_call_id": second["id"], "content": "out-a2"}
+    assert history[2]["tool_calls"][0]["function"]["arguments"] == {"ticker": "ASELS"}  # unchanged
+
+
+def test_compat_route_keeps_ids_and_string_arguments_it_is_given():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return _compat_reply({"content": "x"})
+
+    call = {"id": "call_x", "type": "function", "function": {"name": "a", "arguments": "{}"}}
+    history = [
+        {"role": "assistant", "content": "", "tool_calls": [call]},
+        {"role": "tool", "tool_call_id": "call_x", "content": "o"},
+    ]
+    _compat_client(handler).chat(history)
+    assert seen["body"]["messages"] == history
 
 
 def test_compat_route_tool_calls_and_token_counts_are_read():

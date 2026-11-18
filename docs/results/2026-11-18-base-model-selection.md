@@ -2,9 +2,10 @@
 
 CSE-481 Mühendislik Ekonomisi — yalnız eğitim amaçlıdır, yatırım tavsiyesi değildir.
 
-Ölçüm günü: 18 Kasım 2026. Seçim Burak'ındır; bu belge seçenekleri ve önerimi yazar,
-karar günlüğüne `Bekliyor` olarak girer. Seçim gelene kadar Task 8'in dizüstü denemesi
-`qwen3.5` 0.8B ile sürer.
+Ölçüm günü: 18 Kasım 2026. Seçim Burak'ındır; bu belge seçenekleri ve önerimi yazar.
+Burak aynı gün karar verdi: hedef `qwen3.5:9b`, bellek çalışmasından sonra sığmazsa yedek
+`qwen3.5:4b` ("Burak'ın kararı" bölümü). Bellek çalışması bitene kadar Task 8'in dizüstü
+denemesi `qwen3.5` 0.8B ile sürer.
 
 Üç aday da aynı donanımda, RTX 5070'te ölçüldü: `qwen3.5:2b`, `qwen3.5:4b`,
 `qwen3.5:9b-q4_K_M`. `qwen3.5:2b` ve `qwen3.5:4b`'yi Burak ölçüm günü masaüstünde indirdi
@@ -28,18 +29,52 @@ değerler "tahmin" diye işaretlidir. Saatler Türkiye saatidir (UTC+3).
 `/api/chat` ve `/api/generate` yollarına `404 Inference route only` döndürüyor; yalnız
 `/v1/chat/completions` (ve listeleme: `/api/tags`, `/api/version`, `/v1/models`) geçiyor.
 Harness yalnız `/api/chat` kullanıyordu. Bu yüzden istemciye ikinci bir yol eklendi
-(`452e032`): `BIST_LLM_API=openai` aynı isteği `/v1/chat/completions`'a gönderir —
-aynı model, mesajlar, araç şemaları, JSON şeması (`response_format` `json_schema`),
-sıcaklık, tohum; `think: false` bu yolda `reasoning_effort: "none"`dır. Bağlam boyutu
-(`num_ctx`) bu yolda verilemez; isteyen çağrı reddedilir (harness vermez, yalnız
-`bakeoff` verir). Varsayılan yol değişmedi.
+(`452e032`, düzeltme turunda genişletildi): `BIST_LLM_API=openai` isteği
+`/v1/chat/completions`'a gönderir — aynı model, araç şemaları, JSON şeması
+(`response_format` `json_schema`), sıcaklık, tohum; `think: false` bu yolda
+`reasoning_effort: "none"`dır. Araç geçmişi OpenAI biçimine çevrilir: asistanın her
+çağrısına `id`, `type: "function"` ve JSON metni olarak argüman; her araç sonucuna kendi
+çağrısının `tool_call_id`'si (deney B ve `slice` çok turlu araç geçmişi gönderir; çevrilmemiş
+geçmişi 0.40.4 `HTTP 400` "cannot unmarshal object into ... arguments of type string" ile
+reddediyor, çevrilmişi kabul ediyor). Bu yolda bağlam boyutu alanı yoktur: `num_ctx`
+(`slice` ve `bakeoff` verir) düşürülür, modelin kendi bağlamı geçerlidir. Varsayılan yol
+değişmedi.
 
-**Eşdeğerlik denetimi:** dizüstündeki Ollama 0.40.16'da `qwen3.5:0.8b` ile aynı 8
+Canlı deneme (geçitten, 5070, `qwen3.5:9b-q4_K_M`): deney B iki soruda
+(`sector_laggard_dated-0000` üç araç turu, `price_summary-0000` bir tur) hatasız bitti,
+`MODEL_UNAVAILABLE` yok; `slice` bir soruda `NUMBERS_OK`.
+
+**Eşdeğerlik denetimi (0.40.16):** dizüstündeki Ollama 0.40.16'da `qwen3.5:0.8b` ile aynı 8
 geliştirme sorusu (dört ana senaryo, `PRICE_SUMMARY`, `MACRO_CONTEXT`, `BACKTEST`, bir
 tavsiye tuzağı), deney E, 1 tekrar, iki yoldan koşuldu. 8 sorunun hepsinde niyet, araç
 çağrıları (yalnız rastgele `analysis_id` farklı), cevap ve açıklama denemeleri aynıydı;
-gecikmeler aynı düzeydeydi. Gecikme ölçüsü iki yolda da harness'in duvar saati süresidir.
-Fark: bu yolda Ollama üretim süresi bildirmez, `eval_tokens_per_s` boş kalır.
+gecikmeler aynı düzeydeydi. Gecikme ölçüsü iki yolda da harness'in dizüstündeki duvar
+saati süresidir (geçitten koşularda ağ gidiş-dönüşü dahil). Fark: bu yolda Ollama üretim
+süresi bildirmez, `eval_tokens_per_s` boş kalır.
+
+**Örnekleme ayarları (0.40.4, geçitten).** Qwen3.5 modellerinin Modelfile'ı
+`presence_penalty 1.5` (ayrıca `top_k 20`, `top_p 0.95`) taşır; harness bunları hiçbir
+yolda göndermez. OpenAI katmanının kendi varsayılanını koyup koymadığı 0.40.4'te denendi:
+aynı istem, sıcaklık 0, tohum 42, `reasoning_effort: "none"`, 400 belirteç sınırı;
+`presence_penalty` gönderilmeden, açıkça 1,5 ve açıkça 0 ile, tekrara zorlayan dört istem
+(bir sözcüğü 120 kez yaz; 1–150 arası sayılar; aynı cümleyi 25 kez; bir ifadeyi
+olabildiğince tekrarlayan 300 sözcüklük metin), üç modelde (2b, 4b, 9b), ayrıca
+gönderilmeden ikinci kez:
+
+| Model | İstem 1 | İstem 2 | İstem 3 | İstem 4 |
+| --- | --- | --- | --- | --- |
+| 9b | yok = 1,5 ≠ 0 | üçü aynı | üçü aynı | yok = 1,5 ≠ 0 |
+| 4b | üçü aynı | yok = 1,5 ≠ 0 | üçü aynı | yok = 1,5 ≠ 0 |
+| 2b | üçü aynı | yok = 1,5 ≠ 0 | yok = 1,5 ≠ 0 | yok = 1,5 ≠ 0 |
+
+12 karşılaştırmanın 12'sinde "gönderilmeden" çıktısı "1,5" ile bayt bayt aynı; cezanın
+etkili olduğu 7'sinde "0"dan farklı; tekrarlar kararlı. Sonuç: **0.40.4'ün OpenAI katmanı
+Modelfile'daki `presence_penalty`'yi koruyor, sıfırlamıyor**; açıkça göndermeye gerek yok.
+`top_p`/`top_k` sıcaklık 0'da (açgözlü seçim) çıktıyı etkilemez, bu yüzden denenmedi.
+Sınır: bu deneme iki yolun bayt bayt aynı istemi ürettiğini 0.40.4'te göstermez (geçit
+`/api/chat`'i geçirmez); onu 0.40.16'daki denetim gösterir. Task 9 temel ve ince ayarlı
+modeli aynı yoldan ve aynı açık ayarlarla koşmalı ya da her sayının yanına yolu yazmalıdır.
+Ham çıktılar: `runs/base-model-selection/presence-penalty-probe-*.json` (git dışı).
 
 ## Geliştirme soruları
 
@@ -100,7 +135,7 @@ koşulardır. Ölçütler `eval/metrics.py`'den (`summary.json`,
 | Gösterilen cevapta desteksiz sayı | 0 / 6 | 0 / 408 | 0 / 544 |
 | Tekrarlanabilirlik (aynı soru, iki tekrar) | 60 / 60 | 60 / 60 | 60 / 60 |
 | Kural ihlali | 0 | 0 | 0 |
-| Gecikme medyanı / ortalama / en çok (sn, 5070) | **3,5 / 3,4 / 13,9** | 5,9 / 5,6 / 17,3 | 6,8 / 6,8 / 15,2 |
+| Gecikme medyanı / ortalama / en çok (sn; 5070'te çıkarım, dizüstünün duvar saati, ağ dahil) | **3,5 / 3,4 / 13,9** | 5,9 / 5,6 / 17,3 | 6,8 / 6,8 / 15,2 |
 
 Okuma, model model (ince ayarsız; 60 soru, 2 tekrar: bir sorunun değişmesi bir oranı
 yaklaşık 1,7 puan oynatır; iki tekrar her modelde birebir aynı çıktığı için tekrarlar
@@ -118,7 +153,7 @@ sorularının beşi (dördü `OUT_OF_SCOPE` — yanlış retlerin hepsi bunlar �
 **`qwen3.5:4b`:** sonuç eşleşmesi en yüksek (0,967): temellendirme hisseyi en çok bu
 modelde kurtarıyor (0,977), çünkü model kodu yanlış yazsa da soruda adı geçen hisseyle
 çelişmiyor. Ham hisse doğruluğu 0,70; uydurulan 38 alanın 34'ü hisse. Hatalı çağrı oranı
-9B'nin iki katı (36 ret; sektör 12, örüntü 12, veri yükleme 6, backtest 4) ve harness en
+9B'nin iki katı (36 ret; sektör 12, örüntü 12, veri yükleme 6, backtest 4, teknik gösterge 2) ve harness en
 çok bu modele müdahale etti (86; 40'ı `FUNDAMENTAL_REACTION`). Açıklama kabulü %70.
 Kayıplar: `technical_reversal_company-0007` (`MISSING_TICKER`, 9B'de de) ve
 `macro_context_hold-0002` (`OUT_OF_SCOPE`). İki kayıtta yanlış ret var (bu soru).
@@ -143,8 +178,8 @@ Kayıplar: `technical_reversal_company-0007` (`MISSING_TICKER`, 9B'de de) ve
 - Tuzakların hepsi doğru, yanlış ret yok, iki tekrar birebir aynı, kural ihlali yok.
 - 9B, temellendirmeden önceki model davranışında her ölçütte en iyisi (ham hisse,
   uydurulan alan, senaryo, hatalı çağrı, açıklama, desteksiz sayı); sonuç eşleşmesinde 4B
-  bir soru (iki kayıt) önde, çünkü 9B'nin şirket adı yazdığı iki soruyu temellendirme
-  kurtaramıyor.
+  iki soru (dört kayıt) önde: 9B dört soruda, 4B iki soruda kaybediyor; 9B'nin şirket adı
+  yazdığı ya da hisseyi boş bıraktığı soruları temellendirme kurtaramıyor.
 
 **Ortak:** üç modelin zayıflıkları aynı yerde ve eğitim verisinin öğrettiği şeyler:
 şirket adından/küçük harften hisse kodu, sektör (`RUN_SECTOR_RELATIVE_ANALYSIS`) ve
@@ -159,30 +194,39 @@ Face `Qwen/Qwen3.5-9B` yapılandırmasından (`c2022362`) hesaplandı. Hepsi ayn
 gömme ile çıkış katmanı paylaşılır; **9B'de paylaşılmaz** (ayrı `lm_head`).
 
 Bellek tahmini, eğitimin bugünkü kodu (`finetune/train.py`) ve 5070 ayarları için
-(toplu boyut 1, en uzun kayıt 1.475 belirteç): NF4 dil ve görüntü katmanları (çift
-nicemlemeyle ≈ 0,516 bayt/parametre); `prepare_model_for_kbit_training`'in fp32'ye
-yükselttiği gömme (ve 9B'de çıkış) katmanı; LoRA ağırlığı, gradyanı ve 8 bit Adam
-(≈ 10 bayt/parametre); gradient checkpointing'li etkinlikler; logit ve kayıp belleği.
-Logit terimi (≈ 3,7 GB) dizüstü denemesinden ayarlandı: 0.8B'de ölçülen en yüksek ayrılmış
-bellek 5,36 GB, öteki terimlerin toplamı ≈ 1,6 GB (`docs/results/2026-11-18-finetune-training.md`).
-Logit terimi model boyutuna değil sözlüğe ve dizi uzunluğuna bağlıdır; bu yüzden
-küçük modellerde baskındır.
+(toplu boyut 1; tam koşu veri setinin en uzun turunu, 1.475 belirteci görür): NF4 dil ve
+görüntü katmanları (çift nicemlemeyle ≈ 0,516 bayt/parametre);
+`prepare_model_for_kbit_training`'in fp32'ye yükselttiği gömme (ve 9B'de çıkış) katmanı;
+LoRA ağırlığı, gradyanı ve 8 bit Adam (≈ 10 bayt/parametre); gradient checkpointing'li
+etkinlikler; logit ve kayıp belleği.
 
-| Model | Dil modeli parametresi | Gömme (+ çıkış) | LoRA r16 / r32 | Tahmini en yüksek bellek r16 / r32 | 12 GB |
+**Tek ölçüm noktası.** Tahmin yalnız dizüstü denemesine dayanır: 0.8B, r8, ölçülen en
+yüksek ayrılmış bellek 5,36 GB (`docs/results/2026-11-18-finetune-training.md`). O
+denemenin tohumlu 80 kayıtlık örnekleminde en uzun eğitim örneği **1.241 belirteçti**
+(doğrulamada 979), veri setinin en uzunu olan 1.475 değil. Öteki terimlerin toplamı
+≈ 1,55 GB olduğundan logit terimi 1.241 belirteçte ≈ 3,80 GB'dir (≈ 3,1 fp32 logit kopyası);
+sözlüğe ve dizi uzunluğuna bağlıdır, model boyutuna değil. 1.475 belirtece ölçeklenince
+≈ 4,52 GB olur (+0,7 GB); aşağıdaki tahminler bununla.
+
+| Model | Dil modeli parametresi | Gömme (+ çıkış) | LoRA r16 / r32 | Tahmini en yüksek bellek r16 / r32 (1.475 belirteç) | 12 GB |
 | --- | --- | --- | --- | --- | --- |
-| 0.8B (ölçüm, r8) | 0,752 B | 0,254 B (paylaşılan) | 5,1 M (r8) | 5,36 GB ölçüldü | — |
-| 2B | 1,882 B | 0,509 B (paylaşılan) | 15,6 M / 31,3 M | ≈ 7,2 / 7,4 GB | sığar |
-| 4B | 4,206 B | 0,636 B (paylaşılan) | 30,5 M / 60,9 M | ≈ 9,3 / 9,6 GB | sığar, pay ≈ 2 GB |
-| 9B | 8,95 B | 2,034 B (ayrı) | 40,1 M / 80,2 M | ≈ 17,2 / 17,6 GB | **sığmaz** |
+| 0.8B (ölçüm, r8, ≤ 1.241 belirteç) | 0,752 B | 0,254 B (paylaşılan) | 5,1 M (r8) | 5,36 GB ölçüldü | — |
+| 2B | 1,882 B | 0,509 B (paylaşılan) | 15,6 M / 31,3 M | ≈ 8,0 / 8,2 GB | sığar |
+| 4B | 4,206 B | 0,636 B (paylaşılan) | 30,5 M / 60,9 M | ≈ 10,1 / 10,4 GB | sınırda: pay ≈ 1 GB |
+| 9B | 8,95 B | 2,034 B (ayrı) | 40,1 M / 80,2 M | ≈ 18,0 / 18,4 GB | **sığmaz** |
 
+- **Pay:** tahminler PyTorch'un ayırdığı bellektir; CUDA bağlamı (≈ 0,5 GB), parçalanma
+  (dizüstünde rezerve 9,9 GB / ayrılmış 5,4 GB) ve Windows'un ekran belleği eklenmez.
+  4B'nin r32'de ≈ 10,4 GB'ı 12 GB'de ≈ 1 GB pay bırakır; bu, aşılabilecek bir paydır.
 - **9B bugünkü kodla 12 GB'ye sığmaz:** fp32'ye yükseltilen gömme ve çıkış katmanları tek
   başına ≈ 8,1 GB. Sığdırmak için kod değişikliği gerekir: bu iki katmanı bf16'da donuk
   bırakmak ve kaybı parçalı hesaplamak (tam sözlük logitini tutmamak). O zaman tahmin
-  ≈ 9,7 GB (r16) — sınırda, Windows'un ekran belleğiyle risklidir ve denenmedi.
-- Tahminler PyTorch'un ayırdığı bellektir; CUDA bağlamı (≈ 0,5 GB) ve parçalanma
-  (dizüstünde rezerve 9,9 GB / ayrılmış 5,4 GB) eklenmez. 4B için masaüstünde 20 adımlık
-  bir deneme bu tahmini ölçer (`docs/finetune.md`, adım 4b). 12 GB aşılırsa Windows
-  paylaşılan belleğe taşır: koşu düşmez, yavaşlar.
+  ≈ 9,7 / 10,1 GB (r16 / r32) — sınırda ve denenmedi.
+- **Ölçüm:** masaüstündeki bellek denemesi (`docs/finetune.md`, adım 4b) en ağır ayarı
+  (r32) veri setinin en uzun kayıtlarıyla (`sample = "longest"`) 20 adım koşar; geçmesi
+  için `run.json`'da `max_trained_tokens` = `max_example_tokens`, ayrılmış bellek
+  ≤ 10,5 GB ve rezerve < 11,5 GB olmalıdır. Böylece geçen deneme tam koşunun da sığacağını
+  gösterir. 12 GB aşılırsa Windows paylaşılan belleğe taşır: koşu düşmez, çok yavaşlar.
 - Eğitim sırasında Ollama 5070'te model tutmamalıdır.
 
 ## Dizüstünde yedek olarak çalışabilme (çoğu tahmin)
@@ -202,9 +246,9 @@ sistemce durdurulmuştu).
 
 | Seçenek | Artı | Eksi |
 | --- | --- | --- |
-| A. `qwen3.5:4b` ile ince ayar | 12 GB'ye bugünkü kodla sığar (≈ 9,5 GB, tahmin); ince ayarsız hâli 9B'ye yakın (sonuç eşleşmesi 0,967, senaryo 0,94); 9B'den hızlı (medyan 5,9 sn); ince ayarlı q4_K_M dizüstünde belki çalışır | model davranışında 9B'nin gerisinde: hatalı çağrı 0,092, açıklama kabulü %70, desteksiz sayı %2,2 |
-| B. `qwen3.5:2b` ile ince ayar | rahat sığar (≈ 7,3 GB); en hızlı (3,5 sn); dizüstü yedeği kesin çalışır | en zayıf temel: açıklama kabulü %2,6, senaryo 0,75, 168 uydurulan alan, desteksiz sayı %10,6 |
-| C. `qwen3.5:9b` ile ince ayar | ince ayarsız hâli en güçlü (hatalı çağrı 0,042, açıklama kabulü %82, desteksiz sayı %0,5) | bugünkü kodla 12 GB'ye sığmaz (≈ 17 GB); kod değişikliği ve sınırda bellek (≈ 9,7 GB, denenmedi); dizüstü yedeği yok |
+| A. `qwen3.5:4b` ile ince ayar | 12 GB'ye bugünkü kodla büyük olasılıkla sığar (≈ 10,1 / 10,4 GB, tahmin, pay ≈ 1 GB); ince ayarsız hâli 9B'ye yakın (sonuç eşleşmesi 0,967, senaryo 0,94); 9B'den hızlı (medyan 5,9 sn); ince ayarlı q4_K_M dizüstünde belki çalışır | model davranışında 9B'nin gerisinde: hatalı çağrı 0,092, açıklama kabulü %70, desteksiz sayı %2,2 |
+| B. `qwen3.5:2b` ile ince ayar | rahat sığar (≈ 8,0 / 8,2 GB); en hızlı (3,5 sn); dizüstü yedeği kesin çalışır | en zayıf temel: açıklama kabulü %2,6, senaryo 0,75, 168 uydurulan alan, desteksiz sayı %10,6 |
+| C. `qwen3.5:9b` ile ince ayar | ince ayarsız hâli en güçlü (hatalı çağrı 0,042, açıklama kabulü %82, desteksiz sayı %0,5) | bugünkü kodla 12 GB'ye sığmaz (≈ 18 GB); kod değişikliği ve sınırda bellek (≈ 9,7 / 10,1 GB, denenmedi); dizüstü yedeği yok |
 | D. İnce ayar yok, `qwen3.5:9b` ince ayarsız | ölçüldü, en iyi model davranışı; ek iş yok | dersin ince ayar ayağını karşılamaz; dizüstü yedeği yok |
 
 **Önerim: A — `qwen3.5:4b` ile ince ayar; `qwen3.5:9b` ince ayarsız hâliyle
@@ -223,9 +267,19 @@ Gerekçe:
   Dizüstü yedeği olarak kalır: harness'in kapıları onu güvenli tutuyor (kural ihlali 0,
   gösterilen cevapta desteksiz sayı 0), açıklamayı harness yazıyor.
 
-Şart: masaüstündeki 20 adımlık 4B denemesi (`docs/finetune.md`, adım 4b) 12 GB'ye
-sığmalı. Sığmazsa 2B'ye geçmek ya da eğitim kodunda bellek düzeltmesi (bf16 gömme,
-parçalı kayıp) seçenektir.
+Şart: masaüstündeki bellek denemesi (`docs/finetune.md`, adım 4b) 4B ile geçmeli; tahmini
+pay ≈ 1 GB olduğu için bu bir formalite değildir.
+
+### Burak'ın kararı (18 Kasım 2026)
+
+> "sonuç olarak 9b daha iyiyse 9b yi dene"
+
+Hedef temel model **`qwen3.5:9b`** (ince ayarsız ölçümde model davranışı en iyi olan).
+Bugünkü eğitim koduyla 12 GB'ye sığmadığı için önce bellek çalışması yapılır (bf16 gömme
+ve çıkış katmanı, parçalı kayıp); bu ayrı bir izleyen görevdir, bu görevde yapılmadı. O
+çalışmadan sonra 9B ile 20 adımlık bellek denemesi (adım 4b) 12 GB'ye sığmazsa yedek
+**`qwen3.5:4b`**'dir. Böylece yukarıdaki önerim (A) yedek seçenek olur; karşılaştırma tabanı
+yine ince ayarsız `qwen3.5:9b`, dizüstü yedeği ince ayarsız `qwen3.5:2b`.
 
 Seçilen modelin Hugging Face deposu ve commit'i (5070 ayar dosyalarına yazılacak):
 `Qwen/Qwen3.5-4B` `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`, `Qwen/Qwen3.5-2B`
@@ -250,7 +304,8 @@ export PATH="$PATH:/c/AI-Server/ollama"   # export.py ollama'yı PATH'te arar
 1. (Yapıldı, 18 Kasım) `"$OLLAMA" pull qwen3.5:2b` ve `"$OLLAMA" pull qwen3.5:4b`.
    Başka bir model gerekirse aynı biçimde; geçit indirmeye izin vermiyor.
 2. EC-006: `uv sync --group train` ve 20 adımlık deneme — `docs/finetune.md`, "RTX 5070'te
-   çalıştırma", adım 0, 1 ve 4; seçilen modelle bellek denemesi adım 4b. Eğitimden önce
+   çalıştırma", adım 0, 1 ve 4. Bellek denemesi (adım 4b, r32, en uzun kayıtlar) 9B için
+   bellek çalışmasından sonra; 4B yedek olarak gerekirse 4B ile. Eğitimden önce
    `"$OLLAMA" stop <model>`: 5070'te Ollama model tutmamalı.
 3. **Ollama 0.40.4:** dizüstünün dönüştürücü sabitlemesi (llama.cpp `6c01da627`,
    0.40.16) masaüstünde geçersizdir. Dışa aktarmadan önce 0.40.4'ün
@@ -264,4 +319,8 @@ export PATH="$PATH:/c/AI-Server/ollama"   # export.py ollama'yı PATH'te arar
    0.40.4'te `llama-server.exe`, `llama-quantize.exe` ve `_debug_render_only` olup
    olmadığı uzaktan doğrulanamadı.
 4. Harness'i geçitten koşmak için ortamda ya da git dışı `.env`'de `BIST_LLM_API=openai`.
-   Ya da geçide `/api/chat` eklenirse bu gerekmez.
+   Ya da geçide `/api/chat` eklenirse bu gerekmez. Task 9'un sayıları Task 7'ninkilerle
+   karşılaştırılacaksa aynı yoldan (OpenAI uyumlu yol, geçit) koşulur; başka yoldan (ör.
+   masaüstünde yerel `/api/chat`) koşulan her sayının yanına yol yazılır. İsteğe bağlı,
+   makinenin başındayken: aynı 8 geliştirme sorusu 0.40.4'te iki yoldan (yerel `/api/chat`
+   ve geçit) koşulup kayıtlar karşılaştırılırsa yol eşdeğerliği 0.40.4'te de kanıtlanır.

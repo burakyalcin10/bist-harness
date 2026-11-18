@@ -68,6 +68,23 @@ def test_config_rejects_unknown_and_missing_settings(tmp_path):
         ft.load_config(missing)
 
 
+def test_config_sample_must_be_seeded_or_longest(tmp_path):
+    text = (CONFIGS / "r16-e2.toml").read_text(encoding="utf-8")
+    assert ft.load_config(CONFIGS / "r16-e2.toml").sample == "seeded"
+    bad = tmp_path / "bad.toml"
+    bad.write_text(text.replace('sample = "seeded"', 'sample = "shortest"'), encoding="utf-8")
+    with pytest.raises(ValueError, match="sample"):
+        ft.load_config(bad)
+
+
+def test_longest_sample_keeps_the_longest_examples_in_data_order():
+    """A memory trial must meet the data set's longest turns, not a random few."""
+    rows = [{"record_id": f"r{i}", "input_ids": [0] * n} for i, n in enumerate([5, 9, 2, 9, 7])]
+    assert [r["record_id"] for r in ft.longest_examples(rows, 3)] == ["r1", "r3", "r4"]
+    assert ft.longest_examples(rows, 0) == rows  # 0: every example
+    assert ft.longest_examples(rows, 10) == rows
+
+
 # --- chat examples --------------------------------------------------------------------------
 class FakeTokenizer:
     """One token per character; the chat template is a short ChatML stand-in.

@@ -229,7 +229,10 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
   1 × gradyan biriktirme 16 (Qwen3.5'in 248 bin belirteçlik sözlüğünde logit belleği toplu
   boyutla büyür), `max_seq_len` 3072, `eval_steps` 50, sabır 3; ve dizüstü denemesi
   `configs/qlora/laptop-trial.toml` (Qwen3.5 0.8B, 20 adım, 80 eğitim + 16 doğrulama
-  kaydı). Her ayar dosyada yazılıdır; eksik ya da bilinmeyen ayar reddedilir. 5070
+  kaydı). `train_limit`/`val_limit` bir örneklem seçer: `sample = "seeded"` tohumla
+  rastgele, `sample = "longest"` belirteç sayısına göre en uzun kayıtları (bellek denemesi
+  için; `run.json`'daki `max_trained_tokens` denemenin gördüğü en uzun turu,
+  `max_example_tokens` veri setininkini yazar). Her ayar dosyada yazılıdır; eksik ya da bilinmeyen ayar reddedilir. 5070
   ayarlarının `base_model`/`revision` değeri Task 7'ye kadar yer tutucudur
   (`TASK-7-CHOOSES-THE-BASE-MODEL`) ve eğitim yer tutucuyu reddeder.
 - **Şablon:** her kayıt temel modelin kendi sohbet şablonuyla (`apply_chat_template`,
@@ -333,14 +336,21 @@ unzip runs/finetune-bundle-<gün>.zip -d .   # data/finetune/ ve configs/qlora/ 
 #    önce `"$OLLAMA" stop <model>` (çalışan modeller: `"$OLLAMA" ps`).
 uv run --group train python -m bist_harness.finetune.train run \
   --config configs/qlora/laptop-trial.toml --data data/finetune --out runs/finetune-laptop-trial
-#    4b. Seçilen modelle 20 adım: 12 GB'a sığıyor mu (Task 7'nin bellek tahmini ölçülür).
-#    r16-e2.toml'u kopyala, kopyada max_steps = 20, train_limit = 80, val_limit = 16 yap.
-cp configs/qlora/r16-e2.toml runs/desktop-trial.toml   # runs/ git dışı
+#    4b. Bellek denemesi, temel modelden bağımsız: tam koşu 12 GB'a sığacak mı. En ağır
+#    ayarın (r32-e3) kopyası, veri setinin EN UZUN kayıtlarıyla 20 adım. Kopyada:
+#    max_steps = 20, train_limit = 80, val_limit = 16, sample = "longest"
+#    (rastgele 80 kayıt en uzun turu kaçırabilir: dizüstü denemesinin rastgele örnekleminde
+#    en uzun tur 1.241 belirteçti, veri setininki 1.475). base_model/revision kopyada
+#    denenecek modelin değeri olmalı (3. adım yapılmadıysa kopyaya doğrudan yaz).
+cp configs/qlora/r32-e3.toml runs/desktop-trial.toml   # runs/ git dışı; sonra düzenle
 uv run --group train python -m bist_harness.finetune.train run \
   --config runs/desktop-trial.toml --data data/finetune --out runs/finetune-desktop-trial
-#    run.json → peak_vram_gb.allocated 11 GB'ı aşıyorsa ya da reserved 12 GB'a dayanıyorsa
-#    Windows belleği paylaşılan RAM'e taşır (dizüstündeki gibi çalışır ama çok yavaşlar):
-#    tam koşulardan önce haber ver.
+#    Geçti sayılması için run.json'da üçü birden:
+#    - max_trained_tokens == max_example_tokens (deneme en uzun turu gördü);
+#    - peak_vram_gb.allocated ≤ 10,5 GB (CUDA bağlamı ve ekran için ≈ 1,5 GB pay);
+#    - peak_vram_gb.reserved < 11,5 GB.
+#    Biri tutmazsa Windows belleği paylaşılan RAM'e taşır (dizüstündeki gibi çalışır ama
+#    çok yavaşlar): tam koşulara geçme, sonucu bildir.
 
 # 5. İki ayar
 uv run --group train python -m bist_harness.finetune.train run \

@@ -24,3 +24,4 @@ gradient_checkpointing = true
 max_steps = 20
 train_limit = 80
 val_limit = 16
+sample = "seeded"

@@ -2,9 +2,13 @@
 
 The native ``/api/chat`` and ``/api/tags`` routes are used; with ``api="openai"`` the chat
 goes to Ollama's OpenAI-compatible ``/v1/chat/completions`` instead (for a gateway that
-passes only that route), with the same model, messages, tools, schema, temperature, seed
-and thinking switch (``reasoning_effort: "none"`` is Ollama's ``think: false`` there). The
-context size cannot be set on that route. Every call is
+passes only that route). That route gets the same model, tools, schema, temperature and
+seed; ``think: false`` becomes ``reasoning_effort: "none"``; tool history is translated to
+the OpenAI shape (``_openai_messages``). Sampling settings the caller does not send (such as
+the model's ``presence_penalty``) are left to the model's Modelfile on both routes; on
+Ollama 0.40.4 the OpenAI layer was checked to honour them
+(``docs/results/2026-11-18-base-model-selection.md``). The route has no context-size field:
+a ``num_ctx`` is dropped and the model's own context applies. Every call is
 deterministic by default (temperature 0, fixed seed, no thinking output), so the same
 question against the same data gives the same tool calls.
 """
@@ -241,11 +245,10 @@ class OllamaClient:
     ) -> ChatResult:
         """The same request on the OpenAI-compatible route. The route reports no
         generation time, so the duration is the request's wall time and the speed is None."""
-        if num_ctx is not None:
-            raise ValueError("num_ctx cannot be set on the OpenAI-compatible route")
+        del num_ctx  # no such field on this route: the model's own context applies
         payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": _openai_messages(messages),
             "stream": False,
             "temperature": temperature,
             "seed": seed,
@@ -277,3 +280,52 @@ class OllamaClient:
             raw=raw,
             malformed_tool_call=looks_like_tool_call(message),
         )
+
+
+def _openai_messages(messages: list[dict]) -> list[dict]:
+    """Native chat history in the OpenAI shape, without changing ``messages``.
+
+    Assistant tool calls get an ``id`` (kept if present), ``type: "function"`` and their
+    arguments as a JSON string; each tool result gets the ``tool_call_id`` of its call: the
+    open call with the same name when the message carries ``tool_name`` (the slice), else
+    the next open call in order (experiment B). ``tool_name`` itself is native-only and
+    dropped. Other messages pass unchanged.
+    """
+    out: list[dict] = []
+    open_calls: list[tuple[str, str | None]] = []  # (id, name) not yet answered
+    counter = 0
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            calls = []
+            for call in message["tool_calls"]:
+                function = call.get("function") or {}
+                arguments = function.get("arguments", {})
+                if not isinstance(arguments, str):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+                call_id = call.get("id") or f"call_{counter}"
+                counter += 1
+                calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": function.get("name"), "arguments": arguments},
+                    }
+                )
+                open_calls.append((call_id, function.get("name")))
+            out.append({**message, "content": message.get("content") or "", "tool_calls": calls})
+        elif role == "tool":
+            translated = {k: v for k, v in message.items() if k != "tool_name"}
+            if "tool_call_id" not in translated and open_calls:
+                name = message.get("tool_name")
+                index = next(
+                    (i for i, (_, n) in enumerate(open_calls) if name is None or n == name), 0
+                )
+                translated = {"role": "tool", "tool_call_id": open_calls.pop(index)[0]}
+                translated["content"] = message.get("content", "")
+            elif "tool_call_id" in translated:
+                open_calls = [c for c in open_calls if c[0] != translated["tool_call_id"]]
+            out.append(translated)
+        else:
+            out.append(message)
+    return out

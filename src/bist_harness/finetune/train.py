@@ -73,8 +73,11 @@ class TrainConfig:
     warmup_ratio: float = 0.03
     gradient_checkpointing: bool = True
     max_steps: int = 0  # 0: train for ``epochs``; otherwise stop after this many steps
-    train_limit: int = 0  # 0: every training record; otherwise a seeded sample of this size
-    val_limit: int = 0  # 0: every validation record; otherwise a seeded sample
+    train_limit: int = 0  # 0: every training record; otherwise a sample of this size
+    val_limit: int = 0  # 0: every validation record; otherwise a sample
+    # how a limit picks records: "seeded" (random with ``seed``) or "longest" (the longest
+    # turns by token count, for a memory trial that must meet the data set's peak)
+    sample: str = "seeded"
 
 
 _TYPES = {
@@ -98,7 +101,9 @@ _TYPES = {
     "max_steps": int,
     "train_limit": int,
     "val_limit": int,
+    "sample": str,
 }
+SAMPLES = ("seeded", "longest")
 
 
 def load_config(path: Path) -> TrainConfig:
@@ -120,6 +125,8 @@ def load_config(path: Path) -> TrainConfig:
             ok = True
         if not ok:
             raise ValueError(f"{path.name}: {name} must be {kind.__name__}, got {value!r}")
+    if raw["sample"] not in SAMPLES:
+        raise ValueError(f"{path.name}: sample must be one of {', '.join(SAMPLES)}")
     raw["target_modules"] = tuple(raw["target_modules"])
     return TrainConfig(**raw)
 
@@ -283,6 +290,14 @@ def _sample(records: list[TrainingRecord], limit: int, seed: int) -> list[Traini
     return [records[i] for i in chosen]
 
 
+def longest_examples(rows: list[dict], limit: int) -> list[dict]:
+    """The ``limit`` longest tokenized examples (ties: the earlier one), in data order."""
+    if not limit or limit >= len(rows):
+        return rows
+    ranked = sorted(range(len(rows)), key=lambda i: (-len(rows[i]["input_ids"]), i))[:limit]
+    return [rows[i] for i in sorted(ranked)]
+
+
 def _lora_targets(model, names: Sequence[str]):
     """Only the language model's layers: a vision tower's projections stay frozen."""
     has_language_model = any(".language_model." in f".{name}." for name, _ in model.named_modules())
@@ -411,8 +426,15 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
     manifest_path = data_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     splits = {name: read_jsonl(data_dir / f"{name}.jsonl") for name in ("train", "val", "test")}
-    train_records = _sample(splits["train"], config.train_limit, config.seed)
-    val_records = _sample(splits["val"], config.val_limit, config.seed)
+    longest_first = config.sample == "longest"
+    train_records = (
+        splits["train"]
+        if longest_first
+        else _sample(splits["train"], config.train_limit, config.seed)
+    )
+    val_records = (
+        splits["val"] if longest_first else _sample(splits["val"], config.val_limit, config.seed)
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(config.base_model, revision=config.revision)
     examples = {
@@ -425,6 +447,11 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         for records in splits.values()
         for e in to_chat_examples(records, tokenizer)
     )
+    if longest_first:
+        examples = {
+            "train": longest_examples(examples["train"], config.train_limit),
+            "val": longest_examples(examples["val"], config.val_limit),
+        }
     dropped = {
         split: [e["record_id"] for e in rows if len(e["input_ids"]) > config.max_seq_len]
         for split, rows in examples.items()
@@ -547,6 +574,10 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         },
         "dropped_too_long": dropped,
         "max_example_tokens": longest,
+        # the longest example this run trained or validated on: what its peak memory met
+        "max_trained_tokens": max(
+            (len(e["input_ids"]) for rows in kept.values() for e in rows), default=0
+        ),
         "trainable_parameters": trainable,
         "total_parameters": total,
         "steps": state.global_step,
