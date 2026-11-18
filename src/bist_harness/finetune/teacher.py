@@ -246,7 +246,8 @@ class TeacherClient:
                 for name, arguments in calls
             ],
         }
-        self._record("tool_call", state, messages, tools or [], copy.deepcopy(target))
+        meta = {"state": state}
+        self._record("tool_call", state, messages, tools or [], copy.deepcopy(target), meta)
         return _reply(calls=tuple(ToolCall(n, copy.deepcopy(a)) for n, a in calls))
 
     def _explanation(self, messages: list[dict], response_format: dict | None) -> ChatResult:

@@ -170,8 +170,12 @@ def test_teacher_reply_matches_turn_kind(scenario):
         assert "content" not in record.target
         assert record.target["role"] == "assistant" and record.target["tool_calls"]
         assert record.tools == to_ollama_tools(ALLOWED_TOOLS[record.state])
-    # every teacher reply was accepted at the first attempt, with no fallback
+        assert record.meta == {"state": record.state}
+    # every teacher reply was accepted at the first attempt, with no fallback; no tool
+    # failed (a backtest the tool rejects would be re-run) and nothing was topped up
     assert machine.wrong_tool_calls(analysis) == 0
+    assert machine.harness_interventions(analysis) == 0
+    assert [c.tool for c in analysis.tool_calls if "error" in c.output] == []
     for state in states:
         detail = next(r.detail for r in analysis.trail if r.state == state)
         assert (detail["attempts"], detail["rejected"], detail["fallback"]) == (1, 0, False)
@@ -179,6 +183,8 @@ def test_teacher_reply_matches_turn_kind(scenario):
     last = teacher.turns[-1]
     explanation = json.loads(last.target["content"])
     assert analysis.outcome == explanation["action"] == last.meta["action"]
+    assert set(last.meta) == {"action", "eligible"}
+    assert first.meta == {}
     assert analysis.answer == explanation["explanation"]
     assert last.tools == []
 
@@ -195,8 +201,9 @@ def test_teacher_messages_are_what_the_harness_sent():
     requests = captured[0].requests
     assert len(requests) == len(teacher.turns)
     for request, record in zip(requests, teacher.turns, strict=True):
-        assert record.messages == request["messages"]
-        assert record.tools == (request["tools"] or [])
+        # compared as text: a dict with the same items in another key order must fail
+        assert json.dumps(record.messages) == json.dumps(request["messages"])
+        assert json.dumps(record.tools) == json.dumps(request["tools"] or [])
 
 
 # --- the explanation target ----------------------------------------------------------------

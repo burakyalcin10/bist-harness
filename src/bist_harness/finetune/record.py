@@ -32,7 +32,9 @@ class TrainingRecord:
     tools: list[dict]  # the tool schemas offered in this turn ([] for intent and explanation)
     # {"role": "assistant", "content": str} or {"role": "assistant", "tool_calls": [...]}
     target: dict
-    meta: dict  # outcome, eligible, action, snapshot_id, layers_id, today (when known)
+    # turn level, by the teacher: state (tool_call), action and eligible (explanation);
+    # run level, added by the build: outcome, snapshot_id, layers_id, today
+    meta: dict
 
     def __post_init__(self) -> None:
         if self.turn not in TURN_KINDS:

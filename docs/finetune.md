@@ -28,7 +28,7 @@ aynı SHA-256'yı verir.
 | `turn`, `state` | tur türü; araç turunda durum adı |
 | `messages`, `tools` | harness'in o turda gönderdiği mesajlar ve sunduğu araç şemaları |
 | `target` | doğru cevap: metin (`content`) ya da araç çağrıları (`tool_calls`) |
-| `meta` | sonuç, uygun etiketler, seçilen etiket, `snapshot_id`, `layers_id`, `today` |
+| `meta` | tur düzeyi (öğretmen yazar): araç turunda `state`, açıklama turunda `action` ve `eligible`; koşu düzeyi (Task 3'ün üretim hattı ekler): `outcome`, `snapshot_id`, `layers_id`, `today` |
 
 ### Üç tur türü
 
@@ -71,8 +71,8 @@ Senaryo × etiket tablosunun her hücresi dolu olmayabilir (ör. bir senaryonun 
 etiketi başka senaryoda çıkmaz). Ulaşılamayan hücreler gerekçesiyle bu bölüme yazılır ve
 sayılmaz; sayılar üretim manifestinden gelir.
 
-Ulaşılamayan hücreler:
-
-| Senaryo × etiket | Gerekçe |
-| --- | --- |
-| `FUNDAMENTAL_REACTION` × `FUNDAMENTAL_IMPROVEMENT_CANDIDATE` | Temel veri kullanan C–E stratejileri yalnız ön kayıtlı test dönemi (2025-01-01 ve sonrası) için tanımlıdır; eğitim tarihleri 2025'ten önce kaldığı için bu senaryonun backtest'i hata verir ve aday etiketi uygun etiketler arasına girmez. |
+Temel veri kullanan C–E stratejileri yalnız ön kayıtlı test dönemi (2025-01-01 ve
+sonrası) için tanımlıdır. Eğitim tarihleri 2025'ten önce kaldığı için
+`FUNDAMENTAL_REACTION` sorularının kanonik backtest'i bu dönemde `B_TECH_SECTOR`'dür
+(`machine.canonical_calls`); aday etiketi bu backtest'le değerlendirilir. Bu hücrenin
+gerçek veride dolup dolmadığı üretim manifestinden okunur.

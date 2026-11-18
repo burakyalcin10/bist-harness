@@ -738,6 +738,24 @@ def test_canonical_calls_follow_the_intent():
     ]
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "strategy"),
+    [
+        ("2023-06-01", "2024-12-31", "B_TECH_SECTOR"),  # discovery period only
+        ("2024-11-18", "2026-11-18", "B_TECH_SECTOR"),  # a live default period
+        ("2025-01-01", "2025-06-30", "C_TECH_SECTOR_FUND"),
+        ("2025-02-01", "2025-11-28", "C_TECH_SECTOR_FUND"),
+    ],
+)
+def test_fundamental_backtest_uses_fundamentals_only_inside_the_test_period(start, end, strategy):
+    """C_TECH_SECTOR_FUND is defined from the test period on (``run_backtest`` rejects it
+    before); a FUNDAMENTAL_REACTION period that starts earlier backtests B_TECH_SECTOR."""
+    reaction = make_intent("FUNDAMENTAL_REACTION", start=start, end=end)
+    assert machine.canonical_calls("RUN_BACKTEST", reaction) == [
+        ("run_backtest", {"strategy": strategy, "universe": ["THYAO"], "start": start, "end": end})
+    ]
+
+
 # --- G7: the states run in the order of the route ------------------------------------
 class TextOnlyClient(ScriptedClient):
     """Gives the intent, then answers every tool turn with text (the worst model)."""
