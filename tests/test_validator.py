@@ -976,3 +976,50 @@ def test_a_half_given_period_is_asked_for_and_falls_back_with_its_note(lang):
     bad = FakeClient(answer("WATCH", GOOD[lang]), answer("WATCH", GOOD[lang]))
     fallback = generate_explanation(analysis, bad, EVIDENCE[lang], GATE_PASS)
     assert fallback.fallback and note in fallback.text and PERIOD_NOTE[lang] not in fallback.text
+
+
+# --- I4 residual: the common Turkish disclaimer forms are negations ------------------------
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bu bilgiler yatırım tavsiyesi niteliği taşımamaktadır. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliği taşımaz. [E1]",
+        "Burada yer alan bilgiler yatırım tavsiyesi niteliğinde bulunmamaktadır. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliğinde bulunmaz. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliğinde olmayıp genel bilgi amaçlıdır. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliğinde olmaz. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliğinde olmamaktadır. [E1]",
+        "Bu bilgiler yatırım tavsiyesi niteliğinde değildir. [E1]",
+        "Bu rapor yatırım tavsiyesi içermemektedir. [E1]",
+        "Bu rapor yatırım tavsiyesi içermez. [E1]",
+        "Bu sistem yatırım tavsiyesi vermemektedir. [E1]",
+        "Bu sistem yatırım tavsiyesi vermez. [E1]",
+        "Bu bilgiler yatırım tavsiyesi veya öneri niteliği taşımamaktadır. [E1]",
+    ],
+)
+def test_the_usual_turkish_disclaimer_forms_are_not_advice(text):
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bu bir yatırım tavsiyesi niteliğindedir. [E1]",
+        "Bu yatırım tavsiyesi veya öneri niteliğindedir. [E1]",
+        "Bu yatırım tavsiyesidir. [E1]",
+        "Bu bir yatırım tavsiyesi niteliği taşımaktadır. [E1]",
+        "Bu yatırım tavsiyesi niteliğinde bulunmaktadır. [E1]",
+    ],
+)
+def test_an_affirmative_advice_form_is_still_flagged(text):
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(text) != []
+
+
+def test_the_system_refusal_sentence_still_passes():
+    from bist_harness.harness.validator import advice_language
+
+    assert advice_language(machine.REFUSAL_ANSWERS["tr"]) == []
