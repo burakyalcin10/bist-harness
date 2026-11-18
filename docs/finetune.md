@@ -225,16 +225,36 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
 (`tests/test_finetune_train_config.py`); grup kurulu değilse `train` açık bir hatayla durur.
 
 - **Ayar dosyaları:** `configs/qlora/r16-e2.toml` (rank 16, alpha 32, 2 tur, lr 2e-4),
-  `configs/qlora/r32-e3.toml` (rank 32, alpha 64, 3 tur, lr 1e-4); ikisinde de toplu boyut
-  1 × gradyan biriktirme 16 (Qwen3.5'in 248 bin belirteçlik sözlüğünde logit belleği toplu
-  boyutla büyür), `max_seq_len` 3072, `eval_steps` 50, sabır 3; ve dizüstü denemesi
-  `configs/qlora/laptop-trial.toml` (Qwen3.5 0.8B, 20 adım, 80 eğitim + 16 doğrulama
-  kaydı). `train_limit`/`val_limit` bir örneklem seçer: `sample = "seeded"` tohumla
-  rastgele, `sample = "longest"` belirteç sayısına göre en uzun kayıtları (bellek denemesi
-  için; `run.json`'daki `max_trained_tokens` denemenin gördüğü en uzun turu,
-  `max_example_tokens` veri setininkini yazar). Her ayar dosyada yazılıdır; eksik ya da bilinmeyen ayar reddedilir. 5070
-  ayarlarının `base_model`/`revision` değeri Task 7'ye kadar yer tutucudur
-  (`TASK-7-CHOOSES-THE-BASE-MODEL`) ve eğitim yer tutucuyu reddeder.
+  `configs/qlora/r32-e3.toml` (rank 32, alpha 64, 3 tur, lr 1e-4); ikisinde de temel model
+  `Qwen/Qwen3.5-9B`, revizyon `c202236235762e1c871ad0ccb60c8ee5ba337b9a` (masaüstündeki
+  Ollama `qwen3.5:9b-q4_K_M`'nin deposu; doğrulama
+  `docs/results/2026-11-18-finetune-training.md` 9. bölüm), toplu boyut 1 × gradyan
+  biriktirme 16 (Qwen3.5'in 248 bin belirteçlik sözlüğünde logit belleği toplu boyutla
+  büyür), `max_seq_len` 3072, `eval_steps` 50, sabır 3, bellek-yalın yol. Bellek denemesi
+  `configs/qlora/trial-9b.toml`: r32'nin bellek ayarlarıyla, veri setinin en uzun 80 eğitim
+  ve 16 doğrulama kaydında 20 adım. Dizüstü denemeleri `configs/qlora/laptop-trial.toml`
+  (Task 8, Qwen3.5 0.8B, PEFT yolu) ve `configs/qlora/laptop-trial-lean.toml` (aynı koşu,
+  bellek-yalın yol). `train_limit`/`val_limit` bir örneklem seçer: `sample = "seeded"`
+  tohumla rastgele, `sample = "longest"` belirteç sayısına göre en uzun kayıtları.
+  `run.json`: `max_trained_tokens` koşunun eğitip doğruladığı en uzun tur,
+  `max_train_val_tokens` train + val'in en uzun turu (bellek denemesi bununla
+  karşılaştırılır; test bölümü hiç eğitilmez), `max_example_tokens` üç bölümün en uzunu
+  (dışa aktarmanın `num_ctx`'i). Bu veride üçü de 1.475 belirteçtir ve en uzun tur train'dedir
+  (`sector_laggard_company-0000-05`; val'in en uzunu 1.473, test'inki 1.467). Her ayar
+  dosyada yazılıdır; eksik ya da bilinmeyen ayar reddedilir.
+- **Bellek-yalın yol** (`lean_memory`, `target_only_logits`, `logits_chunk`; 9B'yi 12 GB'ye
+  sığdırmak için): PEFT'in `prepare_model_for_kbit_training`'i 4 bit olmayan her
+  parametreyi fp32'ye yükseltir; 9B'de bu, ayrı gömme ve çıkış katmanı (ikisi ≈ 1 milyar
+  parametre) için 4 GB yerine 8 GB demektir. `prepare_lean` bunun yerine her parametreyi
+  dondurur, yalnız tek boyutlu olanları (norm ağırlıkları, `A_log`, `dt_bias`) fp32'ye
+  alır, gömme ve çıkış katmanını bf16 bırakır, gradient checkpointing ve giriş gradyanını
+  kendisi açar. `target_only_logits` çıkış katmanını yalnız etiketli (hedef) konumlarda
+  uygular (`target_only_loss`, özel `compute_loss`); `logits_chunk` bu konumları 128'lik
+  parçalara böler ve her parçanın logitlerini geri yayılımda yeniden hesaplar. Kayıp,
+  standart maskeli çapraz entropiyle aynıdır (birim testi: küçük bir Qwen3.5 modelinde aynı
+  kayıp ve aynı LoRA gradyanları, `tests/test_finetune_lean.py`). Beklenen en yüksek bellek:
+  `uv run --group train python -m bist_harness.finetune.memory --config <ayar>`
+  (`finetune/memory.py`; dizüstünde kalibre edildi).
 - **Şablon:** her kayıt temel modelin kendi sohbet şablonuyla (`apply_chat_template`,
   `tools=` ile, düşünme kapalı) işlenir. Ollama araç şemasını olduğu gibi geçirmez: Go
   yapılarına çözüp yeniden yazar (alan sırası `required` → `properties`;
@@ -257,12 +277,23 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
 - **Çıktılar** (`runs/finetune-<ayar>/`, git dışı): `adapter/` (en iyi adaptör ve
   tokenizer), `loss.csv` (adım, tur, eğitim ve doğrulama kaybı, öğrenme hızı),
   `run.json` (bütün ayarlar, temel model deposu ve commit'i, veri dosyalarının SHA-256'sı,
-  örnek sayıları, veri setindeki en uzun tur, adım sayısı, en iyi adım ve kaybı, süre,
-  en yüksek VRAM, GPU, kütüphane sürümleri, git commit'i), `checkpoints/`.
+  örnek sayıları, en uzun turlar, adım sayısı, en iyi adım ve kaybı, süre ve
+  `seconds_per_step`, en yüksek VRAM, GPU, kütüphane sürümleri, git commit'i),
+  `checkpoints/`. Komut sonunda tek satırlık özet: adım, en iyi kayıp, adım süresi, en yüksek
+  ayrılmış/rezerve bellek, eğitilen en uzun tur / train + val'in en uzunu.
 
 ### Dışa aktarma (`finetune/export.py`)
 
-1. Adaptör temel modelle birleştirilir (bf16, CPU'da).
+1. Adaptör temel modele **parça parça** birleştirilir (`stream_merge`): her safetensors
+   parçası bellek eşlemeli açılır, her tensör tek başına okunur, LoRA hedeflerine
+   PEFT'in aritmetiğiyle `W + ölçek · (B @ A)` eklenir (çarpım fp32'de, toplam bir kez
+   ağırlığın tipine yuvarlanır) ve en çok 2 GiB'lık yeni parçalar yazılır. 9B'yi bütün
+   olarak birleştirmek bf16'da ≈ 18 GB RAM ister, masaüstünde 16 GB vardır; parça parça
+   birleştirme ≈ 4–5 GB ile yetinir. Sonuç PEFT'in `merge_and_unload`'ıyla aynıdır (birim
+   testi bit bit; gerçek 0.8B adaptöründe 473 tensörün 437'si bit bit aynı, kalan 36'sı
+   denetim noktasının fp32 tutulan `A_log`/norm ağırlıkları: PEFT yolu bunları bf16'ya
+   yuvarlıyordu, yeni yol özgün fp32 değeri korur). Transformers'ın yüklemediği `mtp.*`
+   (taslak) tensörleri PEFT yolunda olduğu gibi yazılmaz.
 2. llama.cpp'nin `convert_hf_to_gguf.py`'si f16 GGUF yazar. llama.cpp depoya girmez:
    `tools/llama.cpp/` git dışıdır. **Dönüştürücü, kurulu Ollama'nın çalıştırdığı llama.cpp
    commit'inde olmalıdır**: Ollama'nın `lib/ollama/llama-server.exe --version` çıktısındaki
@@ -288,114 +319,241 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
    (`llama-server --version`); uyuşmazsa hiç başlamaz. Kayıt: `export.json` (Ollama sürümü,
    çalışma zamanı ve dönüştürücü commit'i, yükleme denemesi).
 
-### RTX 5070'te çalıştırma (Burak)
+### RTX 5070'te çalıştırma (Burak, PowerShell)
 
-Masaüstünde, deponun kökünde (Git Bash). Uzak makinenin adresi hiçbir dosyaya yazılmaz;
-harness modele yalnız `BIST_LLM_BASE_URL` (ortam ya da git dışı `.env`) ile ulaşır.
-Dizüstünden geçitle ölçerken `BIST_LLM_API=openai` gerekir: geçit yalnız
-`/v1/chat/completions`'ı geçirir, `/api/chat`'i değil
-(`docs/results/2026-11-18-base-model-selection.md`). Masaüstünde yerel Ollama'yla gerekmez.
+Masaüstünde, deponun kökünde, **PowerShell**'de (Windows PowerShell 5.1 yeter; komutlar
+satır satır kopyalanır). Uzak makinenin adresi hiçbir dosyaya yazılmaz; harness modele
+yalnız `BIST_LLM_BASE_URL` (ortam ya da git dışı `.env`) ile ulaşır. Dizüstünden geçitle
+ölçerken `BIST_LLM_API=openai` gerekir: geçit yalnız `/v1/chat/completions`'ı geçirir,
+`/api/chat`'i değil (`docs/results/2026-11-18-base-model-selection.md`). Masaüstünde
+yerel Ollama'yla gerekmez.
+
+Hedef model `qwen3.5:9b` (Burak'ın kararı, 18 Kasım 2026); sığmazsa yedek `qwen3.5:4b`.
+Sıra: kurulum → `trial-9b` bellek denemesi (20 adım) → karar kuralı → iki gece koşusu →
+dışa aktarma.
 
 Masaüstündeki Ollama 0.40.4, resmî Windows ZIP'inden `C:\AI-Server\ollama` klasörüne
 kurulmuştur, oturum açılışında zamanlanmış görevle başlar ve **PATH'te değildir**
-(`%LOCALAPPDATA%\Programs\Ollama`'da da değildir). Aşağıdaki her `ollama` komutu tam yolla
-(`"$OLLAMA"`) yazılmıştır. `export` ise Ollama'yı (sürüm, `llama-server` commit'i,
-`ollama create`, yükleme denemesi) PATH'te arar (`shutil.which("ollama")`; bulamazsa yalnız
-`%LOCALAPPDATA%\Programs\Ollama`'ya bakar), bu yüzden adım 0'da klasör o kabuğun PATH'ine
-eklenir. PowerShell'de karşılığı: `$ollama = "C:\AI-Server\ollama\ollama.exe"` ve
-`$env:Path += ";C:\AI-Server\ollama"`.
+(`%LOCALAPPDATA%\Programs\Ollama`'da da değildir). `export` Ollama'yı (sürüm,
+`llama-server` commit'i, `ollama create`, yükleme denemesi) PATH'te arar; bu yüzden 0. adım
+klasörü o pencerenin PATH'ine ekler. Her yeni PowerShell penceresinde 0. adım yeniden
+yapılır.
 
-```bash
-# 0. Ollama'nın yolu (her yeni Git Bash kabuğunda)
-OLLAMA="/c/AI-Server/ollama/ollama.exe"
-OLLAMA_DIR="/c/AI-Server/ollama"
-export PATH="$PATH:$OLLAMA_DIR"   # export.py ollama'yı PATH'te arar
-"$OLLAMA" --version              # 0.40.4 beklenir
+**0. Ollama'nın yolu**
 
-# 1. Depo ve kütüphaneler
-git clone <depo> bist-harness   # ilk kez; sonra: git pull
-cd bist-harness
-git checkout sprint-5-dev && git pull
-uv sync --group train
-uv run --group train python -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"
-#   beklenen: NVIDIA GeForce RTX 5070 (12, 0)
-
-# 2. Paketi dizüstünde hazırla ve masaüstüne kopyala (veri git dışıdır)
-#    dizüstünde:
-uv run python -m bist_harness.finetune.train bundle --data data/finetune \
-  --config configs/qlora/r16-e2.toml --config configs/qlora/r32-e3.toml \
-  --out runs/finetune-bundle-<gün>.zip
-#    masaüstünde, deponun kökünde:
-unzip runs/finetune-bundle-<gün>.zip -d .   # data/finetune/ ve configs/qlora/ gelir
-
-# 3. Task 7'nin seçtiği modeli iki ayar dosyasına yaz (base_model, revision; Qwen3.5
-#    dışı bir aile seçildiyse target_modules da)
-
-# 4. Önce 20 adımlık deneme (EC-006): boru hattı masaüstünde de uçtan uca çalışıyor mu.
-#    Eğitim sırasında 5070'te Ollama model tutmamalı (12 GB'ın tamamı gerekir):
-#    önce `"$OLLAMA" stop <model>` (çalışan modeller: `"$OLLAMA" ps`).
-uv run --group train python -m bist_harness.finetune.train run \
-  --config configs/qlora/laptop-trial.toml --data data/finetune --out runs/finetune-laptop-trial
-#    4b. Bellek denemesi, temel modelden bağımsız: tam koşu 12 GB'a sığacak mı. En ağır
-#    ayarın (r32-e3) kopyası, veri setinin EN UZUN kayıtlarıyla 20 adım. Kopyada:
-#    max_steps = 20, train_limit = 80, val_limit = 16, sample = "longest"
-#    (rastgele 80 kayıt en uzun turu kaçırabilir: dizüstü denemesinin rastgele örnekleminde
-#    en uzun tur 1.241 belirteçti, veri setininki 1.475). base_model/revision kopyada
-#    denenecek modelin değeri olmalı (3. adım yapılmadıysa kopyaya doğrudan yaz).
-cp configs/qlora/r32-e3.toml runs/desktop-trial.toml   # runs/ git dışı; sonra düzenle
-uv run --group train python -m bist_harness.finetune.train run \
-  --config runs/desktop-trial.toml --data data/finetune --out runs/finetune-desktop-trial
-#    Geçti sayılması için run.json'da üçü birden:
-#    - max_trained_tokens == max_example_tokens (deneme en uzun turu gördü);
-#    - peak_vram_gb.allocated ≤ 10,5 GB (CUDA bağlamı ve ekran için ≈ 1,5 GB pay);
-#    - peak_vram_gb.reserved < 11,5 GB.
-#    Biri tutmazsa Windows belleği paylaşılan RAM'e taşır (dizüstündeki gibi çalışır ama
-#    çok yavaşlar): tam koşulara geçme, sonucu bildir.
-
-# 5. İki ayar
-uv run --group train python -m bist_harness.finetune.train run \
-  --config configs/qlora/r16-e2.toml --data data/finetune --out runs/finetune-r16-e2
-uv run --group train python -m bist_harness.finetune.train run \
-  --config configs/qlora/r32-e3.toml --data data/finetune --out runs/finetune-r32-e3
-
-# 6. Ollama sürümü ve llama.cpp; <taban> Task 7'nin Ollama etiketi (ör. qwen3.5:4b)
-#    Masaüstündeki Ollama 0.40.4'tür (18 Kasım 2026, geçitten /api/version), dizüstününki
-#    0.40.16 (llama.cpp 6c01da627). Dizüstünün commit'i masaüstünde GEÇERSİZDİR: dönüştürücü
-#    0.40.4'ün kendi commit'ine sabitlenir ve şablon denetimi 0.40.4'te yeniden koşulur.
-#    ZIP kurulumu kendini güncellemez. `export` llama-server'ı PATH'te bulduğu `ollama`nın
-#    klasöründen okur; adım 0'daki PATH eklemesi bu kabukta yapılmış olmalı:
-command -v ollama                                         # /c/AI-Server/ollama/ollama göstermeli
-"$OLLAMA" --version                                       # 0.40.4 beklenir; değiştiyse bu adımlar o sürümle
-ls "$OLLAMA_DIR/lib/ollama/"                              # llama-server.exe ve llama-quantize.exe var mı
-"$OLLAMA_DIR/lib/ollama/llama-server.exe" --version       # "commit <kısa>"
-#    llama-server.exe ya da llama-quantize.exe 0.40.4'te yoksa dur ve haber ver: export
-#    commit'i okuyamaz ve başlamaz (bu dosyalar yalnız 0.40.16'da doğrulandı).
-#    Kısa hash'ten tam commit: GitHub yalnız tam adla getirir, bu yüzden geçmiş gerekir
-#    (ya da tarayıcıda https://github.com/ggml-org/llama.cpp/commit/<kısa> tam adı gösterir).
-git clone -c core.longpaths=true --filter=blob:none https://github.com/ggml-org/llama.cpp tools/llama.cpp  # bir kez
-git -C tools/llama.cpp fetch origin   # sonraki dışa aktarmalarda
-git -C tools/llama.cpp checkout "$(git -C tools/llama.cpp rev-parse '<kısa>^{commit}')"
-git -C tools/llama.cpp rev-parse HEAD   # <kısa> ile başlamalı
-#    Şablon denetimi (Task 7 modeli ve bu Ollama ile; çıkış kodu 0 = hepsi bayt bayt aynı).
-#    BIST_LLM_BASE_URL boş ya da yerel Ollama olmalı. 0.40.4 `_debug_render_only`'yi
-#    tanımıyorsa denetim bunu açıkça söyler ve durur: sonucu haber ver, dışa aktarmaya geçme.
-uv run --group train python -m bist_harness.finetune.template_check --data data/finetune \
-  --base-model <HF deposu> --revision <commit> --ollama-model <taban> \
-  --out runs/template-check-<taban>.json
-#    Dışa aktarma; commit uyuşmazsa başlamaz, model yüklenmezse sonda hata verir
-uv run --group train python -m bist_harness.finetune.export \
-  --adapter runs/finetune-r16-e2/adapter --name bist-r16-e2 --template-from <taban> \
-  --llama-quantize "$OLLAMA_DIR/lib/ollama/llama-quantize.exe"
-uv run --group train python -m bist_harness.finetune.export \
-  --adapter runs/finetune-r32-e3/adapter --name bist-r32-e3 --template-from <taban> \
-  --llama-quantize "$OLLAMA_DIR/lib/ollama/llama-quantize.exe"
-"$OLLAMA" list   # bist-r16-e2 ve bist-r32-e3 görünmeli; "load_check": "passed" export.json'da
-
-# 7. Dizüstüne geri getir: her koşudan adapter/, loss.csv, run.json (checkpoints/ gerekmez)
-#    runs/finetune-r16-e2/ ve runs/finetune-r32-e3/ altına aynı yollarla koy
+```powershell
+$OllamaDir = "C:\AI-Server\ollama"
+$Ollama = "$OllamaDir\ollama.exe"
+$env:Path = "$env:Path;$OllamaDir"
+& $Ollama --version
+(Get-Command ollama).Source
 ```
 
-Dizüstünde aynı modeli kurmak için 6. adımdaki `export` komutu getirilen adaptörle
+Beklenen: `ollama version is 0.40.4` ve `C:\AI-Server\ollama\ollama.exe`.
+
+**1. Depo ve kütüphaneler** (deponun kökünde; `sprint-5-dev` dizüstünden push edilmiş olmalı)
+
+```powershell
+git checkout sprint-5-dev
+git pull
+uv sync --group train
+uv run --group train python -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"
+```
+
+Beklenen: `NVIDIA GeForce RTX 5070 (12, 0)`.
+
+**2. Veri paketi.** Veri git dışıdır; paket dizüstünde hazırlanır (Git Bash):
+
+```bash
+uv run python -m bist_harness.finetune.train bundle --data data/finetune \
+  --config configs/qlora/trial-9b.toml --config configs/qlora/r16-e2.toml \
+  --config configs/qlora/r32-e3.toml --out runs/finetune-bundle-20261118-9b.zip
+```
+
+Masaüstüne kopyalanır ve deponun kökünde açılır (`data\finetune\` ve `configs\qlora\`
+gelir; ayar dosyaları git'tekilerle aynıdır):
+
+```powershell
+Expand-Archive -Path runs\finetune-bundle-20261118-9b.zip -DestinationPath . -Force
+(Get-FileHash data\finetune\train.jsonl -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash data\finetune\val.jsonl -Algorithm SHA256).Hash.ToLower()
+```
+
+Beklenen: `26a764d92f5c024b8f1e3056de4fa734281e7afe072ee7cd0038a520dffbe87c` ve
+`23dd54999c0d33880d8c51537094845a9a21e2b6b4c54d2ff2cb98d39092aabb` (manifestteki değerler).
+
+**3. 9B ağırlıkları** (bir kez, 19,3 GB; Hugging Face önbelleğine). Disk: önbellek 19,3 GB,
+dışa aktarmada birleştirilmiş model ≈ 19 GB, f16 GGUF ≈ 18 GB, q4_K_M ≈ 5,6 GB: en az
+≈ 65 GB boş yer.
+
+```powershell
+uv run --group train python -c "from huggingface_hub import snapshot_download; print(snapshot_download('Qwen/Qwen3.5-9B', revision='c202236235762e1c871ad0ccb60c8ee5ba337b9a'))"
+uv run --group train python -m bist_harness.finetune.memory --config configs\qlora\trial-9b.toml --rank 16 --rank 32
+```
+
+İkinci komut beklenen en yüksek ayrılmış belleği yazar (ağırlık indirmez, Hub
+üstverisinden): r16 için ≈ 8,99 GB, r32 için ≈ 9,29 GB (1.475 belirteçlik en uzun tur,
+622 belirteç hedef). Dizüstü ölçümlerinde tahmin gerçeğin %2–4 altında kaldı; r32 için
+≈ 9,6 GB beklenir.
+
+**4. Bellek denemesi: `trial-9b`** (20 adım, r32'nin bellek ayarları, train ve val'in en
+uzun kayıtları). Eğitim sırasında Ollama 5070'te model tutmamalı ve geçitten istek
+gelmemelidir (12 GB'ın tamamı gerekir):
+
+```powershell
+& $Ollama ps
+& $Ollama stop qwen3.5:9b-q4_K_M
+```
+
+(`ps` boşsa `stop` gerekmez; listede başka model varsa onun adıyla `stop`.) İkinci bir
+PowerShell penceresinde GPU belleğini ve paylaşılan belleğe taşmayı izle (Ctrl+C durdurur;
+Windows aşan belleği sessizce sistem RAM'ine taşır, koşu düşmez ama çok yavaşlar):
+
+```powershell
+$maxShared = 0
+while ($true) {
+  $pids = (Get-Process python -ErrorAction SilentlyContinue).Id
+  $rows = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory | Where-Object { $pids -contains [int]($_.Name -replace '^pid_(\d+)_.*', '$1') }
+  $dedicated = [math]::Round((($rows | Measure-Object DedicatedUsage -Sum).Sum) / 1MB)
+  $shared = [math]::Round((($rows | Measure-Object SharedUsage -Sum).Sum) / 1MB)
+  if ($shared -gt $maxShared) { $maxShared = $shared }
+  "{0:HH:mm:ss}  GPU {1} MB, paylasilan {2} MB (en cok {3} MB)" -f (Get-Date), $dedicated, $shared, $maxShared
+  Start-Sleep -Seconds 10
+}
+```
+
+Birinci pencerede deneme:
+
+```powershell
+uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\trial-9b.toml --data data\finetune --out runs\finetune-trial-9b
+```
+
+Sonunda tek satırlık özet yazılır, ör. `[train] 20 steps, ... (<s> s/step), peak VRAM
+allocated <a> GB / reserved <r> GB; longest trained turn 1475 of 1475 tokens (train + val)`.
+Aynı değerler `runs\finetune-trial-9b\run.json`'dadır:
+
+```powershell
+Get-Content runs\finetune-trial-9b\run.json | Select-String '"max_trained_tokens"|"max_train_val_tokens"|"allocated"|"reserved"|"seconds_per_step"|"best_eval_loss"'
+```
+
+**5. Karar kuralı.** Deneme **geçer** (9B ile devam), dördü birden tutarsa:
+
+1. `max_trained_tokens` = `max_train_val_tokens` (= 1475: deneme en uzun turu gördü);
+2. `peak_vram_gb.allocated` ≤ 10,5 (CUDA bağlamı ve ekran için ≈ 1,5 GB pay);
+3. `peak_vram_gb.reserved` < 11,5;
+4. izleme penceresindeki "en cok" paylaşılan bellek < 1000 MB (taşma yok; normalde
+   birkaç yüz MB'tır; dizüstünde taşmasız 0.8B koşusu 80 MB gösterdi).
+
+Biri tutmazsa 9B bu kartta güvenli değildir: **4B'ye geç** (aşağıda). Geçerse
+`seconds_per_step` 6. adımdaki süre tahminine girer.
+
+**4B'ye geçiş** (yalnız deneme geçmezse; Burak'ın kararı). `Qwen/Qwen3.5-4B` masaüstündeki
+`qwen3.5:4b`'nin deposudur (aynı mimari ailesi, aynı belirteçleyici ve sohbet işleyişi;
+`docs/results/2026-11-18-finetune-training.md`, 9. bölüm). Üç ayar dosyasında yalnız iki
+satır değişir; `target_modules` ve öteki ayarlar aynı kalır:
+
+```powershell
+foreach ($name in "r16-e2", "r32-e3", "trial-9b") {
+  $path = (Resolve-Path "configs\qlora\$name.toml").Path
+  $text = [IO.File]::ReadAllText($path)
+  $text = $text -replace '(?m)^base_model = .*$', 'base_model = "Qwen/Qwen3.5-4B"'
+  $text = $text -replace '(?m)^revision = .*$', 'revision = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"'
+  [IO.File]::WriteAllText($path, $text)
+}
+Select-String -Path configs\qlora\r16-e2.toml, configs\qlora\r32-e3.toml, configs\qlora\trial-9b.toml -Pattern '^base_model|^revision'
+uv run --group train python -m bist_harness.finetune.memory --config configs\qlora\trial-9b.toml --rank 16 --rank 32
+uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\trial-9b.toml --data data\finetune --out runs\finetune-trial-4b
+```
+
+(`[IO.File]::WriteAllText` UTF-8'i BOM'suz yazar; `Set-Content -Encoding utf8` PowerShell
+5.1'de BOM ekler ve ayar dosyası okunmaz. Dosya adı `trial-9b` kalır, içerik 4B'dir.)
+4B tahmini ≈ 4,35 / 4,58 GB (r16 / r32); deneme aynı kuralla okunur. Sonra 6. adım aynı
+komutlarla çalışır; 7. adımda `Qwen/Qwen3.5-9B` yerine `Qwen/Qwen3.5-4B`,
+`c202236235762e1c871ad0ccb60c8ee5ba337b9a` yerine
+`851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` ve `qwen3.5:9b-q4_K_M` yerine `qwen3.5:4b`
+yazılır. Masaüstünde commit edilmez (`run.json` ayarları zaten kaydeder); sonraki
+`git pull`'dan önce `git checkout -- configs/qlora` ile geri alınır. Kalıcı geçişi dizüstünde
+ayrı bir commit yapar.
+
+**6. İki gece koşusu.** Arka arkaya; ilki başarısız olursa ikincisi başlamaz. Çıktı
+`runs\` altındaki günlüklere de yazılır:
+
+```powershell
+uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\r16-e2.toml --data data\finetune --out runs\finetune-r16-e2 2>&1 | Tee-Object -FilePath runs\finetune-r16-e2.log
+if ($LASTEXITCODE -eq 0) { uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\r32-e3.toml --data data\finetune --out runs\finetune-r32-e3 2>&1 | Tee-Object -FilePath runs\finetune-r32-e3.log }
+```
+
+Beklenen süre (denemenin `seconds_per_step`'inden; adım = 16 örnek): deneme veri setinin
+en uzun turlarında koştuğu için (ortalama ≈ 1.175 belirteç) gerçek adımlar daha kısadır
+(train ortalaması ≈ 673 belirteç):
+gerçek adım ≈ 0,57 × denemenin `seconds_per_step`'i. `r16-e2` 296 adım (2 tur × 148), her
+50 adımda 618 kayıtlık doğrulama (her biri ≈ 13 adımlık süre); `r32-e3` 444 adım. Kaba
+toplam (± %30, erken durma kısaltır), `X` = denemenin `seconds_per_step`'i:
+
+| | süre (saat) | X = 30 sn | X = 60 sn | X = 90 sn |
+| --- | --- | --- | --- | --- |
+| `r16-e2` | ≈ 0,057 × X | ≈ 1,7 | ≈ 3,4 | ≈ 5,1 |
+| `r32-e3` | ≈ 0,087 × X | ≈ 2,6 | ≈ 5,2 | ≈ 7,8 |
+| ikisi | ≈ 0,144 × X | ≈ 4,3 | ≈ 8,6 | ≈ 13 |
+
+İkisi bir geceye sığmıyorsa (ör. X > 60 sn) bu gece yalnız `r16-e2`'yi başlat, `r32-e3`'ü
+ertesi geceye bırak. Hızlı Gated DeltaNet çekirdekleri (`flash-linear-attention`) Triton
+ister; Triton'un resmî Windows paketi yoktur (dizüstünde de kurulu değil), bu yüzden PyTorch
+başvuru uygulaması kullanılır.
+
+**7. Dışa aktarma** (koşular bittikten sonra; Ollama sürümü, llama.cpp ve şablon denetimi).
+Masaüstündeki Ollama 0.40.4'tür, dizüstününki 0.40.16 (llama.cpp `6c01da627`). Dizüstünün
+commit'i masaüstünde **geçersizdir**: dönüştürücü 0.40.4'ün kendi commit'ine sabitlenir ve
+şablon denetimi 0.40.4'te yeniden koşulur. ZIP kurulumu kendini güncellemez.
+
+```powershell
+(Get-Command ollama).Source
+Get-ChildItem "$OllamaDir\lib\ollama" -Filter "llama-*.exe"
+& "$OllamaDir\lib\ollama\llama-server.exe" --version
+```
+
+İlki `C:\AI-Server\ollama\ollama.exe`'yi göstermeli (0. adım bu pencerede yapılmış olmalı);
+ikincisi `llama-server.exe` ve `llama-quantize.exe`'yi listelemeli; üçüncüsü
+`commit <kısa>` yazar. `llama-server.exe` ya da `llama-quantize.exe` yoksa dur ve haber ver:
+`export` commit'i okuyamaz ve başlamaz (bu dosyalar yalnız 0.40.16'da doğrulandı). Kısa
+hash'ten tam commit'e (GitHub yalnız tam adla getirir; `<kısa>` yerine yukarıdaki değer):
+
+```powershell
+git clone -c core.longpaths=true --filter=blob:none https://github.com/ggml-org/llama.cpp tools/llama.cpp
+git -C tools/llama.cpp fetch origin
+$full = git -C tools/llama.cpp rev-parse "<kısa>^{commit}"
+git -C tools/llama.cpp checkout $full
+git -C tools/llama.cpp rev-parse HEAD
+```
+
+(`clone` yalnız ilk kez; sonraki dışa aktarmalarda `fetch` yeter. Son satır `<kısa>` ile
+başlamalı.) Şablon denetimi 9B ve bu Ollama ile (çıkış kodu 0 = hepsi bayt bayt aynı;
+`BIST_LLM_BASE_URL` boş ya da yerel Ollama olmalı; 0.40.4 `_debug_render_only`'yi
+tanımıyorsa denetim bunu açıkça söyler ve durur: sonucu haber ver, dışa aktarmaya geçme):
+
+```powershell
+uv run --group train python -m bist_harness.finetune.template_check --data data\finetune --base-model Qwen/Qwen3.5-9B --revision c202236235762e1c871ad0ccb60c8ee5ba337b9a --ollama-model qwen3.5:9b-q4_K_M --out runs\template-check-9b.json
+```
+
+Dışa aktarma (parça parça birleştirme, f16 GGUF, `llama-quantize` ile q4_K_M,
+`ollama create`, yükleme denemesi; commit uyuşmazsa başlamaz, model yüklenmezse sonda hata
+verir; her biri ≈ 43 GB disk ister: birleştirilmiş model ≈ 19 GB, GGUF'a çevrilince
+silinir (`--keep-merged` verilmezse); f16 GGUF ≈ 18 GB ve q4_K_M ≈ 5,6 GB kalır):
+
+```powershell
+uv run --group train python -m bist_harness.finetune.export --adapter runs\finetune-r16-e2\adapter --name bist-r16-e2 --template-from qwen3.5:9b-q4_K_M --llama-quantize "$OllamaDir\lib\ollama\llama-quantize.exe"
+uv run --group train python -m bist_harness.finetune.export --adapter runs\finetune-r32-e3\adapter --name bist-r32-e3 --template-from qwen3.5:9b-q4_K_M --llama-quantize "$OllamaDir\lib\ollama\llama-quantize.exe"
+& $Ollama list
+```
+
+`bist-r16-e2` ve `bist-r32-e3` listede görünmeli; her dışa aktarmanın `export.json`'unda
+`"load_check": "passed"`.
+
+**8. Dizüstüne geri getir:** her koşudan `adapter\`, `loss.csv`, `run.json` (ve deneme için
+`runs\finetune-trial-9b\run.json`); `checkpoints\` gerekmez. Dizüstünde
+`runs/finetune-r16-e2/` ve `runs/finetune-r32-e3/` altına aynı yollarla konur.
+
+Dizüstünde aynı modeli kurmak için 7. adımdaki `export` komutu getirilen adaptörle
 dizüstünde de çalışır (temel model Hugging Face'ten iner, f16 GGUF yerelde üretilir).
 
 Seçim: doğrulama kaybı (`run.json` → `best_eval_loss`) ve geliştirme sorularında açıklama
@@ -404,5 +562,5 @@ kabul oranı (`run_eval --questions-file data/finetune/dev_questions.jsonl --exp
 
 Not: Qwen3.5'in doğrusal dikkat katmanları için `flash-linear-attention` ve
 `causal-conv1d` kurulu değilse transformers PyTorch başvuru uygulamasına düşer (doğru ama
-yavaş; dizüstünde adım başına yaklaşık 20 sn). Masaüstünde süre uzun gelirse bu
-çekirdekler ayrıca kurulabilir; `train` grubuna eklenmedi.
+yavaş; dizüstünde 0.8B'de adım başına 14–19 sn). Bu çekirdekler Triton ister; Triton'un resmî
+Windows paketi olmadığı için masaüstünde de denenmedi, `train` grubuna eklenmedi.

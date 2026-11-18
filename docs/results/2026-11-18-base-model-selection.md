@@ -221,11 +221,14 @@ sözlüğe ve dizi uzunluğuna bağlıdır, model boyutuna değil. 1.475 belirte
 - **9B bugünkü kodla 12 GB'ye sığmaz:** fp32'ye yükseltilen gömme ve çıkış katmanları tek
   başına ≈ 8,1 GB. Sığdırmak için kod değişikliği gerekir: bu iki katmanı bf16'da donuk
   bırakmak ve kaybı parçalı hesaplamak (tam sözlük logitini tutmamak). O zaman tahmin
-  ≈ 9,7 / 10,1 GB (r16 / r32) — sınırda ve denenmedi.
-- **Ölçüm:** masaüstündeki bellek denemesi (`docs/finetune.md`, adım 4b) en ağır ayarı
-  (r32) veri setinin en uzun kayıtlarıyla (`sample = "longest"`) 20 adım koşar; geçmesi
-  için `run.json`'da `max_trained_tokens` = `max_example_tokens`, ayrılmış bellek
-  ≤ 10,5 GB ve rezerve < 11,5 GB olmalıdır. Böylece geçen deneme tam koşunun da sığacağını
+  ≈ 9,7 / 10,1 GB (r16 / r32) — sınırda ve denenmedi. (Task 8b bu yolu kurdu ve tahmini
+  dizüstü ölçümleriyle yeniledi: ≈ 9,0 / 9,3 GB; `docs/results/2026-11-18-finetune-training.md`,
+  9. bölüm.)
+- **Ölçüm:** masaüstündeki bellek denemesi (`docs/finetune.md`, adım 4; Task 8b'den beri
+  `configs/qlora/trial-9b.toml`) en ağır ayarı (r32) veri setinin en uzun kayıtlarıyla
+  (`sample = "longest"`) 20 adım koşar; geçmesi için `run.json`'da `max_trained_tokens` =
+  `max_train_val_tokens` (train + val'in en uzunu; test hiç eğitilmez, Task 8b düzeltmesi),
+  ayrılmış bellek ≤ 10,5 GB ve rezerve < 11,5 GB olmalıdır. Böylece geçen deneme tam koşunun da sığacağını
   gösterir. 12 GB aşılırsa Windows paylaşılan belleğe taşır: koşu düşmez, çok yavaşlar.
 - Eğitim sırasında Ollama 5070'te model tutmamalıdır.
 
