@@ -439,8 +439,13 @@ def run_one(
     max_attempts: int = 2,
     replay_options: dict | None = None,
 ) -> dict:
-    """Run one question once under one experiment and return its record."""
+    """Run one question once under one experiment and return its record.
+
+    A question that carries its own ``today`` (a generated development question) runs
+    on that day; any other runs on ``today``.
+    """
     text = question["question"]
+    today = question.get("today") or today
     client = AttemptRecorder(client)
     started = time.perf_counter()
     if experiment == "A":
@@ -491,9 +496,13 @@ def run_eval(
     replay_options: dict | None = None,
     endpoint: str = "not recorded",
     progress: Callable[[dict], None] | None = None,
+    question_set_sha256: str | None = None,
 ) -> dict:
     """Run every experiment on every question ``repeats`` times; write ``records.jsonl``
-    and ``summary.json`` under ``out_dir`` and return the summary."""
+    and ``summary.json`` under ``out_dir`` and return the summary.
+
+    ``question_set_sha256`` names the question file in the summary (default: the frozen
+    set's recorded hash)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     started = datetime.now(UTC).isoformat(timespec="seconds")
     memory = db.connect(out_dir / "memory.sqlite") if "E" in experiments else None
@@ -533,7 +542,7 @@ def run_eval(
             "repeats": repeats,
             "today": today,
             "max_attempts": max_attempts,
-            "question_set_sha256": question_set.recorded_sha256(),
+            "question_set_sha256": question_set_sha256 or question_set.recorded_sha256(),
             "questions": [q["id"] for q in questions],
             "started_at": started,
             "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -547,6 +556,43 @@ def run_eval(
 
 
 # --- command line --------------------------------------------------------------------------
+QUESTION_KEYS = ("id", "question", "lang", "expected")
+EXPECTED_KEYS = (
+    "scenarios",
+    "outcomes",
+    "ticker",
+    "sector",
+    "start",
+    "end",
+    "as_of",
+    "reason",
+    "tools",
+)
+
+
+def load_question_set(path: Path | None = None) -> list[dict]:
+    """The questions to run: the frozen set (verified first) or another file in its format.
+
+    ``path`` None or the frozen file: ``verify_frozen`` must pass. Any other file (such
+    as the fine-tuning build's ``dev_questions.jsonl``) is read as it is; every line needs
+    ``id``, ``question``, ``lang`` and an ``expected`` with the frozen set's keys.
+    Raises ``ValueError`` otherwise.
+    """
+    frozen_path = question_set.QUESTIONS_PATH
+    if path is None or Path(path).resolve() == Path(frozen_path).resolve():
+        question_set.verify_frozen(frozen_path)
+        return question_set.load_questions(frozen_path)
+    questions = question_set.load_questions(Path(path))
+    for number, question in enumerate(questions, start=1):
+        missing = [key for key in QUESTION_KEYS if key not in question]
+        missing += [
+            f"expected.{key}" for key in EXPECTED_KEYS if key not in question.get("expected", {})
+        ]
+        if missing:
+            raise ValueError(f"{path} line {number} lacks {', '.join(missing)}")
+    return questions
+
+
 def _server_call_tool(name: str, arguments: dict) -> dict:
     from bist_harness.mcp_server import server
 
@@ -575,10 +621,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-attempts", type=int, default=2)
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "runs")
+    parser.add_argument(
+        "--questions-file",
+        type=Path,
+        help="questions in the frozen-set format, e.g. the fine-tuning dev questions "
+        "(default: the frozen set, verified)",
+    )
     args = parser.parse_args(argv)
 
     try:
-        question_set.verify_frozen(question_set.QUESTIONS_PATH)
+        chosen = load_question_set(args.questions_file)
     except ValueError as exc:
         print(f"[eval] {exc}", file=sys.stderr)
         raise SystemExit(2) from None
@@ -586,7 +638,6 @@ def main(argv: list[str] | None = None) -> int:
     unknown = [e for e in experiments if e not in EXPERIMENTS]
     if unknown:
         raise SystemExit(f"[eval] unknown experiment(s): {', '.join(unknown)}")
-    chosen = question_set.load_questions(question_set.QUESTIONS_PATH)
     if args.ids:
         wanted = {i.strip() for i in args.ids.split(",")}
         chosen = [q for q in chosen if q["id"] in wanted]
@@ -618,6 +669,9 @@ def main(argv: list[str] | None = None) -> int:
         max_attempts=args.max_attempts,
         endpoint=endpoint,
         progress=_print_record,
+        question_set_sha256=(
+            question_set.file_sha256(args.questions_file) if args.questions_file else None
+        ),
     )
     for name, values in summary["metrics"].items():
         print(f"[eval] {name}: {json.dumps(values, default=str)}", flush=True)

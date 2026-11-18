@@ -189,3 +189,29 @@ def test_diacritic_free_turkish_forms_exist(sample):
     tr = [q.text for q in fq.generate(60) if q.language == "tr"]
     assert any(not any(c in "ıİşŞğĞüÜöÖçÇ" for c in t) for t in tr)
     assert any(any(c in "ıİşŞğĞüÜöÖçÇ" for c in t) for t in tr)
+
+
+# --- the paraphrase template (Task 3 splits by it) -----------------------------------------
+# SHA-256 of generate(4)'s ids, texts, golds and todays before the template field was added:
+# exposing the template must not change a single generated question.
+GENERATE_4_SHA256 = "1820d1fe1d384026091b7ac60c10477903d3d6f4c1e98b3f8d589514579540ec"
+
+
+def test_exposing_the_template_leaves_generation_unchanged():
+    import hashlib
+    import json
+
+    rows = [[q.question_id, q.text, q.gold.intent, q.gold.action, q.today] for q in fq.generate(4)]
+    text = json.dumps(rows, ensure_ascii=False)
+    assert hashlib.sha256(text.encode()).hexdigest() == GENERATE_4_SHA256
+
+
+def test_every_question_names_the_paraphrase_it_was_written_from(sample):
+    import re
+
+    plain = str.maketrans("ıİşŞğĞüÜöÖçÇ", "iIsSgGuUoOcC")
+    for q in sample:
+        assert q.template in fq.FAMILIES[q.family].templates[q.language], q.question_id
+        text = q.text.translate(plain)
+        fixed = [p for p in re.split(r"\{\w+\}", q.template) if p.strip()]
+        assert all(p.translate(plain) in text for p in fixed), (q.template, q.text)

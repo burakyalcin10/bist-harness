@@ -66,6 +66,9 @@ class GenQuestion:
     text: str
     gold: Gold
     today: str  # the run's reference date, passed to ``run_analysis``
+    # the paraphrase the text was written from (one of the family's templates for its
+    # language, unformatted); the build holds some paraphrases out of training by it
+    template: str
 
 
 @dataclass(frozen=True)
@@ -75,7 +78,8 @@ class Family:
     name: str
     description: str
     templates: dict[str, tuple[str, ...]]
-    make: Callable[[Family, random.Random, str, tuple[str, str]], tuple[str, Gold, str]]
+    # (text, gold, today, template)
+    make: Callable[[Family, random.Random, str, tuple[str, str]], tuple[str, Gold, str, str]]
     scenario: str = ""
     mode: str = "code"  # how a stock is written: code | company | lower | any
     dated: bool | None = None  # True always, False never, None by chance
@@ -175,25 +179,29 @@ def _scenario_question(fam, rng, lang, today_range):
     today = _iso(_random_day(rng, *today_range))
     ticker, ref = _stock(rng, fam.mode)
     start, end, when = _maybe_period(fam, rng, lang, today)
-    text = rng.choice(fam.templates[lang]).format(ref=ref, when=when)
+    template = rng.choice(fam.templates[lang])
+    text = template.format(ref=ref, when=when)
     gold = Gold(_intent(fam.scenario, lang, ticker=ticker, start=start, end=end), fam.action)
-    return _plain(text, lang, rng), gold, today
+    return _plain(text, lang, rng), gold, today, template
 
 
 def _macro_question(fam, rng, lang, today_range):
     today = _iso(_random_day(rng, *today_range))
     start, end, when = _maybe_period(fam, rng, lang, today)
-    text = rng.choice(fam.templates[lang]).format(when=when)
+    template = rng.choice(fam.templates[lang])
+    text = template.format(when=when)
     gold = Gold(_intent(fam.scenario, lang, start=start, end=end), fam.action)
-    return _plain(text, lang, rng), gold, today
+    return _plain(text, lang, rng), gold, today, template
 
 
 def _guarded_question(fam, rng, lang, today_range):
     """Advice and prediction: a stock and no dates."""
     today = _iso(_random_day(rng, *today_range))
     ticker, ref = _stock(rng, "any")
-    text = rng.choice(fam.templates[lang]).format(ref=ref)
-    return _plain(text, lang, rng), Gold(_intent(fam.scenario, lang, ticker=ticker)), today
+    template = rng.choice(fam.templates[lang])
+    text = template.format(ref=ref)
+    gold = Gold(_intent(fam.scenario, lang, ticker=ticker))
+    return _plain(text, lang, rng), gold, today, template
 
 
 def _outside_question(fam, rng, lang, today_range):
@@ -201,9 +209,10 @@ def _outside_question(fam, rng, lang, today_range):
     ticker = rng.choice(_outside())
     ref = ticker.lower() if rng.random() < 0.2 else ticker
     start, end, when = _maybe_period(fam, rng, lang, today, chance=0.4)
-    text = rng.choice(fam.templates[lang]).format(ref=ref, when=when)
+    template = rng.choice(fam.templates[lang])
+    text = template.format(ref=ref, when=when)
     gold = Gold(_intent("PRICE_SUMMARY", lang, ticker=ticker, start=start, end=end))
-    return _plain(text, lang, rng), gold, today
+    return _plain(text, lang, rng), gold, today, template
 
 
 def _future_question(fam, rng, lang, today_range):
@@ -214,24 +223,27 @@ def _future_question(fam, rng, lang, today_range):
     end_d = min(start_d + timedelta(days=rng.randint(30, 150)), hi)
     start, end = _iso(start_d), _iso(end_d)
     when = _period_words(rng, lang, start, end)
-    text = rng.choice(fam.templates[lang]).format(ref=ref, when=when)
+    template = rng.choice(fam.templates[lang])
+    text = template.format(ref=ref, when=when)
     gold = Gold(_intent("PRICE_SUMMARY", lang, ticker=ticker, start=start, end=end))
-    return _plain(text, lang, rng), gold, today
+    return _plain(text, lang, rng), gold, today, template
 
 
 def _no_tool_question(fam, rng, lang, today_range):
     today = _iso(_random_day(rng, *today_range))
-    text = rng.choice(fam.templates[lang]).format(topic=rng.choice(fam.extra["topics"][lang]))
-    return _plain(text, lang, rng), Gold(_intent("OUT_OF_SCOPE", lang)), today
+    template = rng.choice(fam.templates[lang])
+    text = template.format(topic=rng.choice(fam.extra["topics"][lang]))
+    return _plain(text, lang, rng), Gold(_intent("OUT_OF_SCOPE", lang)), today, template
 
 
 def _missing_question(fam, rng, lang, today_range):
     today = _iso(_random_day(rng, *today_range))
     scenario = rng.choice(tuple(MISSING))
     start, end, when = _maybe_period(fam, rng, lang, today, chance=0.4)
-    text = rng.choice(MISSING[scenario][lang]).format(when=when)
+    template = rng.choice(MISSING[scenario][lang])
+    text = template.format(when=when)
     gold = Gold(_intent(scenario, lang, start=start, end=end))
-    return _plain(text, lang, rng), gold, today
+    return _plain(text, lang, rng), gold, today, template
 
 
 # --- paraphrases (TR: the period leads the sentence; EN: it trails) ----------------------
@@ -617,7 +629,7 @@ def generate(
         for index in range(n_per_family):
             lang = LANGS[index % 2]
             for _ in range(50):
-                text, gold, today = family.make(family, rng, lang, today_range)
+                text, gold, today, template = family.make(family, rng, lang, today_range)
                 if not _grounded(gold, text):
                     continue  # e.g. an English company word tips the detected language
                 if text not in seen:
@@ -626,7 +638,8 @@ def generate(
                 if not _grounded(gold, text):
                     raise ValueError(f"family {name} cannot ground its intent in {text!r}")
             seen.add(text)
-            out.append(GenQuestion(f"{name}-{index:04d}", name, lang, text, gold, today))
+            qid = f"{name}-{index:04d}"
+            out.append(GenQuestion(qid, name, lang, text, gold, today, template))
     return out
 
 

@@ -28,7 +28,7 @@ aynı SHA-256'yı verir.
 | `turn`, `state` | tur türü; araç turunda durum adı |
 | `messages`, `tools` | harness'in o turda gönderdiği mesajlar ve sunduğu araç şemaları |
 | `target` | doğru cevap: metin (`content`) ya da araç çağrıları (`tool_calls`) |
-| `meta` | tur düzeyi (öğretmen yazar): araç turunda `state`, açıklama turunda `action` ve `eligible`; koşu düzeyi (Task 3'ün üretim hattı ekler): `outcome`, `snapshot_id`, `layers_id`, `today` |
+| `meta` | tur düzeyi (öğretmen yazar): araç turunda `state`, açıklama turunda `action` ve `eligible`; koşu düzeyi (Task 3'ün üretim hattı ekler): `outcome`, `snapshot_id`, `layers_id`, `today`, `template` |
 
 ### Üç tur türü
 
@@ -77,6 +77,92 @@ sorularının kanonik backtest'i `B_TECH_SECTOR`'dür (`machine.canonical_calls`
 tarihleri 2025'ten önce kaldığı için eğitim verisinde aday etiketi bu backtest'le
 değerlendirilir. Bu hücrenin
 gerçek veride dolup dolmadığı üretim manifestinden okunur.
+
+#### Ulaşılabilir ve ulaşılamaz hücreler
+
+Bir hücrenin etiketi sorunun koşu sonucudur (`meta.outcome`); sayılar kayıt (tur)
+sayısıdır. Harness'in uygun etiket kuralına (`harness.actions.eligible_actions`) ve
+öğretmenin önceliğine göre dört senaryoda ulaşılabilir hücreler:
+
+| Senaryo | Ulaşılabilir etiketler |
+| --- | --- |
+| `SECTOR_LAGGARD` | `WATCH`, `INVESTIGATE`, `ANALYSIS_UNSAFE`, `POTENTIAL_CATCH_UP_CANDIDATE` |
+| `CALENDAR_PATTERN` | `WATCH`, `INVESTIGATE`, `ANALYSIS_UNSAFE`, `REJECT_SIGNAL` |
+| `TECHNICAL_REVERSAL` | `WATCH`, `INVESTIGATE`, `ANALYSIS_UNSAFE`, `TECHNICAL_REVERSAL_CANDIDATE` |
+| `FUNDAMENTAL_REACTION` | `WATCH`, `INVESTIGATE`, `ANALYSIS_UNSAFE`, `FUNDAMENTAL_IMPROVEMENT_CANDIDATE` |
+
+Yapı gereği boş kalan hücreler (sayılmaz):
+
+- **Başka senaryonun aday etiketi:** aday etiketi senaryoya bağlıdır
+  (`CANDIDATE_LABEL`); ör. `CALENDAR_PATTERN` × `TECHNICAL_REVERSAL_CANDIDATE` çıkmaz.
+- **`REJECT_SIGNAL`, takvim dışı:** yalnız anlamsız haftanın günü sonucunda uygun olur.
+- **`HOLD`, dört senaryoda:** `HOLD` uygun olduğunda `WATCH` da uygundur ve öğretmen
+  `WATCH`'u seçer; açık `HOLD` gold'u yalnız `price_summary_hold` ve
+  `macro_context_hold` ailelerinde vardır. Dört senaryoda `HOLD` öğretilmez.
+
+**Kapsama (sentetik ve gerçek veri):** `tests/test_finetune_build.py`
+(`test_coverage_has_no_empty_cell`) üretimi sentetik anlık görüntüde çalıştırır ve
+ulaşılabilir her hücrenin dolu olduğunu, yalnız aşağıdaki hücrelerin sentetik veride boş
+kaldığını denetler (liste testte gerekçesiyle durur; dolan hücre listeden çıkarılır):
+
+| Hücre | Sentetik veride neden boş |
+| --- | --- |
+| `CALENDAR_PATTERN` × `WATCH` | rastgele yürüyüş fiyatlarında haftanın günü etkisi anlamlı çıkmaz; tam koşu hep `REJECT_SIGNAL` |
+| `FUNDAMENTAL_REACTION` × `WATCH`, `FUNDAMENTAL_IMPROVEMENT_CANDIDATE` | sentetik temel veride 2025'ten önce tek rapor (2024 3. çeyrek) var; temel değişim kanıtı tamamlanmaz |
+| `SECTOR_LAGGARD` × `POTENTIAL_CATCH_UP_CANDIDATE` | sentetik sektör backtest'leri sınırlı (az işlem ya da al-tut'un altında); aday uygun olmaz |
+
+Gerçek verideki kapsama için yetkili kaynak üretim manifestidir (`manifest.json`,
+`coverage`); boş hücreler ve nedenleri `docs/results/` altındaki üretim sonucunda yazılır.
+
+## Üretim hattı ve bölme
+
+Tek komut veri setini aynı baytlarla yeniden üretir (tohum 42):
+
+```
+uv run python -m bist_harness.finetune.build --n-per-family 30 --out data/finetune/
+```
+
+`finetune/build.py` (`build`, `split_by_family`):
+
+1. `generate(n, seed)` soruları üretir; `drop_overlaps` donmuş sete benzeyenleri atar.
+2. Her soru gerçek harness'ten (`machine.run_analysis`) öğretmenle geçer; araçlar süreç
+   içinde, etkin anlık görüntüde çalışır (`run_eval._server_call_tool`). Model ve ağ
+   yoktur. Koşudan sonra her kayda koşu düzeyi `meta` eklenir: `outcome`,
+   `snapshot_id`, `layers_id`, `today`, `template` (sorunun parafraz şablonu).
+3. Atılan sorular manifestte nedenleriyle sayılır:
+   - `overlap`: donmuş setle çakışma (`text_overlap`, `expected_triple`);
+   - `teacher_errors`: öğretmen bir turu cevaplayamadı (`TeacherError` ya da
+     `ValueError`, mesajıyla); üretim sürer;
+   - `test_period_date`: sorunun bir kaydında (mesajlar, araç şemaları, hedef)
+     2025-01-01 ya da sonrasına ait bir tarih var (`YYYY-MM-DD`, `YYYY-MM`,
+     `YYYYQn`). Ön kayıtlı test dönemi eğitime girmez. Araç çıktıları kayda yalnız
+     açıklama turunun kanıt cümleleriyle girer; bu yüzden denetim kayıt metnindedir.
+4. Bölme parafraza göre yapılır: aynı parafraz kümesini paylaşan aileler (ör. dört
+   `sector_laggard_*` ailesi) tek bir küme sayılır; her dilde en az 3 parafrazı olan
+   her kümeden `val` ve `test` için `max(1, round(0,1 × boyut))` parafraz tohum 42 ile
+   ayrılır (6 parafrazda birer tane). Bu parafrazlarla yazılmış sorular yalnız
+   `val`/`test`'te görünür; `train` onları hiç görmez. Bir sorunun bütün turları aynı
+   bölümdedir. Daha az parafrazlı bir kümenin soruları tek tek kurayla bölünür.
+5. Dosyalar: `train.jsonl`, `val.jsonl`, `test.jsonl` (`TrainingRecord` satırları),
+   `dev_questions.jsonl` ve `manifest.json`.
+
+**`dev_questions.jsonl`:** `test` bölümündeki her soru için bir satır, donmuş setin
+biçiminde (`id`, `category`, `lang`, `question`, `source`, `trap`, `expected`) ve ek
+olarak `family`, `today`. `expected` gold'dan ve gözlenen koşudan kurulur: `scenarios`
+gold senaryo; `outcomes` koşu sonucunun sınıfı (`metrics.outcome_class`); `ticker`,
+`sector`, `start`, `end`, `as_of` gold niyetten; `reason` kapının `check_intent`
+kodu; `tools` öğretmenin çağırdığı araçlar. Task 7 bunu
+`run_eval --questions-file data/finetune/dev_questions.jsonl` ile koşar; `verify_frozen`
+yalnız donmuş dosyaya uygulanır. Kendi `today`'i olan soru o günle koşar.
+
+**Manifest** (`manifest.json`, anahtarlar sıralı, girintili; eğitim kaydı değildir):
+`counts.cells` bölüm × tur × senaryo × etiket × dil × aile kayıt sayıları (anahtar
+`split|turn|scenario|label|language|family`) ve bölüm başına kenar toplamları; `records`,
+`questions`; `dropped`, `teacher_errors`, `dropped_counts`; `coverage` (dört senaryo ×
+sekiz etiket, boş hücreler, olumsuz aileler); `snapshot_id`, `layers_id`, `git_commit`
+(`git` yoksa `unknown`); her dosyanın `sha256`, kayıt sayısı ve boyutu; `seed`,
+`n_per_family`, `today_range`; `wall_time_s`. Yeniden üretim karşılaştırmasında yalnız
+`wall_time_s` farklı olabilir (`test_build_twice_gives_identical_files`).
 
 ## Soru üretimi
 
