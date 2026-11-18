@@ -698,7 +698,7 @@ def test_experiment_a_keeps_the_model_language():
         "Did Türk Telekom lag its sector in 2025?",
         "What was the RSI of Ereğli after its results?",
         "How did Şişecam react to the policy rate decision?",
-        "Has Tüpraş bounced after touching its lower Bollinger band?",
+        "Which weekday was strongest for Tüpraş in 2023?",
         "Tell me about Türk Hava Yolları.",
     ],
 )
