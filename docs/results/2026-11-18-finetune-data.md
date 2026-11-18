@@ -83,3 +83,60 @@ Ek gözlem: `FUNDAMENTAL_REACTION` kayıtlarının çoğu `INVESTIGATE`'tir (627
 | `val.jsonl` | 628 | 1.467.409 | `208cca2d8c333a7fd6afaf509a47165ce0f4698cd75e5a292993ba89365d66e0` |
 | `test.jsonl` | 652 | 1.548.046 | `5e345c1869dd673a226e4561013d8166e02a3c7730ba86a78f924028c3f9108f` |
 | `dev_questions.jsonl` | 144 | 79.131 | `3f88d881667d7a8565915ad91963081227bc239d2c8585953caf930e2fab94cf` |
+
+## Kalite kontrolü ve tekrar temizliği (Task 4, EC-052)
+
+Yukarıdaki sayılar tekrar temizliğinden önceki ilk üretimindir. Task 4, üretime bir
+tekrar temizliği adımı (`qc.dedupe_report`, bölmeden önce) ekledi ve veri yeniden üretildi
+(`git_commit` `d70c336`, aynı tohum ve komut, 244 s). Aşağıdaki sayılar son veridir.
+
+**Tekrar temizliği** (soru düzeyinde; bir sorunun bütün turları birlikte kalır ya da gider,
+`question_id` sırasında ilki kalır):
+
+| Neden | Soru |
+| --- | --- |
+| Yakın kopya (katlanmış metin benzerliği ≥ 0,95, aynı turlar ve aynı hedefler) | 21 |
+| Aynı metin, başka aile, farklı hedef | 10 |
+
+On çakışan çiftin dağılımı: `macro_context` / `macro_context_hold` 5 (aynı metin biri WATCH,
+biri HOLD'a götürüyordu), `*_undated` / `*_lowercase` aileleri 5. Toplam 31 soru, 69 kayıt
+atıldı: 870 üretilen, 839 veride.
+
+**Son kayıt sayıları:** train 2.361, val 618, test 639, toplam **3.618** (3.687'den
+−69). Soru: 560 / 140 / 139. `intent` 839, `tool_call` 2.191, `explanation` 588.
+`dev_questions.jsonl` 139 soru.
+
+**Kalite kontrolü, 3.618 kayıt, bulgu 0.** İlk geçişte (tekrar temizliğinden önceki 3.687
+kayıt) ve son veride her denetim için bulgu sayısı 0; şablon, üretici ya da öğretmen
+düzeltmesi gerekmedi.
+
+| Denetim | Bulgu |
+| --- | --- |
+| `numbers_in_tool_output` | 0 |
+| `call_schema_valid` | 0 |
+| `call_allowed_and_on_intent` | 0 |
+| `label_in_eight` | 0 |
+| `no_advice_language` | 0 |
+| `validator_accepts` | 0 |
+| `no_frozen_overlap` | 0 |
+| `no_test_period_data` (2025 tarihi ya da tarihsiz "test döneminde" / "In the test period" ifadesi) | 0 |
+
+QC temizlenmiş veride tekrar bulmuyor (0 yakın kopya, 0 çelişen hedef).
+
+**Dosyalar (son):** `train.jsonl` 2.361 satır, SHA-256
+`26a764d92f5c024b8f1e3056de4fa734281e7afe072ee7cd0038a520dffbe87c`; `val.jsonl` 618,
+`23dd54999c0d33880d8c51537094845a9a21e2b6b4c54d2ff2cb98d39092aabb`; `test.jsonl` 639,
+`e336429ddfd6dbb68085575a208b3b7e32445168a1898068e5707f40eb203d78`; `dev_questions.jsonl`
+139, `72ee2224270c03db709f3c39fbe8f70d5d70a39b2bc0205fae8559417a5383d8`.
+
+**Val ya da test sorusu olmayan aile × dil havuzları (manifest):** 9 havuz:
+`calendar_pattern_undated` tr (test yok), `fundamental_reaction_undated` en (val yok),
+`macro_context_hold` en (val yok), `missing_information` en (test yok), `out_of_universe`
+tr (test yok), `sector_laggard_lowercase` tr (test yok), `technical_reversal_company` en
+(val yok), `technical_reversal_lowercase` tr (val yok), `technical_reversal_undated` en
+(test yok). Bunların bir kısmı küçük parafraz havuzu (bölme soru bazında), bir kısmı tekrar
+temizliğinde sorunun elenmesidir; paraphrase bölmesi yine de bütün havuzlarda train ile
+val/test'i ayırır.
+
+**Elle okuma:** `data/finetune/review-sample.md` (50 kayıt, senaryo ve tur türüne göre
+katmanlı) Burak'ın okuması içindir; okunmuş sayılmaz.

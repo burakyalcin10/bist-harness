@@ -194,3 +194,22 @@ benzeyen soruyu ya da gold (hisse, başlangıç, bitiş) üçlüsü donmuş bir 
 üçlüsüne eşit olan soruyu atar; atılanlar nedenle (`text_overlap`, `expected_triple`)
 ve donmuş soru kimliğiyle döner.
 
+## Kalite kontrolü
+
+`uv run python -m bist_harness.finetune.qc data/finetune/` her kaydı harness'in kendi
+koduyla yeniden denetler ve `qc.json` (bulgular, denetim başına sayılar, tekrar sayıları)
+ile `review-sample.md` yazar; veri dosyalarına dokunmaz. Sekiz denetim: açıklamadaki her
+sayı kullanıcı mesajındaki kanıt maddelerinde var (`numbers_in_tool_output`); araç çağrıları
+şemaya ve kayıttaki `tools` listesine uyuyor (`call_schema_valid`); çağrı durumda izinli ve
+sorunun niyetine uygun (`call_allowed_and_on_intent`); etiket sekiz etiketten biri
+(`label_in_eight`); sabit satırlar (uyarı ve dönem notu) çıkarıldıktan sonra tavsiye dili
+yok (`no_advice_language`); `validate_explanation` kabul ediyor (`validator_accepts`);
+donmuş setle çakışma yok (`no_frozen_overlap`); 2025-01-01 ve sonrası tarih ya da tarihsiz
+test dönemi cümlesi yok (`no_test_period_data`). Hedef: 0 bulgu; bulgu çıkarsa denetim
+gevşetilmez, şablon, üretici ya da öğretmen düzeltilip veri yeniden üretilir.
+
+Tekrar temizliği üretimde (`build`, bölmeden önce) uygulanır: aynı metinli ve aynı hedefli
+yakın kopya sorular ile aynı metni farklı hedefle öğreten başka aile soruları atılır
+(`question_id` sırasında ilki kalır, bir sorunun bütün turları birlikte gider). Elle okuma
+örneklemi 50 kayıttır; okumayı Burak yapar, bulduğu sorunlar şablonlara geri yazılır ve veri
+yeniden üretilir. `data/finetune/` türetilmiştir ve git dışıdır.
