@@ -78,6 +78,13 @@ class TrainConfig:
     # how a limit picks records: "seeded" (random with ``seed``) or "longest" (the longest
     # turns by token count, for a memory trial that must meet the data set's peak)
     sample: str = "seeded"
+    # the memory-lean path (9B on 12 GB): no fp32 upcast of the embedding and the output
+    # layer (``prepare_lean`` instead of PEFT's ``prepare_model_for_kbit_training``)
+    lean_memory: bool = False
+    # the output layer and the loss only at the labelled (target) positions
+    target_only_logits: bool = False
+    # target positions per output-layer chunk, recomputed in the backward pass (0: one piece)
+    logits_chunk: int = 0
 
 
 _TYPES = {
@@ -102,6 +109,9 @@ _TYPES = {
     "train_limit": int,
     "val_limit": int,
     "sample": str,
+    "lean_memory": bool,
+    "target_only_logits": bool,
+    "logits_chunk": int,
 }
 SAMPLES = ("seeded", "longest")
 
@@ -127,6 +137,10 @@ def load_config(path: Path) -> TrainConfig:
             raise ValueError(f"{path.name}: {name} must be {kind.__name__}, got {value!r}")
     if raw["sample"] not in SAMPLES:
         raise ValueError(f"{path.name}: sample must be one of {', '.join(SAMPLES)}")
+    if raw["logits_chunk"] < 0 or (raw["logits_chunk"] and not raw["target_only_logits"]):
+        raise ValueError(
+            f"{path.name}: logits_chunk must be 0, or a positive size with target_only_logits"
+        )
     raw["target_modules"] = tuple(raw["target_modules"])
     return TrainConfig(**raw)
 
@@ -315,6 +329,108 @@ def _load_base(base_model: str, revision: str, **kwargs):
     return loader.from_pretrained(base_model, revision=revision, **kwargs)
 
 
+def prepare_lean(model, *, gradient_checkpointing: bool) -> None:
+    """Get a (4-bit) model ready for LoRA without PEFT's fp32 upcast of the big layers.
+
+    PEFT's ``prepare_model_for_kbit_training`` casts every parameter that is not 4-bit to
+    fp32. With Qwen3.5's 248,320-token vocabulary that is the embedding and, in 9B, a
+    separate output layer of about 1B parameters each: 8 GB in fp32 instead of 4 GB in
+    bf16. Here every parameter is frozen; only the one-dimensional ones (norm weights,
+    the Gated DeltaNet's ``A_log`` and ``dt_bias``) go to fp32, as PEFT would have them;
+    the embedding, the output layer and every matrix stay as loaded. The training runs
+    under bf16 autocast, so matrix products are bf16 on either path.
+    """
+    import torch
+
+    for param in model.parameters():
+        param.requires_grad = False
+        if (
+            param.ndim <= 1
+            and param.dtype in (torch.float16, torch.bfloat16)
+            and param.__class__.__name__ != "Params4bit"
+        ):
+            param.data = param.data.to(torch.float32)
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.enable_input_require_grads()
+    elif getattr(model, "is_gradient_checkpointing", False):
+        model.gradient_checkpointing_disable()
+
+
+def target_only_loss(model, inputs: dict, *, num_items_in_batch=None, chunk: int = 0):
+    """The causal-LM loss with the output layer applied only at labelled positions.
+
+    Equal to the model's own loss (``labels`` shifted by one, -100 ignored, mean over the
+    labelled tokens, or sum over ``num_items_in_batch`` under gradient accumulation), but
+    the vocabulary-sized logits exist only for the target tokens, never for the prompt.
+    ``chunk`` > 0 splits the target positions into pieces whose logits are recomputed in
+    the backward pass (``torch.utils.checkpoint``), so at most ``chunk`` rows of logits
+    live at a time. Works for a PEFT model and for a plain ``*ForCausalLM`` /
+    ``*ForConditionalGeneration`` whose forward is ``lm_head(self.model(...)[0])``.
+    """
+    import torch
+    import torch.nn.functional as F
+    from torch.utils.checkpoint import checkpoint
+
+    base = model.get_base_model() if hasattr(model, "get_base_model") else model
+    hidden = base.model(input_ids=inputs["input_ids"], attention_mask=inputs.get("attention_mask"))[
+        0
+    ]
+    targets = inputs["labels"].to(hidden.device)[:, 1:]
+    mask = targets != IGNORE_INDEX
+    rows = hidden[:, :-1][mask]
+    wanted = targets[mask]
+    if rows.shape[0] == 0:
+        return hidden.sum() * 0.0
+    head = base.get_output_embeddings()
+
+    def summed(part, labels):
+        return F.cross_entropy(head(part).float(), labels, reduction="sum")
+
+    if chunk:
+        total = sum(
+            checkpoint(summed, rows[i : i + chunk], wanted[i : i + chunk], use_reentrant=False)
+            for i in range(0, rows.shape[0], chunk)
+        )
+    else:
+        total = summed(rows, wanted)
+    if num_items_in_batch is None:
+        return total / rows.shape[0]
+    if torch.is_tensor(num_items_in_batch):
+        num_items_in_batch = num_items_in_batch.to(total.device)
+    return total / num_items_in_batch
+
+
+def _target_only_trainer(trainer_class, chunk: int):
+    """A ``Trainer`` whose loss is ``target_only_loss``; scaling as the model's own loss."""
+
+    class TargetOnlyTrainer(trainer_class):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            # the Trainer hands the model ``num_items_in_batch`` only when its forward takes
+            # loss kwargs, and then counts the loss as already scaled for accumulation
+            count = num_items_in_batch if self.model_accepts_loss_kwargs else None
+            loss = target_only_loss(model, inputs, num_items_in_batch=count, chunk=chunk)
+            return (loss, {"loss": loss}) if return_outputs else loss
+
+    return TargetOnlyTrainer
+
+
+def length_summary(examples: dict[str, list[dict]]) -> dict:
+    """The longest turn of the whole data set and of the splits a run trains on.
+
+    ``max_example_tokens`` (train, val and test) sets the export's ``num_ctx``;
+    ``max_train_val_tokens`` is what a memory trial on the longest records must meet.
+    """
+
+    def longest(splits) -> int:
+        return max((len(e["input_ids"]) for s in splits for e in examples.get(s, [])), default=0)
+
+    return {
+        "max_example_tokens": longest(examples),
+        "max_train_val_tokens": longest(("train", "val")),
+    }
+
+
 class _Examples:
     def __init__(self, examples: list[dict]):
         self.items = [
@@ -441,11 +557,10 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         "train": to_chat_examples(train_records, tokenizer),
         "val": to_chat_examples(val_records, tokenizer),
     }
-    # the longest turn of the whole data set, sampled or not: the export's num_ctx
-    longest = max(
-        len(e["input_ids"])
-        for records in splits.values()
-        for e in to_chat_examples(records, tokenizer)
+    # the longest turn of the whole data set (the export's num_ctx) and of train + val (what
+    # a memory trial on the longest records must meet), sampled or not
+    lengths = length_summary(
+        {name: to_chat_examples(records, tokenizer) for name, records in splits.items()}
     )
     if longest_first:
         examples = {
@@ -482,7 +597,9 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         device_map={"": 0} if cuda else None,
     )
     model.config.use_cache = False
-    if config.load_in_4bit:
+    if config.lean_memory:
+        prepare_lean(model, gradient_checkpointing=config.gradient_checkpointing)
+    elif config.load_in_4bit:
         model = prepare_model_for_kbit_training(
             model,
             use_gradient_checkpointing=config.gradient_checkpointing,
@@ -534,7 +651,10 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         dataloader_num_workers=0,
     )
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
-    trainer = Trainer(
+    trainer_class = (
+        _target_only_trainer(Trainer, config.logits_chunk) if config.target_only_logits else Trainer
+    )
+    trainer = trainer_class(
         model=model,
         args=args,
         train_dataset=_Examples(kept["train"]),
@@ -542,7 +662,7 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         data_collator=_collator(pad_id),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=config.early_stop_patience)],
     )
-    trainer.train()
+    trained = trainer.train()
 
     adapter_dir = out_dir / "adapter"
     trainer.model.save_pretrained(adapter_dir)
@@ -573,10 +693,16 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
             for split, rows in kept.items()
         },
         "dropped_too_long": dropped,
-        "max_example_tokens": longest,
-        # the longest example this run trained or validated on: what its peak memory met
+        "max_example_tokens": lengths["max_example_tokens"],
+        "max_train_val_tokens": lengths["max_train_val_tokens"],
+        # the longest example this run trained or validated on: what its peak memory met;
+        # a memory trial passes only if it equals max_train_val_tokens
         "max_trained_tokens": max(
             (len(e["input_ids"]) for rows in kept.values() for e in rows), default=0
+        ),
+        "max_trained_target_tokens": max(
+            (len(e["input_ids"]) - e["prompt_tokens"] for rows in kept.values() for e in rows),
+            default=0,
         ),
         "trainable_parameters": trainable,
         "total_parameters": total,
@@ -591,6 +717,13 @@ def _train(config: TrainConfig, data_dir: Path, out_dir: Path, modules: dict) ->
         ),
         "precision": "bf16" if bf16 else ("fp16" if cuda else "fp32"),
         "wall_time_s": round(time.perf_counter() - started, 1),
+        # training loop only (evaluations included), per optimizer step
+        "train_runtime_s": round(trained.metrics.get("train_runtime", 0.0), 1),
+        "seconds_per_step": (
+            round(trained.metrics["train_runtime"] / state.global_step, 2)
+            if state.global_step and "train_runtime" in trained.metrics
+            else None
+        ),
         "peak_vram_gb": {
             "allocated": round(torch.cuda.max_memory_allocated() / 2**30, 3) if cuda else None,
             "reserved": round(torch.cuda.max_memory_reserved() / 2**30, 3) if cuda else None,
@@ -696,8 +829,12 @@ def main(argv: list[str] | None = None) -> int:
             result = train(load_config(args.config), args.data, args.out)
             print(
                 f"[train] {result['steps']} steps, best eval loss {result['best_eval_loss']} "
-                f"at step {result['best_step']}, {result['wall_time_s']} s, peak VRAM "
-                f"{result['peak_vram_gb']['allocated']} GB; written to {args.out}",
+                f"at step {result['best_step']}, {result['wall_time_s']} s "
+                f"({result['seconds_per_step']} s/step), peak VRAM allocated "
+                f"{result['peak_vram_gb']['allocated']} GB / reserved "
+                f"{result['peak_vram_gb']['reserved']} GB; longest trained turn "
+                f"{result['max_trained_tokens']} of {result['max_train_val_tokens']} tokens "
+                f"(train + val); written to {args.out}",
                 flush=True,
             )
         else:

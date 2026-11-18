@@ -127,7 +127,7 @@ def test_export_merges_converts_and_creates_in_order(monkeypatch, tmp_path, no_l
         steps.append(("run", list(args), cwd))
         return "" if args[1] == "create" else BASE_RENDERER
 
-    monkeypatch.setattr(fx, "merge_adapter", merge)
+    monkeypatch.setattr(fx, "stream_merge", merge)
     monkeypatch.setattr(fx, "convert_to_gguf", convert)
     monkeypatch.setattr(fx, "_run", command)
     out = tmp_path / "export"
@@ -166,7 +166,7 @@ def test_export_without_quantization_keeps_f16(monkeypatch, tmp_path, no_live_ol
     adapter = tmp_path / "adapter"
     adapter.mkdir()
     created = []
-    monkeypatch.setattr(fx, "merge_adapter", lambda a, b, m, revision=None: m)
+    monkeypatch.setattr(fx, "stream_merge", lambda a, b, m, revision=None: m)
     monkeypatch.setattr(fx, "convert_to_gguf", lambda m, g, llama_cpp: g)
     monkeypatch.setattr(fx, "_run", lambda args, cwd=None: created.append(args) or BASE_RENDERER)
     fx.export(
@@ -220,7 +220,7 @@ def test_export_refuses_a_converter_from_another_llama_cpp_commit(
 ):
     """A GGUF from a newer converter is created fine but does not load: stop before merging."""
     monkeypatch.setattr(fx, "converter_commit", lambda llama_cpp: "401563f10ec60754e688")
-    monkeypatch.setattr(fx, "merge_adapter", lambda *a, **k: pytest.fail("merged anyway"))
+    monkeypatch.setattr(fx, "stream_merge", lambda *a, **k: pytest.fail("merged anyway"))
     with pytest.raises(ValueError, match="6c01da627"):
         fx.export(
             tmp_path,
@@ -240,7 +240,7 @@ def test_export_fails_loudly_when_ollama_cannot_load_the_model(
         raise RuntimeError(f"Ollama cannot load {name}: check_tensor_dims")
 
     monkeypatch.setattr(fx, "load_check", broken)
-    monkeypatch.setattr(fx, "merge_adapter", lambda a, b, m, revision=None: m)
+    monkeypatch.setattr(fx, "stream_merge", lambda a, b, m, revision=None: m)
     monkeypatch.setattr(fx, "convert_to_gguf", lambda m, g, llama_cpp: g)
     monkeypatch.setattr(fx, "_run", lambda args, cwd=None: BASE_RENDERER)
     with pytest.raises(RuntimeError, match="cannot load bist-x"):

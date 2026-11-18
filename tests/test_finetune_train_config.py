@@ -28,7 +28,10 @@ FIELDS = [f.name for f in dataclasses.fields(ft.TrainConfig)]
 
 
 # --- settings files -------------------------------------------------------------------------
-@pytest.mark.parametrize("name", ["r16-e2.toml", "r32-e3.toml", "laptop-trial.toml"])
+@pytest.mark.parametrize(
+    "name",
+    ["r16-e2.toml", "r32-e3.toml", "trial-9b.toml", "laptop-trial.toml", "laptop-trial-lean.toml"],
+)
 def test_config_files_load_and_record_every_setting(name):
     path = CONFIGS / name
     written = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -47,10 +50,79 @@ def test_the_two_desktop_configs_differ_in_rank_and_epochs():
     r16 = ft.load_config(CONFIGS / "r16-e2.toml")
     r32 = ft.load_config(CONFIGS / "r32-e3.toml")
     assert (r16.rank, r16.epochs, r32.rank, r32.epochs) == (16, 2, 32, 3)
-    # the base model is chosen in Task 7; until then the file holds a placeholder that
-    # the training refuses
-    assert r16.base_model == r32.base_model == ft.BASE_MODEL_PLACEHOLDER
     assert (r16.max_steps, r16.train_limit, r16.val_limit) == (0, 0, 0)
+    same = {"rank", "alpha", "epochs", "learning_rate"}
+    assert {k: v for k, v in dataclasses.asdict(r16).items() if k not in same} == {
+        k: v for k, v in dataclasses.asdict(r32).items() if k not in same
+    }
+
+
+def test_the_desktop_configs_train_qwen35_9b_at_a_pinned_commit_on_the_lean_path():
+    for name in ("r16-e2.toml", "r32-e3.toml", "trial-9b.toml"):
+        config = ft.load_config(CONFIGS / name)
+        assert config.base_model == "Qwen/Qwen3.5-9B"
+        assert re.fullmatch(r"[0-9a-f]{40}", config.revision)  # a full commit, not a branch
+        assert config.lean_memory and config.target_only_logits and config.logits_chunk > 0
+        # every linear layer kind of the 9B's language model (Gated DeltaNet, full
+        # attention, MLP); the names are the checkpoint's (docs/results, section 9)
+        assert config.target_modules == (
+            "q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "out_proj",
+            "gate_proj", "up_proj", "down_proj",
+        )  # fmt: skip
+
+
+def test_the_9b_trial_is_the_heaviest_real_run_on_the_longest_records():
+    """A pass must mean the real runs fit: same memory settings as r32, longest turns."""
+    trial = ft.load_config(CONFIGS / "trial-9b.toml")
+    r16 = ft.load_config(CONFIGS / "r16-e2.toml")
+    r32 = ft.load_config(CONFIGS / "r32-e3.toml")
+    assert trial.rank == max(r16.rank, r32.rank) == 32
+    memory = (
+        "base_model", "revision", "rank", "alpha", "target_modules", "batch_size",
+        "max_seq_len", "load_in_4bit", "gradient_checkpointing", "lean_memory",
+        "target_only_logits", "logits_chunk", "grad_accum",
+    )  # fmt: skip
+    for name in memory:
+        assert getattr(trial, name) == getattr(r32, name), name
+    assert max(r16.max_seq_len, r32.max_seq_len) == trial.max_seq_len
+    assert (trial.max_steps, trial.sample) == (20, "longest")
+    assert trial.train_limit > 0 and trial.val_limit > 0
+
+
+def test_the_laptop_lean_trial_differs_from_the_task_8_trial_only_in_memory_settings():
+    old = dataclasses.asdict(ft.load_config(CONFIGS / "laptop-trial.toml"))
+    lean = dataclasses.asdict(ft.load_config(CONFIGS / "laptop-trial-lean.toml"))
+    changed = {k for k in old if old[k] != lean[k]}
+    assert changed == {"lean_memory", "target_only_logits", "logits_chunk"}
+    assert (old["lean_memory"], old["target_only_logits"], old["logits_chunk"]) == (False, False, 0)
+
+
+def test_logits_chunk_needs_target_only_logits(tmp_path):
+    text = (CONFIGS / "r16-e2.toml").read_text(encoding="utf-8")
+    bad = tmp_path / "bad.toml"
+    bad.write_text(
+        text.replace("target_only_logits = true", "target_only_logits = false"), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="logits_chunk"):
+        ft.load_config(bad)
+    negative = tmp_path / "negative.toml"
+    negative.write_text(text.replace("logits_chunk = 128", "logits_chunk = -1"), encoding="utf-8")
+    with pytest.raises(ValueError, match="logits_chunk"):
+        ft.load_config(negative)
+
+
+def test_length_summary_separates_the_trained_splits_from_test():
+    """A memory trial compares with train + val: the test split never trains."""
+
+    def rows(*lengths):
+        return [{"input_ids": [0] * n} for n in lengths]
+
+    summary = ft.length_summary({"train": rows(5, 9), "val": rows(7), "test": rows(12)})
+    assert summary == {"max_example_tokens": 12, "max_train_val_tokens": 9}
+    assert ft.length_summary({"train": rows(3), "val": [], "test": []}) == {
+        "max_example_tokens": 3,
+        "max_train_val_tokens": 3,
+    }
 
 
 def test_config_rejects_unknown_and_missing_settings(tmp_path):
@@ -252,14 +324,17 @@ def test_train_without_group_fails_clearly(monkeypatch, tmp_path):
 
 
 def test_a_placeholder_base_model_is_refused(tmp_path):
-    config = ft.load_config(CONFIGS / "r16-e2.toml")
+    config = dataclasses.replace(
+        ft.load_config(CONFIGS / "r16-e2.toml"), base_model=ft.BASE_MODEL_PLACEHOLDER
+    )
     with pytest.raises(ValueError, match="Task 7"):
         ft.train(config, tmp_path / "no-data", tmp_path / "out")
 
 
 def test_importing_the_scripts_loads_no_training_library():
     code = (
-        "import sys, bist_harness.finetune.train, bist_harness.finetune.export;"
+        "import sys, bist_harness.finetune.train, bist_harness.finetune.export,"
+        " bist_harness.finetune.memory;"
         "print(sorted(m for m in ('torch','transformers','peft','bitsandbytes','accelerate')"
         " if m in sys.modules))"
     )

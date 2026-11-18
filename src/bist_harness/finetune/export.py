@@ -1,6 +1,8 @@
 """Export a trained adapter to Ollama: merge, GGUF, Modelfile, ``ollama create``.
 
-1. The adapter is merged into the base model in its own precision (``merge_adapter``).
+1. The adapter is merged into the base checkpoint shard by shard, in its own precision
+   (``stream_merge``; a 9B model in bf16 does not fit the desktop's 16 GB RAM whole).
+   ``merge_adapter`` is PEFT's whole-model merge, kept as the reference it is tested against.
 2. llama.cpp's ``convert_hf_to_gguf.py`` writes an f16 GGUF (``convert_to_gguf``). The
    checkout is not part of this repository (``tools/llama.cpp/``, git-ignored) and must
    be the llama.cpp commit the installed Ollama runs (``llama-server.exe --version`` in
@@ -230,6 +232,169 @@ def merge_adapter(
     return merged_dir
 
 
+# --- the streaming merge ----------------------------------------------------------------
+# Tensors transformers ignores when it loads a Qwen3.5 checkpoint
+# (``_keys_to_ignore_on_load_unexpected``): the PEFT merge never wrote them, and neither
+# does the streaming merge, so the converter sees the same set of tensors on both paths.
+SKIPPED_PREFIXES = ("mtp.",)
+# adapter settings the merge does not implement: an adapter that sets one is refused
+_UNSUPPORTED = (
+    "use_dora",
+    "lora_bias",
+    "fan_in_fan_out",
+    "rank_pattern",
+    "alpha_pattern",
+    "modules_to_save",
+    "trainable_token_indices",
+    "target_parameters",
+    "layer_replication",
+)
+_ADAPTER_PREFIX = "base_model.model."
+DEFAULT_SHARD_BYTES = 2 * 2**30
+
+
+def _base_snapshot(base_model: str, revision: str | None) -> Path:
+    """A local folder with the base checkpoint: the folder itself, or the Hub snapshot."""
+    if Path(base_model).is_dir():
+        return Path(base_model)
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(base_model, revision=revision or "main"))
+
+
+def _adapter_deltas(adapter_dir: Path) -> tuple[dict, float]:
+    """``{module path: (A, B)}`` of the adapter and its scaling (``alpha / r``)."""
+    from safetensors.torch import load_file
+
+    config = json.loads((adapter_dir / "adapter_config.json").read_text(encoding="utf-8"))
+    for key in _UNSUPPORTED:
+        if config.get(key):
+            raise ValueError(
+                f"the adapter sets {key} = {config.get(key)!r}; the streaming merge implements "
+                "plain LoRA only"
+            )
+    if config.get("peft_type", "LORA") != "LORA":
+        raise ValueError(f"not a LoRA adapter: {config.get('peft_type')}")
+    rank, alpha = int(config["r"]), float(config["lora_alpha"])
+    scaling = alpha / math.sqrt(rank) if config.get("use_rslora") else alpha / rank
+    pairs: dict[str, dict] = {}
+    for key, tensor in load_file(adapter_dir / "adapter_model.safetensors").items():
+        found = re.fullmatch(r"(.+)\.lora_([AB])\.weight", key)
+        if not found or not key.startswith(_ADAPTER_PREFIX):
+            raise ValueError(f"unexpected adapter tensor {key}")
+        pairs.setdefault(found.group(1)[len(_ADAPTER_PREFIX) :], {})[found.group(2)] = tensor
+    deltas = {}
+    for module, pair in pairs.items():
+        if set(pair) != {"A", "B"} or pair["A"].shape[0] != rank:
+            raise ValueError(f"adapter layer {module}: lora_A/lora_B of rank {rank} expected")
+        deltas[module] = (pair["A"], pair["B"])
+    return deltas, scaling
+
+
+def _shard_names(base_dir: Path) -> list[str]:
+    index = base_dir / "model.safetensors.index.json"
+    if index.is_file():
+        weight_map = json.loads(index.read_text(encoding="utf-8"))["weight_map"]
+        return sorted(set(weight_map.values()))
+    if (base_dir / "model.safetensors").is_file():
+        return ["model.safetensors"]
+    raise FileNotFoundError(f"no safetensors checkpoint in {base_dir}")
+
+
+def stream_merge(
+    adapter_dir: Path,
+    base_model: str | Path,
+    merged_dir: Path,
+    *,
+    revision: str | None = None,
+    max_shard_bytes: int = DEFAULT_SHARD_BYTES,
+) -> Path:
+    """Merge a LoRA adapter into the base checkpoint one tensor at a time.
+
+    PEFT's ``merge_and_unload`` needs the whole bf16 model in memory (about 18 GB for 9B,
+    more than the desktop's 16 GB). Here each base shard is opened memory-mapped, every
+    tensor is read alone, each LoRA target gets ``W + scale * (B @ A)`` with PEFT's
+    arithmetic (the product in fp32, the sum rounded once to the weight's dtype), and
+    the result is written in new shards of at most ``max_shard_bytes``. Peak memory is
+    about one output shard plus one tensor. Every non-weight file of the base (config,
+    tokenizer, chat template) is copied unchanged. Returns ``merged_dir``.
+    """
+    require_train_group()
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    adapter_dir, merged_dir = Path(adapter_dir), Path(merged_dir)
+    deltas, scaling = _adapter_deltas(adapter_dir)
+    base_dir = _base_snapshot(str(base_model), revision)
+    merged_dir.mkdir(parents=True, exist_ok=True)
+    for stale in merged_dir.glob("*.safetensors"):
+        stale.unlink()
+
+    used: set[str] = set()
+    written: list[tuple[str, list[str]]] = []
+    pending: dict = {}
+    pending_bytes = 0
+    total_bytes = 0
+
+    def flush() -> None:
+        nonlocal pending, pending_bytes
+        if not pending:
+            return
+        name = f"part-{len(written) + 1:05d}.safetensors"
+        save_file(pending, merged_dir / name, metadata={"format": "pt"})
+        written.append((name, list(pending)))
+        pending, pending_bytes = {}, 0
+
+    for shard in _shard_names(base_dir):
+        with safe_open(base_dir / shard, framework="pt") as handle:
+            for key in handle.keys():
+                if key.startswith(SKIPPED_PREFIXES):
+                    continue
+                tensor = handle.get_tensor(key)
+                module = key[: -len(".weight")] if key.endswith(".weight") else None
+                if module in deltas:
+                    lora_a, lora_b = deltas[module]
+                    delta = (lora_b.float() @ lora_a.float()) * scaling
+                    if delta.shape != tensor.shape:
+                        raise ValueError(f"{key}: LoRA delta {tuple(delta.shape)} does not fit")
+                    tensor = (tensor.float() + delta).to(tensor.dtype)
+                    used.add(module)
+                size = tensor.numel() * tensor.element_size()
+                if pending and pending_bytes + size > max_shard_bytes:
+                    flush()
+                pending[key] = tensor.contiguous()
+                pending_bytes += size
+                total_bytes += size
+    flush()
+    missing = sorted(set(deltas) - used)
+    if missing:
+        raise ValueError(
+            f"{len(missing)} adapter layer(s) have no weight in the base checkpoint, e.g. "
+            f"{missing[0]}; is the adapter from another base model?"
+        )
+
+    count = len(written)
+    weight_map = {}
+    for number, (name, keys) in enumerate(written, start=1):
+        final = f"model-{number:05d}-of-{count:05d}.safetensors"
+        os.replace(merged_dir / name, merged_dir / final)
+        weight_map.update(dict.fromkeys(keys, final))
+    index = {"metadata": {"total_size": total_bytes}, "weight_map": weight_map}
+    with (merged_dir / "model.safetensors.index.json").open(
+        "w", encoding="utf-8", newline="\n"
+    ) as handle:
+        json.dump(index, handle, indent=2)
+        handle.write("\n")
+    for path in base_dir.iterdir():
+        if (
+            path.is_file()
+            and not path.name.endswith(".safetensors")
+            and path.name not in ("model.safetensors.index.json",)
+        ):
+            shutil.copyfile(path, merged_dir / path.name)
+    return merged_dir
+
+
 def convert_to_gguf(merged_dir: Path, gguf_path: Path, *, llama_cpp: Path) -> Path:
     """llama.cpp's converter, run with this interpreter (it needs the train group)."""
     script = Path(llama_cpp) / "convert_hf_to_gguf.py"
@@ -289,7 +454,7 @@ def export(
         )
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    merged = merge_adapter(adapter_dir, base_model, out_dir / "merged", revision=revision)
+    merged = stream_merge(adapter_dir, base_model, out_dir / "merged", revision=revision)
     gguf = convert_to_gguf(merged, out_dir / "model-f16.gguf", llama_cpp=Path(llama_cpp))
     if not keep_merged:
         shutil.rmtree(out_dir / "merged", ignore_errors=True)

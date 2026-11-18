@@ -1,0 +1,32 @@
+# Laptop trial on the memory-lean path (Task 8b): Qwen3.5 0.8B, 20 steps (RTX 3050 Ti 4 GB)
+# The same run as laptop-trial.toml (same seed, sample and settings) except the three
+# memory settings at the end, so its loss and peak VRAM compare one to one.
+# A 20-step run on a seeded sample: it proves train -> export -> Ollama -> harness end to
+# end (EC-006); it is not meant to improve the model. Every setting is written here.
+# Qwen/Qwen3.5-0.8B is the Hugging Face repository of Ollama's qwen3.5:0.8b (the GGUF's
+# metadata names Qwen3.5-0.8B; the revision is the commit the trial used).
+
+base_model = "Qwen/Qwen3.5-0.8B"
+revision = "2fc06364715b967f1860aea9cf38778875588b17"
+rank = 8
+alpha = 16
+dropout = 0.05
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "out_proj", "gate_proj", "up_proj", "down_proj"]
+learning_rate = 2e-4
+epochs = 1
+batch_size = 1
+grad_accum = 4
+max_seq_len = 2048
+seed = 42
+load_in_4bit = true
+eval_steps = 10
+early_stop_patience = 3
+warmup_ratio = 0.03
+gradient_checkpointing = true
+max_steps = 20
+train_limit = 80
+val_limit = 16
+sample = "seeded"
+lean_memory = true
+target_only_logits = true
+logits_chunk = 128

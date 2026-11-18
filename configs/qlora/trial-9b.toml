@@ -1,0 +1,33 @@
+# Memory trial for 9B on the RTX 5070 (12 GB): 20 steps that meet the real runs' peak.
+# The heaviest settings of r16-e2 and r32-e3 (rank 32, alpha 64, the same sequence limit,
+# batch and accumulation, the memory-lean path), on the LONGEST records of train and val
+# (sample = "longest"), not a random sample: the 80 longest training turns (1,068-1,475
+# tokens) include the data set's longest train/val turn. It passes when run.json shows
+# max_trained_tokens == max_train_val_tokens, peak_vram_gb.allocated <= 10.5 and
+# peak_vram_gb.reserved < 11.5, with no spill into shared GPU memory (docs/finetune.md).
+# seconds_per_step measures the speed (grad_accum 16, as in the real runs).
+
+base_model = "Qwen/Qwen3.5-9B"
+revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
+rank = 32
+alpha = 64
+dropout = 0.05
+target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "out_proj", "gate_proj", "up_proj", "down_proj"]
+learning_rate = 1e-4
+epochs = 3
+batch_size = 1
+grad_accum = 16
+max_seq_len = 3072
+seed = 42
+load_in_4bit = true
+eval_steps = 10
+early_stop_patience = 3
+warmup_ratio = 0.03
+gradient_checkpointing = true
+max_steps = 20
+train_limit = 80
+val_limit = 16
+sample = "longest"
+lean_memory = true
+target_only_logits = true
+logits_chunk = 128

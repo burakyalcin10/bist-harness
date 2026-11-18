@@ -1,11 +1,14 @@
-# QLoRA, rank 16, 2 epochs (RTX 5070, Task 7 model)
+# QLoRA, rank 16, 2 epochs (RTX 5070, 12 GB): Qwen3.5 9B
 # Every setting is written here; finetune/train.py refuses a file that leaves one out.
-# base_model and revision are filled in by Task 7 (the base model choice); until then
-# the training refuses the placeholder. target_modules are the Qwen3.5 linear layers
-# (full attention, Gated DeltaNet and MLP); change them if Task 7 picks another family.
+# Qwen/Qwen3.5-9B is the Hugging Face repository of the desktop's Ollama
+# qwen3.5:9b-q4_K_M (same architecture, vocabulary and chat render; docs/results/
+# 2026-11-18-finetune-training.md, section 9); the revision is a full commit.
+# target_modules are the Qwen3.5 linear layers (full attention, Gated DeltaNet, MLP).
+# Memory-lean path (Task 8b): embedding and output layer frozen in bf16, logits only at
+# the target positions, 128 at a time. Fallback to 4B: docs/finetune.md, step 5.
 
-base_model = "TASK-7-CHOOSES-THE-BASE-MODEL"
-revision = "TASK-7-CHOOSES-THE-BASE-MODEL"
+base_model = "Qwen/Qwen3.5-9B"
+revision = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 rank = 16
 alpha = 32
 dropout = 0.05
@@ -25,3 +28,6 @@ max_steps = 0
 train_limit = 0
 val_limit = 0
 sample = "seeded"
+lean_memory = true
+target_only_logits = true
+logits_chunk = 128
