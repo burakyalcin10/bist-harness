@@ -112,6 +112,17 @@ def test_memory_never_recalls_later_episodes(conn):
     items = {e.analysis_id: e for e in memory.recall_for(conn, third)}
     assert items[earlier.analysis_id].human_result is None
     assert "REJECT" not in third.answer
+    # shown: the episode's line is in the answer, with the "none yet" wording
+    line = next(
+        e for e in memory.items_of(third, language="en") if e.result_id == earlier.analysis_id
+    )
+    assert line.sentence in third.answer and "human decision: none yet" in line.sentence
+    # stored: the trail keeps the episode with its decision withheld
+    stored = {
+        e["analysis_id"]: e for e in memory.episodes_of(session.load(third.analysis_id, conn))
+    }
+    assert stored[earlier.analysis_id]["human_result"] is None
+    assert stored[earlier.analysis_id]["reviewed_at"] is None
 
 
 def test_memory_off_gives_same_committed_set(conn):
@@ -197,19 +208,37 @@ def test_memory_section_is_not_model_text():
         "A-1", "2025-06-30", "PRICE_SUMMARY", "WATCH", "WATCH", "ACCEPT", "ok", "x"
     )
     pending = dataclasses.replace(done, human_result=None, reason=None, reviewed_at=None)
-    section = memory.answer_section(memory.memory_items([done], language="en"), language="en")
-    shown = "ASELS moved [E1].\nNot investment advice.\n\n" + section
-    text = metrics._model_text({"answer": shown, "answer_by": "model"})
-    assert "2025" not in text and "Earlier" not in text and "ACCEPT" not in text
-    assert "ASELS moved" in text
-    tr = memory.answer_section(memory.memory_items([pending], language="tr"), language="tr")
-    assert "2025" not in metrics._model_text({"answer": "Metin.\n\n" + tr, "answer_by": "model"})
+    for language, episode, body in (("en", done, "ASELS moved [E1]."), ("tr", pending, "Metin.")):
+        section = memory.answer_section(
+            memory.memory_items([episode], language=language), language=language
+        )
+        trail = [{"state": "BUILD_EVIDENCE", "detail": {"memory": [dataclasses.asdict(episode)]}}]
+        record = {"answer": body + chr(10) * 2 + section, "answer_by": "model", "trail": trail}
+        record["language"] = language
+        text = metrics._model_text(record)
+        assert "2025" not in text and "ACCEPT" not in text and body in text
 
 
 def test_default_run_analysis_has_memory_off(conn):
     assert inspect.signature(machine.run_analysis).parameters["memory"].default is False
     first, _ = analyse(FIRST, conn, memory_on=False)
-    assert "Earlier analyses:" not in first.answer
+    decide(conn, first)  # a store that holds an earlier analysis of the same stock
+    client = ScriptedClient(
+        intent(ticker="ASELS", **SECOND),
+        [call("get_stock_history", ticker="ASELS", **SECOND)],
+        [call("calculate_indicators", ticker="ASELS", **SECOND, indicators=[])],
+    )
+    second = machine.run_analysis(  # no memory argument
+        question_for(SECOND),
+        client,
+        call_tool=real_tools,
+        today=TODAY,
+        conn=conn,
+        explain_fn=explain,
+    )
+    assert memory.items_of(second, language="en") == []
+    assert memory.episodes_of(session.load(second.analysis_id, conn)) == []
+    assert "Earlier analyses:" not in second.answer
 
 
 def test_only_experiment_e_runs_with_memory(monkeypatch, conn):

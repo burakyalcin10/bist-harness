@@ -149,12 +149,24 @@ def memory_items(episodes: Sequence[Episode], *, language: str) -> list[Evidence
     return items
 
 
+def _detail(record) -> tuple[str | None, dict]:
+    if isinstance(record, dict):
+        return record.get("state"), record.get("detail") or {}
+    return record.state, record.detail
+
+
+def episodes_in(trail) -> list[dict]:
+    """The episodes stored in a trail (state records or their JSON dicts)."""
+    for record in trail or []:
+        state, detail = _detail(record)
+        if state == "BUILD_EVIDENCE" and "memory" in detail:
+            return list(detail["memory"])
+    return []
+
+
 def episodes_of(analysis) -> list[dict]:
     """The episodes stored in the trail of ``analysis`` (set when its memory was on)."""
-    for record in analysis.trail:
-        if record.state == "BUILD_EVIDENCE" and "memory" in record.detail:
-            return list(record.detail["memory"])
-    return []
+    return episodes_in(analysis.trail)
 
 
 def items_of(analysis, *, language: str) -> list[Evidence]:
@@ -169,10 +181,17 @@ def answer_section(items: Sequence[Evidence], *, language: str) -> str:
     return "\n".join([HEADERS[language], *(f"{e.label}: {e.sentence}" for e in items)])
 
 
-def strip_section(text: str) -> str:
-    """``text`` without a memory section at its end (what the model's own text is)."""
-    for header in HEADERS.values():
-        cut = text.rfind(f"\n\n{header}\n")
-        if cut != -1:
-            text = text[:cut]
+def strip_section(text: str, trail, language: str) -> str:
+    """``text`` without the memory section the harness appended, and nothing else.
+
+    The section is rebuilt from the episodes stored in ``trail`` and removed only when
+    ``text`` ends with exactly it; a trail without episodes never strips anything.
+    """
+    section = answer_section(
+        memory_items([Episode(**e) for e in episodes_in(trail)], language=language),
+        language=language,
+    )
+    suffix = f"\n\n{section}"
+    if section and text.endswith(suffix):
+        return text[: -len(suffix)]
     return text

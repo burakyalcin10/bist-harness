@@ -172,7 +172,6 @@ def _route_scenario(record: dict) -> str | None:
 
 # --- numbers ---------------------------------------------------------------------------
 def _strip_fixed(text: str) -> str:
-    text = memory.strip_section(text)  # the memory section is the harness's, not the model's
     for line in FIXED_LINES:
         text = text.replace(line, "\n")
     return text
@@ -183,6 +182,9 @@ def _model_text(record: dict) -> str | None:
     answer = record.get("answer")
     if record.get("answer_by") != "model" or not isinstance(answer, str):
         return None
+    # the memory section the harness appended (rebuilt from the record's own trail) is not
+    # model text; attempts are never stripped
+    answer = memory.strip_section(answer, record.get("trail"), record.get("language") or "en")
     return _strip_fixed(answer)
 
 

@@ -545,3 +545,65 @@ def test_a_corrected_language_label_is_counted_apart_from_invented_fields():
     assert metrics.raw_intent(rec)["language"] == "en"
     d = metrics.summarize([rec])["D"]
     assert (d["invented_fields"], d["language_grounded"]) == (1, 1)
+
+
+# --- the memory section: only the exact suffix the harness appended is not model text -----
+def _episodes():
+    return [
+        {
+            "analysis_id": "AN-1",
+            "as_of": "2025-06-30",
+            "scenario": "PRICE_SUMMARY",
+            "action": "WATCH",
+            "outcome": "WATCH",
+            "human_result": "ACCEPT",
+            "reason": "ok",
+            "reviewed_at": "2000-01-01T00:00:00+00:00",
+        }
+    ]
+
+
+def _with_episodes(rec: dict, episodes: list[dict]) -> dict:
+    rec["trail"].append(
+        {"state": "BUILD_EVIDENCE", "status": "RAN", "detail": {"memory": episodes}}
+    )
+    return rec
+
+
+def _section(language="en"):
+    from bist_harness.harness import memory
+
+    items = memory.memory_items([memory.Episode(**e) for e in _episodes()], language=language)
+    return memory.answer_section(items, language=language)
+
+
+def test_a_model_written_memory_heading_hides_nothing_without_stored_episodes():
+    text = "ASELS rose [E1].\n\nÖnceki analizler:\nKesinlikle hemen alın, hedef fiyat 999 TL."
+    rec = record(experiment="B", answer=text, language="tr")
+    assert metrics._model_text(rec) == metrics._strip_fixed(text)
+    assert metrics.rule_violations(rec)["advice_shown"] == 1
+    assert "999" in metrics._model_text(rec)
+
+
+def test_the_harness_memory_section_is_removed_exactly_from_an_e_record():
+    rec = _with_episodes(
+        record(experiment="E", answer=f"{GOOD_ANSWER}\n\n{_section()}"), _episodes()
+    )
+    assert metrics._model_text(rec) == metrics._strip_fixed(GOOD_ANSWER)
+
+
+def test_a_model_heading_before_the_harness_section_loses_only_the_harness_section():
+    model = "TOASO rose.\n\nEarlier analyses:\nbuy it now, target price 999 TL."
+    rec = _with_episodes(record(experiment="E", answer=f"{model}\n\n{_section()}"), _episodes())
+    text = metrics._model_text(rec)
+    assert "999" in text and "buy it now" in text and "ACCEPT" not in text
+
+
+def test_attempt_texts_are_never_stripped_of_a_memory_section():
+    body = "TOASO rose 999%."
+    with_section = record(
+        experiment="E", attempts=[{"action": "HOLD", "text": body + chr(10) * 2 + _section()}]
+    )
+    without = record(experiment="E", attempts=[{"action": "HOLD", "text": body}])
+    # the date of the section is a number the model "wrote": nothing is cut from an attempt
+    assert metrics.attempt_numbers(with_section)[0] > metrics.attempt_numbers(without)[0]
