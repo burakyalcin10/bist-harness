@@ -28,11 +28,14 @@ import argparse
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+import httpx
 
 from bist_harness.finetune.train import TrainGroupMissingError, _load_base, require_train_group
 
@@ -128,6 +131,85 @@ def _run(args: list[str], *, cwd: Path | None = None) -> str:
     return done.stdout
 
 
+def _output(args: list) -> str:
+    """stdout and stderr of a command, or "" when it cannot run (a probe, never fatal)."""
+    try:
+        done = subprocess.run(
+            [str(a) for a in args], capture_output=True, text=True, encoding="utf-8"
+        )
+    except OSError:
+        return ""
+    return (done.stdout or "") + (done.stderr or "")
+
+
+def runtime_commit_of(version_text: str) -> str | None:
+    """The llama.cpp commit in ``llama-server --version`` output (a short hash)."""
+    found = re.search(r"commit ([0-9a-f]{7,40})", version_text)
+    return found.group(1) if found else None
+
+
+def ollama_runtime() -> dict:
+    """The installed Ollama's version and the llama.cpp commit its runtime is built from."""
+    ollama = Path(_executable("ollama"))
+    version = re.search(r"(\d+\.\d+\.\d+\S*)", _output([ollama, "--version"]))
+    commit = None
+    for lib in (ollama.parent / "lib" / "ollama", ollama.parent.parent / "lib" / "ollama"):
+        for server in (lib / "llama-server.exe", lib / "llama-server"):
+            if server.is_file():
+                commit = runtime_commit_of(_output([server, "--version"]))
+                break
+        if commit:
+            break
+    return {"ollama_version": version.group(1) if version else None, "runtime_commit": commit}
+
+
+def converter_commit(llama_cpp: Path) -> str | None:
+    """The commit the llama.cpp checkout is at, or None when it is not a git checkout."""
+    found = re.search(r"\b([0-9a-f]{40})\b", _output(["git", "-C", llama_cpp, "rev-parse", "HEAD"]))
+    return found.group(1) if found else None
+
+
+def _ollama_url() -> str:
+    """The local Ollama the ``ollama`` command talks to (``OLLAMA_HOST``); never logged."""
+    host = os.environ.get("OLLAMA_HOST", "").strip() or "127.0.0.1:11434"
+    if "://" not in host:
+        host = "http://" + host
+    return host.replace("://0.0.0.0", "://127.0.0.1").rstrip("/")
+
+
+def load_check(name: str, *, transport: httpx.BaseTransport | None = None) -> None:
+    """Load the created model and generate one token; raise if Ollama cannot load it.
+
+    ``ollama create`` does not load the weights: a GGUF whose tensors the runtime does
+    not know is created without complaint and fails only at the first request.
+    """
+    payload = {
+        "model": name,
+        "prompt": "ok",
+        "stream": False,
+        "think": False,
+        "keep_alive": 0,
+        "options": {"num_predict": 1, "temperature": 0, "seed": 42},
+    }
+    try:
+        with httpx.Client(base_url=_ollama_url(), timeout=600, transport=transport) as http:
+            response = http.post("/api/generate", json=payload)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(
+            f"cannot reach the local Ollama to load {name} ({type(exc).__name__})"
+        ) from None
+    if response.status_code >= 400:
+        try:
+            error = str(response.json().get("error", ""))
+        except ValueError:
+            error = response.text[:300]
+        raise RuntimeError(
+            f"Ollama cannot load {name}: {error}. The GGUF was probably converted with another "
+            "llama.cpp commit than the one Ollama runs (docs/finetune.md); remove it with "
+            f"`ollama rm {name}`"
+        )
+
+
 def merge_adapter(
     adapter_dir: Path, base_model: str, merged_dir: Path, *, revision: str | None = None
 ) -> Path:
@@ -196,6 +278,15 @@ def export(
         if "max_example_tokens" not in run:
             raise ValueError("num_ctx unknown: pass it or keep run.json next to the adapter")
         num_ctx = num_ctx_for(run["max_example_tokens"])
+    runtime = ollama_runtime()
+    converter = converter_commit(Path(llama_cpp))
+    expected = runtime.get("runtime_commit")
+    if expected and converter and not converter.startswith(expected):
+        raise ValueError(
+            f"the llama.cpp checkout is at {converter[:9]}, but Ollama "
+            f"{runtime.get('ollama_version')} runs llama.cpp {expected}: check out that commit "
+            "(docs/finetune.md). A GGUF from another converter is created but does not load."
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     merged = merge_adapter(adapter_dir, base_model, out_dir / "merged", revision=revision)
@@ -213,6 +304,7 @@ def export(
     with modelfile.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(render_modelfile(gguf.name, base_modelfile, num_ctx=num_ctx))
     _run(["ollama", "create", name, "-f", "Modelfile"], cwd=out_dir)
+    load_check(name)
 
     record = {
         "name": name,
@@ -223,6 +315,10 @@ def export(
         "revision": revision,
         "adapter": adapter_dir.parent.name + "/" + adapter_dir.name,
         "gguf": gguf.name,
+        "ollama_version": runtime.get("ollama_version"),
+        "runtime_commit": expected,
+        "converter_commit": converter,
+        "load_check": "passed",
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     with (out_dir / "export.json").open("w", encoding="utf-8", newline="\n") as handle:

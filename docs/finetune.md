@@ -236,10 +236,14 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
   `tools=` ile, düşünme kapalı) işlenir. Ollama araç şemasını olduğu gibi geçirmez: Go
   yapılarına çözüp yeniden yazar (alan sırası `required` → `properties`;
   `additionalProperties` gibi yapıda olmayan alanlar düşer). `ollama_tools` aynı dönüşümü
-  yapar; böylece eğitim metni Ollama'nın çıkarımda modele verdiği metnin aynısıdır.
-  Denetim (dizüstü, `qwen3.5:0.8b`): her tur türü ve araç birleşimi için 10 kayıtta
-  belirteç sayısı ve UTF-8 bayt uzunluğu Ollama'nınkiyle aynı
-  (`docs/results/2026-11-18-finetune-training.md`).
+  yapar. Denetim `finetune/template_check.py` ile: eğitim isteminin metni, yerel Ollama'nın
+  aynı mesaj ve araçlar için işlediği istemle (`/api/chat`, `"_debug_render_only": true`)
+  bayt bayt karşılaştırılır. Dizüstünde (Ollama 0.40.16, `qwen3.5:0.8b` ve
+  `bist-trial-0.8b`) denetlenen 40 kayıdın 40'ı bayt bayt aynı; ham şemayla 12'si
+  (`docs/results/2026-11-18-finetune-training.md`). Bu, yalnız denetlenen sürüm, model ve
+  kayıtlar için geçerlidir: Ollama sürümü ya da temel model değişince denetim yeniden
+  koşulur (aşağıda 6. adım). Hedef turun biçimi (araç çağrısı XML'i) bu denetime girmez;
+  onu çıkarımda Ollama'nın ayrıştırıcısı okur.
 - **Kayıp:** yalnız hedef asistan turunda; istem belirteçleri `-100` ile maskelenir
   (`to_chat_examples`). İstem ve hedef ayrı belirteçlenir (çıkarımdaki gibi). `max_seq_len`'i
   aşan kayıt kesilmez, dışarıda bırakılır ve `run.json`'da sayılır.
@@ -272,7 +276,14 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
    quantization is only supported for safetensors imports" ile durur). Varsayılan
    nicemleyici Ollama'nın kendi `lib/ollama/llama-quantize.exe`'sidir (çalışma zamanıyla
    aynı commit); başka biri `--llama-quantize` ile verilir.
-5. `ollama create <ad> -f Modelfile`. Kayıt: `export.json`.
+5. `ollama create <ad> -f Modelfile`.
+6. **Yükleme denemesi:** `ollama create` ağırlıkları yüklemez; bilinmeyen tensörlü bir GGUF
+   sorunsuz oluşturulur ve ilk istekte düşer. `export` bu yüzden en sonda yerel Ollama'dan
+   tek belirteç üretir (`/api/generate`, `num_predict` 1, `OLLAMA_HOST` ya da
+   `127.0.0.1:11434`); model yüklenmezse açık bir hatayla durur. Ayrıca birleştirmeden önce
+   llama.cpp kopyasının commit'ini Ollama'nın çalışma zamanı commit'iyle karşılaştırır
+   (`llama-server --version`); uyuşmazsa hiç başlamaz. Kayıt: `export.json` (Ollama sürümü,
+   çalışma zamanı ve dönüştürücü commit'i, yükleme denemesi).
 
 ### RTX 5070'te çalıştırma (Burak)
 
@@ -309,18 +320,28 @@ uv run --group train python -m bist_harness.finetune.train run \
 uv run --group train python -m bist_harness.finetune.train run \
   --config configs/qlora/r32-e3.toml --data data/finetune --out runs/finetune-r32-e3
 
-# 6. llama.cpp (bir kez), Ollama'nın çalıştırdığı commit'te; <taban> Task 7'nin Ollama
-#    etiketi (ör. qwen3.5:4b)
-"$LOCALAPPDATA/Programs/Ollama/lib/ollama/llama-server.exe" --version   # commit <c>
-git init tools/llama.cpp && cd tools/llama.cpp
-git remote add origin https://github.com/ggml-org/llama.cpp
-git fetch --depth 1 origin <c'nin tam hali>   # 0.40.16: 6c01da6278ab6c69ed67d9124806b50d2b299ba7
-git checkout FETCH_HEAD && cd ../..
+# 6. Ollama sürümü ve llama.cpp; <taban> Task 7'nin Ollama etiketi (ör. qwen3.5:4b)
+#    Ollama Windows'ta kendini günceller: sürüm dizüstüyle aynı olmayabilir, her dışa
+#    aktarmadan önce bak. Dizüstü denemesi: 0.40.16, llama.cpp 6c01da627.
+ollama --version
+"$LOCALAPPDATA/Programs/Ollama/lib/ollama/llama-server.exe" --version   # "commit <kısa>"
+#    Kısa hash'ten tam commit: GitHub yalnız tam adla getirir, bu yüzden geçmiş gerekir
+#    (ya da tarayıcıda https://github.com/ggml-org/llama.cpp/commit/<kısa> tam adı gösterir).
+git clone -c core.longpaths=true --filter=blob:none https://github.com/ggml-org/llama.cpp tools/llama.cpp  # bir kez
+git -C tools/llama.cpp fetch origin   # sonraki dışa aktarmalarda
+git -C tools/llama.cpp checkout "$(git -C tools/llama.cpp rev-parse '<kısa>^{commit}')"
+git -C tools/llama.cpp rev-parse HEAD   # <kısa> ile başlamalı
+#    Şablon denetimi (Task 7 modeli ve bu Ollama ile; çıkış kodu 0 = hepsi bayt bayt aynı).
+#    BIST_LLM_BASE_URL boş ya da yerel Ollama olmalı.
+uv run --group train python -m bist_harness.finetune.template_check --data data/finetune \
+  --base-model <HF deposu> --revision <commit> --ollama-model <taban> \
+  --out runs/template-check-<taban>.json
+#    Dışa aktarma; commit uyuşmazsa başlamaz, model yüklenmezse sonda hata verir
 uv run --group train python -m bist_harness.finetune.export \
   --adapter runs/finetune-r16-e2/adapter --name bist-r16-e2 --template-from <taban>
 uv run --group train python -m bist_harness.finetune.export \
   --adapter runs/finetune-r32-e3/adapter --name bist-r32-e3 --template-from <taban>
-ollama list   # bist-r16-e2 ve bist-r32-e3 görünmeli
+ollama list   # bist-r16-e2 ve bist-r32-e3 görünmeli; "load_check": "passed" export.json'da
 
 # 7. Dizüstüne geri getir: her koşudan adapter/, loss.csv, run.json (checkpoints/ gerekmez)
 #    runs/finetune-r16-e2/ ve runs/finetune-r32-e3/ altına aynı yollarla koy

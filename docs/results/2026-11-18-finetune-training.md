@@ -48,10 +48,34 @@ Ollama 0.40.16 `qwen3.5:0.8b` için Go şablonu değil, yerleşik bir işleyici 
 - yapıda olmayan alanlar düşer (harness şemalarında `additionalProperties: false`);
 - `items`/`enum` gibi `any` değerlerde anahtarlar alfabetik sıralanır.
 
-`train.ollama_tools` aynı dönüşümü yapar; eğitim metni şemayı modelin çıkarımda gördüğü
-gibi gösterir. Denetim: her tur türü ve her araç birleşimi için bir kayıt (10 kayıt) HF
-şablonuyla (`apply_chat_template`, `tools=`, düşünme kapalı) işlendi ve aynı mesajlar
-Ollama'ya gönderildi (`/api/chat`, `think: false`, `num_predict: 1`):
+`train.ollama_tools` aynı dönüşümü yapar.
+
+**Bayt bayt denetim (düzeltme turu 1).** Ollama, sohbet isteğinde
+`"_debug_render_only": true` verilince modeli çalıştırmadan işlediği istemin metnini
+döndürür (`_debug_info.rendered_template`). `finetune/template_check.py` eğitim isteminin
+metnini (HF şablonu, `ollama_tools`, düşünme kapalı) bu metinle bayt bayt karşılaştırır;
+anahtar sırası ya da boşluk farkı, uzunluk aynı kalsa da bulunur (birim testi:
+`test_reordered_keys_of_equal_length_are_caught`).
+
+```
+uv run --group train python -m bist_harness.finetune.template_check --data data/finetune \
+  --base-model Qwen/Qwen3.5-0.8B --revision 2fc06364715b967f1860aea9cf38778875588b17 \
+  --ollama-model qwen3.5:0.8b --n 40 --out runs/finetune-laptop-trial/template-check.json
+[template-check] 40/40 identical byte for byte (raw schemas: 12/40)
+```
+
+40 kayıt: her (tur, araç kümesi) birleşiminin ilk kaydı (10) ve train/val/test'ten eşit
+aralıkla 30 kayıt. 40'ının 40'ı bayt bayt aynı. Ham şemayla (dönüşümsüz) yalnız araçsız 12
+tur (intent, explanation) aynı; araçlı 28 turun hepsi farklı. Aynı komut dışa aktarılan
+`bist-trial-0.8b` ile de 40/40 verdi (Modelfile aynı işleyiciyi taşır). Kapsam: Ollama
+0.40.16 ve `qwen3.5` işleyicisi, 40 kayıt; başka bir Ollama sürümünde ya da Task 7'nin
+modelinde denetim yeniden koşulur. Hedef tur (araç çağrısı XML'i) bu denetime girmez:
+çıkarımda o metni model üretir, Ollama'nın ayrıştırıcısı okur (5. bölümdeki harness
+koşusunda çağrılar ayrıştırıldı).
+
+**İlk, dolaylı denetim** (düzeltme turundan önce; uzunluk ölçer, anahtar sırasını göremez):
+her tur türü ve her araç birleşimi için bir kayıt (10 kayıt) HF şablonuyla işlendi ve aynı
+mesajlar Ollama'ya gönderildi (`/api/chat`, `think: false`, `num_predict: 1`):
 
 | Kayıt (tur, araçlar) | Ham şema ile belirteç | `ollama_tools` ile | Ollama `prompt_eval_count` | Bayt (biz / Ollama) |
 | --- | --- | --- | --- | --- |
@@ -68,7 +92,9 @@ Ollama'ya gönderildi (`/api/chat`, `think: false`, `num_predict: 1`):
 
 Ollama'nın sunucu günlüğündeki `prompt_len` istem metninin UTF-8 bayt uzunluğudur; 10
 kayıtta da hem belirteç sayısı hem bayt uzunluğu eşit. Ham şemayla (dönüşümsüz) araç
-turlarında 5–12 belirteç fark vardı. Hedef tur HF şablonuyla şöyle işlenir (araç turu):
+turlarında 5–12 belirteç fark vardı. Bu ölçü alan düşmesini gösterir ama anahtar sırasını
+göremez; sıranın kanıtı yukarıdaki bayt bayt denetimdir. Hedef tur HF şablonuyla şöyle
+işlenir (araç turu):
 
 ```
 <|im_start|>assistant
@@ -148,6 +174,11 @@ uv run --group train python -m bist_harness.finetune.export \
 ```
 
 Birleştirme (bf16, CPU) + dönüştürme + nicemleme + `ollama create`: q4_K_M 56 sn, f16 50 sn.
+Düzeltme turu 1'den sonra `export` birleştirmeden önce llama.cpp kopyasının commit'ini
+Ollama'nın çalışma zamanı commit'iyle karşılaştırır ve en sonda modeli yükleyip tek
+belirteç üretir; q4_K_M dışa aktarma yeniden koşuldu (60 sn) ve `export.json`:
+`"ollama_version": "0.40.16"`, `"runtime_commit": "6c01da627"`,
+`"converter_commit": "6c01da6278ab6c69ed67d9124806b50d2b299ba7"`, `"load_check": "passed"`.
 f16 GGUF 1,52 GB, q4_K_M GGUF 0,53 GB; `ollama list`: `bist-trial-0.8b` (529 MB),
 `bist-trial-0.8b-f16` (1,5 GB). İki dışa aktarmanın f16 GGUF'u bayt bayt aynıdır.
 Üretilen Modelfile:

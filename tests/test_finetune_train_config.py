@@ -258,7 +258,7 @@ TRAINING_IMPORT = re.compile(
 
 
 def test_the_harness_never_imports_training_libraries():
-    allowed = {"train.py", "export.py"}
+    allowed = {"train.py", "export.py", "template_check.py"}
     src = REPO_ROOT / "src" / "bist_harness"
     offenders = [
         str(path.relative_to(src))
@@ -267,7 +267,7 @@ def test_the_harness_never_imports_training_libraries():
         and not (path.parent.name == "finetune" and path.name in allowed)
     ]
     assert offenders == []
-    # and the two scripts import them only inside functions
+    # and the fine-tuning scripts import them only inside functions
     for name in allowed:
         text = (src / "finetune" / name).read_text(encoding="utf-8")
         top_level = re.findall(r"^(?:import|from)\s+(\w+)", text, re.M)
