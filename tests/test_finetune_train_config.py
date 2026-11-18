@@ -415,6 +415,10 @@ def test_bundle_packs_data_configs_manifest_and_readme(tmp_path):
     )
     assert info["files"] == listed["files"]
     assert "uv sync --group train" in readme
+    # the bundle's own README.md sits at the zip root: unzipped at the repository root it
+    # would overwrite the repository's README.md, so the README says where to unzip
+    assert "köküne aç" not in readme
+    assert "runs/bundle" in readme and "data/finetune/" in readme
     assert "bist_harness.finetune.train run" in readme and "r32-e3.toml" in readme
     # no address of any machine is written into the bundle
     assert not re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b|\.ts\.net|https?://", readme)

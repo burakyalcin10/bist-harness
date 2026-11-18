@@ -751,8 +751,11 @@ Bu paket eğitim verisini ve ayarlarını GPU makinesine taşır; veri git dış
        git pull
        uv sync --group train
 
-2. Paketi deponun köküne aç (dosyalar `data/finetune/` ve `configs/qlora/` altına gider).
-3. Önce 20 adımlık deneme (EC-006, `laptop-trial`), sonra paketteki ayarlar:
+2. Paketi deponun kökü yerine geçici bir klasöre aç (ör. `runs/bundle/`): kökte açılırsa
+   bu README deponun `README.md`'sinin üzerine yazar. Sonra `runs/bundle/data/finetune/`
+   altındakileri deponun `data/finetune/` klasörüne kopyala (ayar dosyaları git'tekilerle
+   aynıdır).
+3. Önce 20 adımlık deneme (`docs/finetune.md`, 4. adım), sonra paketteki ayarlar:
 
 {runs}
 

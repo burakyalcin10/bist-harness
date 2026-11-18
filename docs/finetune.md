@@ -351,16 +351,56 @@ $env:Path = "$env:Path;$OllamaDir"
 
 Beklenen: `ollama version is 0.40.4` ve `C:\AI-Server\ollama\ollama.exe`.
 
-**1. Depo ve kütüphaneler** (deponun kökünde; `sprint-5-dev` dizüstünden push edilmiş olmalı)
+**1. Önkoşullar, depo ve kütüphaneler.** `sprint-5-dev` dizüstünden push edilmiş olmalı.
+Önce `git` ve `uv` kurulu mu:
 
 ```powershell
+git --version
+uv --version
+```
+
+Biri "tanınmıyor" (`is not recognized`) derse resmî kurulumla kur, sonra **yeni bir
+PowerShell penceresi** aç ve 0. adımı yeniden yap:
+
+```powershell
+winget install --id Git.Git -e
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+(Birincisi Git'i, ikincisi uv'yi kurar: yalnız eksik olanı çalıştır. Python'u ayrıca kurmak gerekmez, `uv` deponun
+istediği Python 3.12'yi kendisi indirir.) Depo `C:\AI-Server\bist-harness` klasörüne
+alınır (başka bir sürücü seçilecekse 3. adımdaki ≈ 65 GB boş yeri olan bir yer seçilir ve
+aşağıdaki `C:\AI-Server\bist-harness` yolları buna göre değiştirilir). **Masaüstünde depo yoksa** (ilk kez):
+
+```powershell
+git clone https://github.com/burakyalcin10/bist-harness.git C:\AI-Server\bist-harness
+Set-Location C:\AI-Server\bist-harness
+```
+
+**Depo zaten varsa** (eski bir kopya):
+
+```powershell
+Set-Location C:\AI-Server\bist-harness
+git status --short
+```
+
+`git status --short` boş olmalı; değişmiş dosya listelenirse (ör. eski bir paket açılışında
+üzerine yazılmış `README.md`) önce `git checkout -- README.md` ya da listelenen dosya için
+aynısı. Sonra iki durumda da aynı komutlar (deponun kökünde):
+
+```powershell
+git fetch origin
 git checkout sprint-5-dev
-git pull
+git pull --ff-only
+git log --oneline -1
 uv sync --group train
 uv run --group train python -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"
 ```
 
-Beklenen: `NVIDIA GeForce RTX 5070 (12, 0)`.
+Beklenen: `git log` dizüstündeki son commit'i gösterir; son satır
+`NVIDIA GeForce RTX 5070 (12, 0)`. Bundan sonraki bütün komutlar deponun kökünde
+(`C:\AI-Server\bist-harness`) çalışır; yeni bir pencerede önce `Set-Location
+C:\AI-Server\bist-harness` ve 0. adım.
 
 **2. Veri paketi.** Veri git dışıdır; paket dizüstünde hazırlanır (Git Bash):
 
@@ -370,16 +410,28 @@ uv run python -m bist_harness.finetune.train bundle --data data/finetune \
   --config configs/qlora/r32-e3.toml --out runs/finetune-bundle-20261118-9b.zip
 ```
 
-Masaüstüne kopyalanır ve deponun kökünde açılır (`data\finetune\` ve `configs\qlora\`
-gelir; ayar dosyaları git'tekilerle aynıdır):
+Masaüstünde önce klasörler oluşturulur, sonra paket deponun kökündeki `runs\` klasörüne
+kopyalanır. Paket deponun köküne **açılmaz**: kökünde kendi `README.md`'si vardır ve
+deponun `README.md`'sinin üzerine yazar. Geçici bir klasöre (`runs\bundle-9b\`) açılır ve
+yalnız veri `data\finetune\`'a kopyalanır (eğitim veriyi oradan okur; paketteki ayar
+dosyaları git'tekilerle aynıdır, kopyalanmaz):
 
 ```powershell
-Expand-Archive -Path runs\finetune-bundle-20261118-9b.zip -DestinationPath . -Force
+New-Item -ItemType Directory -Force runs, data\finetune | Out-Null
+```
+
+Şimdi `finetune-bundle-20261118-9b.zip`'i `runs\` klasörüne kopyala, sonra:
+
+```powershell
+Expand-Archive -Path runs\finetune-bundle-20261118-9b.zip -DestinationPath runs\bundle-9b -Force
+Copy-Item runs\bundle-9b\data\finetune\* data\finetune\ -Force
+git status --short
 (Get-FileHash data\finetune\train.jsonl -Algorithm SHA256).Hash.ToLower()
 (Get-FileHash data\finetune\val.jsonl -Algorithm SHA256).Hash.ToLower()
 ```
 
-Beklenen: `26a764d92f5c024b8f1e3056de4fa734281e7afe072ee7cd0038a520dffbe87c` ve
+`git status --short` boş kalmalı (`data\finetune\` ve `runs\` git dışıdır). Hash'ler için
+beklenen: `26a764d92f5c024b8f1e3056de4fa734281e7afe072ee7cd0038a520dffbe87c` ve
 `23dd54999c0d33880d8c51537094845a9a21e2b6b4c54d2ff2cb98d39092aabb` (manifestteki değerler).
 
 **3. 9B ağırlıkları** (bir kez, 19,3 GB; Hugging Face önbelleğine). Disk: önbellek 19,3 GB,
@@ -422,10 +474,10 @@ while ($true) {
 }
 ```
 
-Birinci pencerede deneme:
+Birinci pencerede deneme (çıktı `runs\finetune-trial-9b.log`'a da yazılır):
 
 ```powershell
-uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\trial-9b.toml --data data\finetune --out runs\finetune-trial-9b
+uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\trial-9b.toml --data data\finetune --out runs\finetune-trial-9b 2>&1 | Tee-Object -FilePath runs\finetune-trial-9b.log
 ```
 
 Sonunda tek satırlık özet yazılır, ör. `[train] 20 steps, ... (<s> s/step), peak VRAM
@@ -436,6 +488,16 @@ Aynı değerler `runs\finetune-trial-9b\run.json`'dadır:
 Get-Content runs\finetune-trial-9b\run.json | Select-String '"max_trained_tokens"|"max_train_val_tokens"|"allocated"|"reserved"|"seconds_per_step"|"best_eval_loss"'
 ```
 
+**Deneme `run.json` yazmadan düşerse** (hata ile biter, ör. `CUDA out of memory`, ya da
+pencere kapanır): 4B'ye geçme. Günlüğün sonunu ve GPU durumunu topla, dur ve haber ver:
+
+```powershell
+Get-Content runs\finetune-trial-9b.log -Tail 60
+nvidia-smi
+```
+
+(İkisinin çıktısını ve izleme penceresinin son satırlarını olduğu gibi gönder.)
+
 **5. Karar kuralı.** Deneme **geçer** (9B ile devam), dördü birden tutarsa:
 
 1. `max_trained_tokens` = `max_train_val_tokens` (= 1475: deneme en uzun turu gördü);
@@ -444,10 +506,13 @@ Get-Content runs\finetune-trial-9b\run.json | Select-String '"max_trained_tokens
 4. izleme penceresindeki "en cok" paylaşılan bellek < 1000 MB (taşma yok; normalde
    birkaç yüz MB'tır; dizüstünde taşmasız 0.8B koşusu 80 MB gösterdi).
 
-Biri tutmazsa 9B bu kartta güvenli değildir: **4B'ye geç** (aşağıda). Geçerse
-`seconds_per_step` 6. adımdaki süre tahminine girer.
+- **1. tutmazsa** (deneme en uzun turu görmedi): bu bellekle ilgili değildir, veri ya da
+  paket uyuşmazlığıdır; 4B bunu düzeltmez. **Dur ve haber ver** (`run.json`'u gönder).
+- **1. tutar, 2–4'ten biri tutmazsa:** 9B bu kartta güvenli değildir, **4B'ye geç**
+  (aşağıda).
+- **Dördü tutarsa:** `seconds_per_step` 6. adımdaki süre kuralına girer.
 
-**4B'ye geçiş** (yalnız deneme geçmezse; Burak'ın kararı). `Qwen/Qwen3.5-4B` masaüstündeki
+**4B'ye geçiş** (yalnız 2–4. ölçütlerden biri tutmazsa; Burak'ın kararı). `Qwen/Qwen3.5-4B` masaüstündeki
 `qwen3.5:4b`'nin deposudur (aynı mimari ailesi, aynı belirteçleyici ve sohbet işleyişi;
 `docs/results/2026-11-18-finetune-training.md`, 9. bölüm). Üç ayar dosyasında yalnız iki
 satır değişir; `target_modules` ve öteki ayarlar aynı kalır:
@@ -483,23 +548,35 @@ uv run --group train python -m bist_harness.finetune.train run --config configs\
 if ($LASTEXITCODE -eq 0) { uv run --group train python -m bist_harness.finetune.train run --config configs\qlora\r32-e3.toml --data data\finetune --out runs\finetune-r32-e3 2>&1 | Tee-Object -FilePath runs\finetune-r32-e3.log }
 ```
 
-Beklenen süre (denemenin `seconds_per_step`'inden; adım = 16 örnek): deneme veri setinin
+Beklenen süre (denemenin `seconds_per_step`'inden; adım = 16 örnek). Deneme veri setinin
 en uzun turlarında koştuğu için (ortalama ≈ 1.175 belirteç) gerçek adımlar daha kısadır
-(train ortalaması ≈ 673 belirteç):
-gerçek adım ≈ 0,57 × denemenin `seconds_per_step`'i. `r16-e2` 296 adım (2 tur × 148), her
-50 adımda 618 kayıtlık doğrulama (her biri ≈ 13 adımlık süre); `r32-e3` 444 adım. Kaba
-toplam (± %30, erken durma kısaltır), `X` = denemenin `seconds_per_step`'i:
+(train ortalaması ≈ 673 belirteç): gerçek adım ≈ 0,57 × denemenin `seconds_per_step`'i.
+`r16-e2` 296 adım (2 tur × 148), her 50 adımda 618 kayıtlık doğrulama (her biri ≈ 13
+adımlık süre); `r32-e3` 444 adım. Eğitim döngüsünün kaba süresi, `X` = denemenin
+`seconds_per_step`'i:
 
-| | süre (saat) | X = 30 sn | X = 60 sn | X = 90 sn |
-| --- | --- | --- | --- | --- |
-| `r16-e2` | ≈ 0,057 × X | ≈ 1,7 | ≈ 3,4 | ≈ 5,1 |
-| `r32-e3` | ≈ 0,087 × X | ≈ 2,6 | ≈ 5,2 | ≈ 7,8 |
-| ikisi | ≈ 0,144 × X | ≈ 4,3 | ≈ 8,6 | ≈ 13 |
+| | eğitim döngüsü (saat) | X = 30 sn | X = 50 sn | X = 90 sn | X = 130 sn |
+| --- | --- | --- | --- | --- | --- |
+| `r16-e2` | ≈ 0,057 × X | ≈ 1,7 | ≈ 2,9 | ≈ 5,1 | ≈ 7,4 |
+| `r32-e3` | ≈ 0,087 × X | ≈ 2,6 | ≈ 4,4 | ≈ 7,8 | ≈ 11,3 |
+| ikisi | ≈ 0,144 × X | ≈ 4,3 | ≈ 7,2 | ≈ 13 | ≈ 18,7 |
 
-İkisi bir geceye sığmıyorsa (ör. X > 60 sn) bu gece yalnız `r16-e2`'yi başlat, `r32-e3`'ü
-ertesi geceye bırak. Hızlı Gated DeltaNet çekirdekleri (`flash-linear-attention`) Triton
-ister; Triton'un resmî Windows paketi yoktur (dizüstünde de kurulu değil), bu yüzden PyTorch
-başvuru uygulaması kullanılır.
+Buna her koşunun açılış payı eklenir: 9B'nin yüklenip 4 bit'e çevrilmesi ve 3.618 kaydın
+belirteçlenmesi. Denemede bu pay `run.json`'daki `wall_time_s` − `train_runtime_s`'tir;
+≈ 15 dk (0,25 sa) alınır, ölçülen daha büyükse o kullanılır. Tahmin kabadır (± %30), bu
+yüzden plan × 1,3 ile yapılır. Koşular akşam ≈ 20:00'de başlarsa sabah 06:00'ya, yani
+**10 saate** bitmelidir:
+
+- **X ≤ 50 sn:** ikisi bu gece, arka arkaya (yukarıdaki iki satır): 1,3 × 0,144 × 50 +
+  2 × 0,25 ≈ 9,9 sa.
+- **50 < X ≤ 130 sn:** bu gece **yalnız `r16-e2`** (yalnız ilk satır; 1,3 × 0,057 × 130 +
+  0,25 ≈ 9,9 sa); `r32-e3` ertesi gece ya da gündüz, aynı komutla.
+- **X > 130 sn:** `r16-e2` bile 10 saate sığmaz; başlatma, `run.json`'u gönder ve haber ver.
+
+Başlama saati 20:00'den geçse, 10 saat yerine sabaha kalan saat kullanılır (eşikler onunla
+orantılı küçülür). Erken durma koşuları kısaltabilir, uzatmaz. Hızlı Gated DeltaNet
+çekirdekleri (`flash-linear-attention`) Triton ister; Triton'un resmî Windows paketi yoktur
+(dizüstünde de kurulu değil), bu yüzden PyTorch başvuru uygulaması kullanılır.
 
 **7. Dışa aktarma** (koşular bittikten sonra; Ollama sürümü, llama.cpp ve şablon denetimi).
 Masaüstündeki Ollama 0.40.4'tür, dizüstününki 0.40.16 (llama.cpp `6c01da627`). Dizüstünün
