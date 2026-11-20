@@ -289,7 +289,8 @@ CUDA 12.8 ya da sonrası gerekir. Harness bu kütüphaneleri hiç içe aktarmaz
    PEFT'in aritmetiğiyle `W + ölçek · (B @ A)` eklenir (çarpım fp32'de, toplam bir kez
    ağırlığın tipine yuvarlanır) ve en çok 2 GiB'lık yeni parçalar yazılır. 9B'yi bütün
    olarak birleştirmek bf16'da ≈ 18 GB RAM ister, masaüstünde 16 GB vardır; parça parça
-   birleştirme ≈ 4–5 GB ile yetinir. Sonuç PEFT'in `merge_and_unload`'ıyla aynıdır (birim
+   birleştirme ≈ 4–5 GB ile yetinir (tahmin; 20 Kasım'da masaüstünde 9B için ölçülen çalışma
+   belleği 6,5 GB, 16 GB'de sorunsuz). Sonuç PEFT'in `merge_and_unload`'ıyla aynıdır (birim
    testi bit bit; gerçek 0.8B adaptöründe 473 tensörün 437'si bit bit aynı, kalan 36'sı
    denetim noktasının fp32 tutulan `A_log`/norm ağırlıkları: PEFT yolu bunları bf16'ya
    yuvarlıyordu, yeni yol özgün fp32 değeri korur). Transformers'ın yüklemediği `mtp.*`
@@ -435,7 +436,8 @@ beklenen: `26a764d92f5c024b8f1e3056de4fa734281e7afe072ee7cd0038a520dffbe87c` ve
 `23dd54999c0d33880d8c51537094845a9a21e2b6b4c54d2ff2cb98d39092aabb` (manifestteki değerler).
 
 **3. 9B ağırlıkları** (bir kez, 19,3 GB; Hugging Face önbelleğine). Disk: önbellek 19,3 GB,
-dışa aktarmada birleştirilmiş model ≈ 19 GB, f16 GGUF ≈ 18 GB, q4_K_M ≈ 5,6 GB: en az
+dışa aktarmada birleştirilmiş model ≈ 19 GB, f16 GGUF ≈ 17 GB (ölçülen 16,7), q4_K_M ≈ 5,2 GB
+(Ollama'da 5,6 GB): en az
 ≈ 65 GB boş yer.
 
 ```powershell
@@ -550,7 +552,8 @@ if ($LASTEXITCODE -eq 0) { uv run --group train python -m bist_harness.finetune.
 
 Beklenen süre (denemenin `seconds_per_step`'inden; adım = 16 örnek). Deneme veri setinin
 en uzun turlarında koştuğu için (ortalama ≈ 1.175 belirteç) gerçek adımlar daha kısadır
-(train ortalaması ≈ 673 belirteç): gerçek adım ≈ 0,57 × denemenin `seconds_per_step`'i.
+(train ortalaması ≈ 673 belirteç): gerçek adım ≈ 0,57 × denemenin `seconds_per_step`'i
+(tahmin; 19 Kasım'da ölçülen 0,67: X = 35,42 sn, gerçek 23,59 sn/adım, doğrulama dahil).
 `r16-e2` 296 adım (2 tur × 148), her 50 adımda 618 kayıtlık doğrulama (her biri ≈ 13
 adımlık süre); `r32-e3` 444 adım. Eğitim döngüsünün kaba süresi, `X` = denemenin
 `seconds_per_step`'i:
@@ -564,7 +567,10 @@ adımlık süre); `r32-e3` 444 adım. Eğitim döngüsünün kaba süresi, `X` =
 Buna her koşunun açılış payı eklenir: 9B'nin yüklenip 4 bit'e çevrilmesi ve 3.618 kaydın
 belirteçlenmesi. Denemede bu pay `run.json`'daki `wall_time_s` − `train_runtime_s`'tir;
 ≈ 15 dk (0,25 sa) alınır, ölçülen daha büyükse o kullanılır. Tahmin kabadır (± %30), bu
-yüzden plan × 1,3 ile yapılır. Koşular akşam ≈ 20:00'de başlarsa sabah 06:00'ya, yani
+yüzden plan × 1,3 ile yapılır. Ölçülen (19 Kasım, X = 35,42): `r16-e2` 1,95 sa (≈ 0,055 × X),
+`r32-e3` 2,92 sa (≈ 0,082 × X); tablo tuttu (adım payı tahminden büyük, doğrulama payı
+küçük çıktı). `wall_time_s` − `train_runtime_s` yalnız 31 sn çıktı; modelin yüklenmesini
+içermiyor gibi görünüyor, yükleme süresi ayrıca ölçülmedi. Koşular akşam ≈ 20:00'de başlarsa sabah 06:00'ya, yani
 **10 saate** bitmelidir:
 
 - **X ≤ 50 sn:** ikisi bu gece, arka arkaya (yukarıdaki iki satır): 1,3 × 0,144 × 50 +
@@ -615,7 +621,8 @@ uv run --group train python -m bist_harness.finetune.template_check --data data\
 Dışa aktarma (parça parça birleştirme, f16 GGUF, `llama-quantize` ile q4_K_M,
 `ollama create`, yükleme denemesi; commit uyuşmazsa başlamaz, model yüklenmezse sonda hata
 verir; her biri ≈ 43 GB disk ister: birleştirilmiş model ≈ 19 GB, GGUF'a çevrilince
-silinir (`--keep-merged` verilmezse); f16 GGUF ≈ 18 GB ve q4_K_M ≈ 5,6 GB kalır):
+silinir (`--keep-merged` verilmezse); f16 GGUF ≈ 17 GB ve q4_K_M ≈ 5,2 GB kalır; ölçülen süre
+model başına 5–7 dk):
 
 ```powershell
 uv run --group train python -m bist_harness.finetune.export --adapter runs\finetune-r16-e2\adapter --name bist-r16-e2 --template-from qwen3.5:9b-q4_K_M --llama-quantize "$OllamaDir\lib\ollama\llama-quantize.exe"
@@ -634,8 +641,17 @@ Dizüstünde aynı modeli kurmak için 7. adımdaki `export` komutu getirilen ad
 dizüstünde de çalışır (temel model Hugging Face'ten iner, f16 GGUF yerelde üretilir).
 
 Seçim: doğrulama kaybı (`run.json` → `best_eval_loss`) ve geliştirme sorularında açıklama
-kabul oranı (`run_eval --questions-file data/finetune/dev_questions.jsonl --experiments E
---model bist-<ayar>`); gerekçe `docs/results/<gün>-finetune-training.md`'de.
+kabul oranı (`run_eval --questions-file data/finetune/dev60.jsonl --experiments E --repeats 2
+--model bist-<ayar>`; Task 7'nin 60 soruluk alt kümesi, sonuçlar onunla karşılaştırılabilsin
+diye); gerekçe `docs/results/<gün>-finetune-training.md`'de. Karşılaştırma için temel model de
+aynı hattan geçirilir (bütün `lora_B`'leri sıfırlanmış adaptörle `bist-base-9b`; sonuç belgesi
+10.4–10.5).
+
+Geçit notu (20 Kasım): masaüstünün Tailscale Serve'ü (1.104.7) uzaktan gelen IPv4 bağlantısını
+ara ara "no webserver configured for name/port" ile kesti (dizüstünde TLS `internal_error`),
+IPv6 etkilenmedi. Belirti görülürse ölçüm, geçit adını IPv6 adresine çözen bir sarmalayıcıyla
+koşulur; adres çalışma anında `tailscale ip -6`'dan alınır, dosyaya yazılmaz (sonuç belgesi
+10.6).
 
 Not: Qwen3.5'in doğrusal dikkat katmanları için `flash-linear-attention` ve
 `causal-conv1d` kurulu değilse transformers PyTorch başvuru uygulamasına düşer (doğru ama

@@ -480,3 +480,192 @@ uzunu) ve `max_trained_target_tokens`'ı da yazar; ölçüt
 `max_trained_tokens == max_train_val_tokens`. Bu veride en uzun tur train'dedir
 (`sector_laggard_company-0000-05`, 1.475 belirteç; val'in en uzunu 1.473, test'inki 1.467),
 yani üç değer de 1.475'tir; dizüstündeki en uzun kayıt denemesi 1.475'i gördü.
+
+## 10. RTX 5070'te 9B eğitimi ve dışa aktarma (19–20 Kasım 2026)
+
+Burak masaüstünde `docs/finetune.md`'nin "RTX 5070'te çalıştırma" adımlarını uyguladı
+(commit `87ff0f6`; torch 2.11.0+cu128, transformers 5.23.0, peft 0.21.3, bitsandbytes 0.50.2).
+Saatler Türkiye saatidir. Çıktılar dizüstünde `runs/finetune-{trial-9b,r16-e2,r32-e3}/`
+ve `runs/desktop-logs-9b/` altındadır (git dışı).
+
+### 10.1 Bellek denemesi `trial-9b` (19 Kasım, 01:30–01:42)
+
+| Ölçüt | Ölçülen | Eşik | |
+| --- | --- | --- | --- |
+| `max_trained_tokens` / `max_train_val_tokens` | 1.475 / 1.475 | eşit | geçti |
+| Ayrılmış tepe (`allocated`) | 9,408 GB | ≤ 10,5 | geçti |
+| Rezerve tepe (`reserved`) | 10,689 GB | < 11,5 | geçti |
+| Paylaşılan belleğe taşma (izleme penceresi, en çok) | 196 MB | < 1.000 | geçti |
+| Adım başına süre | 35,42 sn | süre kuralı | ikisi bir gecede |
+
+Tahmin (9.4) r32 için 9,29 GB'tı; ölçüm %1,3 üstünde. İzleme penceresi süreç başına
+11.243 MB adanmış GPU belleği gösterdi (CUDA bağlamı dahil). 20 adım 708 sn;
+`wall_time_s` − `train_runtime_s` 31 sn. `started_at` ile `finished_at` arası da 740 sn
+olduğundan bu fark modelin yüklenmesini içermiyor gibi görünüyor; yükleme süresi ayrıca
+ölçülmedi. Denemenin 96 kaydı (train 80, val 16) en
+uzun kayıtlar olduğu için hepsi açıklama turudur.
+
+### 10.2 Gece koşuları (19 Kasım)
+
+Tek komutla arka arkaya (`r16-e2` başarıyla bitince `r32-e3`):
+
+| | `r16-e2` | `r32-e3` |
+| --- | --- | --- |
+| Başlangıç – bitiş | 01:45 – 03:42 | 03:42 – 06:37 |
+| Adım (planlanan) | 296 (296) | 444 (444) |
+| Erken durma | yok | yok |
+| Eğitilen parametre | 40,1 M | 80,2 M |
+| İlk / en iyi doğrulama kaybı | 0,00605 (adım 50) / **0,001672** (adım 296) | 0,00614 (adım 50) / 0,001684 (adım 444) |
+| Son eğitim kaybı | 0,0000535 | 0,000298 |
+| Adım başına süre | 23,59 sn | 23,59 sn |
+| Duvar saati | 1 sa 57 dk | 2 sa 55 dk |
+| Tepe bellek (allocated / reserved) | 9,092 / 9,430 GB | 9,407 / 9,836 GB |
+| En uzun tur | 1.475 / 1.475 | 1.475 / 1.475 |
+
+Örnekler: train 2.361 (niyet 560, araç 1.421, açıklama 380), val 618 (140 / 373 / 105);
+uzunluk yüzünden atılan yok. Gerçek adım süresi denemenin 0,67 katı oldu (belgedeki
+varsayım 0,57); 618 kayıtlık doğrulama her seferinde 207 sn sürdü. İki koşunun doğrulama
+eğrisi:
+
+| Adım | 50 | 100 | 150 | 200 | 250 | 296 / 300 | 350 | 400 | 444 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `r16-e2` | 0,00605 | 0,00409 | 0,00205 | 0,00178 | 0,00171 | 0,00167 | | | |
+| `r32-e3` | 0,00614 | 0,00407 | 0,00226 | 0,00235 | 0,00228 | 0,00198 | 0,00173 | 0,00170 | 0,00168 |
+
+Makine 06:37'den sonra kapandı; koşuların ikisi de `run.json`'unu yazmıştı.
+
+### 10.3 Doğrulama kaybı neden bu kadar düşük
+
+İlk eğitim adımlarının kaybı 0,13–0,29'dur; 30 adımda ≈ 0,001'e iner. Üç olasılık denetlendi:
+
+- **Etiket maskesi doğru.** 9B belirteçleyicisiyle val kayıtlarının etiketli belirteçleri metne
+  çevrildi: yalnız asistanın cevabı ve `<|im_end|>\n`; boş `<think>\n\n</think>\n\n` bloğu
+  istemdedir. Etiketli belirteç ortalaması: niyet 56, araç çağrısı 114, açıklama 320.
+- **Sızıntı yok.** Train ve val soru düzeyinde ayrıktır (ortak soru 0; 560 ve 140 soru); 29
+  soru ailesi (şablon) iki tarafta da vardır. Val hedeflerinin 34 / 618'i train'de birebir
+  geçer (niyet 32, araç 2: kısa, standart niyetler).
+- **Hedefler büyük ölçüde istemden kopyadır.** Öğretmen deterministik bir programdır
+  (`finetune/teacher.py`): niyet sorudaki hisse ve tarihleri JSON'a yazar, araç turu aynı
+  değerleri çağrıya taşır, açıklama istemdeki kanıt satırlarını sabit bir kalıpla yeniden
+  yazar ("EKGYO için 2023-01-27 tarihinde RSI değeri 47,08. [E4]").
+
+Sonuç: belirteç ortalamalı kayıp, karar taşıyan az sayıdaki belirteci (etiket, ret)
+neredeyse hiç göstermez; iki koşuyu ayırmaz ve model kalitesi hakkında bilgi vermez. Seçim
+geliştirme sorularında (10.5), karşılaştırma donmuş sorularda (Task 9) yapılır.
+
+### 10.4 Dışa aktarma (20 Kasım, Ollama 0.40.4)
+
+- `llama-server.exe` ve `llama-quantize.exe` 0.40.4'ün `lib\ollama` klasöründe var;
+  `llama-server --version` → `version: 0.6.0-dev (build 1, commit b42b7e6d3)`. Dönüştürücü
+  `tools/llama.cpp` `b42b7e6d3059503dd4bed6ca5dcf342bb6379f67`'ye sabitlendi.
+- `template_check` 9B ve 0.40.4 ile: **40 / 40 bayt bayt aynı** (ham araç şemalarıyla 12 / 40;
+  `ollama_tools` gerekli). 0.40.4 `_debug_render_only`'yi destekliyor.
+- Üç model aynı komutla dışa aktarıldı; hepsinde `"load_check": "passed"`,
+  `runtime_commit` = `converter_commit` öneki `b42b7e6d3`:
+
+| Model | Adaptör | Süre | Ollama boyutu |
+| --- | --- | --- | --- |
+| `bist-r16-e2` | `r16-e2` | ≈ 5,5 dk (02:42–02:47) | 5,6 GB |
+| `bist-r32-e3` | `r32-e3` | ≈ 6 dk | 5,6 GB |
+| `bist-base-9b` | `r16-e2`'nin bütün `lora_B`'leri sıfır (kontrol) | ≈ 5 dk | 5,6 GB |
+
+f16 GGUF 16,7 GB çıktı (9.5'teki ≈ 18 GB tahmini fazla); q4_K_M 5,2 GB dosya. Birleştirme
+sürecinin çalışma belleği 6,5 GB'a çıktı (`docs/finetune.md`'deki 4–5 GB tahmini düşük);
+16 GB'de sorun olmadı. Ollama'nın hazır `qwen3.5:9b-q4_K_M`'i 6,55 GB'tır (Task 7'de
+belirtildiği gibi görüntü projektörü dahil); dönüştürücü yalnız dil modelini alır.
+
+**Kontrol modeli `bist-base-9b`.** Karşılaştırmada fark yalnız ince ayardan gelsin diye temel
+model de aynı hattan geçirildi (Burak'ın onayı, 20 Kasım): `lora_B` sıfır olunca
+`W + (alpha/r)·(B @ A) = W`, birleştirme temel ağırlıkları değiştirmez; dönüştürücü,
+nicemleme ve Modelfile (örnekleme ayarları, şablon) ince ayarlı modellerle aynıdır.
+Ollama'nın hazır modeli (farklı nicemleme karışımı ve projektör) ikincil referanstır.
+
+Geçit: dizüstünden TLS `internal_error` alındı; `tailscale cert`'ten sonra geçit yeniden
+çalıştı, ama asıl neden sertifika değildi (10.6). Üç model geçidin `/api/tags`'ında
+görünüyor (Q4_K_M, 9,0B, 5,63 GB).
+
+### 10.5 Seçim: `bist-r16-e2` (20 Kasım)
+
+Geliştirme soruları (`data/finetune/dev60.jsonl`, 60 soru), deney E, iki tekrar, Task 7 ile
+aynı yol (`BIST_LLM_API=openai`, geçitten, 5070). r32'de 6 kayıt (3 soru) geçit kopukluğuyla
+`MODEL_UNAVAILABLE` bitti (10.6); bu üç soru IPv6 yolundan iki tekrarla yeniden koşuldu ve
+tabloda onların kayıtları kullanıldı (`runs/finetune-selection/bist-r32-e3-rerun/`). Ölçütler
+`eval/metrics.py`'den; açıklama kabulü Task 7'deki gibi "model yazdı / (model yazdı + geri
+dönüş)". "Hazır 9B" Task 7'nin `qwen3.5:9b-q4_K_M` koşusudur (18 Kasım).
+
+| Ölçüt | `bist-r16-e2` | `bist-r32-e3` | `bist-base-9b` (kontrol) | hazır 9B |
+| --- | --- | --- | --- | --- |
+| Açıklama kabulü | **82 / 96 (%85,4)** | 80 / 94 (%85,1) | 62 / 90 (%68,9) | 72 / 88 (%81,8) |
+| Sonuç eşleşmesi | **1,000** | 0,983 | 0,950 | 0,933 |
+| Senaryo doğruluğu | **1,000** | 0,958 | **1,000** | **1,000** |
+| Hatalı çağrı (ret / önerilen) | 12 / 498 (0,024) | **6 / 480 (0,013)** | 18 / 610 (0,030) | 16 / 378 (0,042) |
+| Modelin yazdığı desteksiz sayı | **0 / 726** | **0 / 692** | 18 / 708 | 4 / 734 |
+| Uydurulan alan | **8** | 10 | 30 | 24 |
+| Hisse doğruluğu, ham / temellendirilmiş | **0,930 / 1,000** | 0,907 / 0,977 | 0,767 / 0,930 | 0,767 / 0,907 |
+| Kanıtsız sonuç | 20 / 96 (%20,8) | 22 / 94 (%23,4) | **14 / 90 (%15,6)** | 16 / 88 (%18,2) |
+| Harness müdahalesi | 48 | **42** | 50 | 48 |
+| Tekrarlanabilirlik | 60 / 60 | 60 / 60 | 60 / 60 | 60 / 60 |
+
+**Karar: `bist-r16-e2`.** Hatalı çağrı (6 ret fark) ve müdahale dışında her ölçütte r32'ye eşit
+ya da önde; rank'ı ve epoch sayısı küçük. Doğrulama kaybı (10.3) ikisini ayırmıyordu.
+
+Okuma:
+
+- **İnce ayar, kontrole göre:** açıklama kabulü %68,9 → %85,4; modelin desteksiz sayısı
+  18 → 0; uydurulan alan 30 → 8; ham hisse doğruluğu 0,77 → 0,93; daha az çağrı önerip daha az
+  ret alıyor. Bunlar eğitim verisinin öğrettiği turlar (niyet, araç çağrısı, açıklama).
+- **Gerileme adayı:** kanıtsız sonuç oranı iki ince ayarlı modelde de kontrolden yüksek
+  (%15,6 → %20,8 / %23,4). Açıklama daha sık modelden geliyor, ama sonuç cümlesi kanıtı daha
+  sık aşıyor. Task 9'da soru türüne göre bakılacak.
+- **Kontrol ile hazır model aynı değil:** aynı ağırlıklar, ama `bist-base-9b`'nin açıklama
+  kabulü 13 puan düşük, desteksiz sayısı 18'e karşı 4 ve %60 fazla çağrı öneriyor. Farklar:
+  hazır modelin Modelfile'ı `presence_penalty 1.5`, `top_k 20`, `top_p 0.95` taşıyor (sıcaklık
+  0'da yalnız `presence_penalty` etkili); dışa aktarma yalnız şablonu ve `stop`'u alır (Task 8
+  raporu, madde 4). Nicemleme karışımı da farklı (5,6 GB / 6,6 GB). İki modelin yetenekleri
+  (`completion`, `tools`, `thinking`) aynı; `template_check` `bist-base-9b` ile de 40 / 40
+  (`runs/template-check-bist-base-9b.json`, masaüstü). Asıl karşılaştırma bu yüzden ince ayarlı
+  model ile `bist-base-9b` arasındadır; hazır model ikincil referanstır.
+- n = 60 soru; iki tekrar birebir aynı (tekrarlanabilirlik 60 / 60), tekrarlar bağımsız örnek
+  değil. Bir soru bir oranı yaklaşık 1,7 puan oynatır.
+
+### 10.6 Geçit: Tailscale Serve uzak IPv4 bağlantısını reddediyor (20 Kasım)
+
+Seçim koşusu beklenenin (≈ 50 dk) dört katı sürdü (04:25–08:01; kayıt başına gecikme medyanı
+31–38 sn; Task 7'de hazır modelle 6,5 sn) ve r32'de 5 kayıt `LLMUnavailableError` ile bitti
+(4 `ConnectError` kaydın başında, 1 `RemoteProtocolError` açıklama turunda). 08:01'den sonra
+geçide hiç ulaşılamadı (TLS `internal_error`).
+
+İnceleme:
+
+- Ağ sağlam (`tailscale ping` doğrudan, 14 ms); ad masaüstünün Tailscale adresine çözülüyor;
+  sertifika geçerli (`tailscale cert`: "unchanged"); `CertDomains` ve Serve ayarı
+  (`TCP 443 HTTPS`, `Web <ad>:443 → / proxy http://127.0.0.1:11435`) doğru. Servisi yeniden
+  başlatmak ve Serve'ü sıfırlayıp yeniden kurmak düzeltmedi.
+- Masaüstünün Tailscale günlüğü (1.104.7): dizüstünden gelen her bağlantı için
+  `TLS handshake error ...: no webserver configured for name/port`; aynı satırlar 05:44'te
+  (r32'nin hataları) ve 08:01'den sonra.
+- Masaüstünün kendinden testi (ad kendi IPv4 Tailscale adresine yönlendirilerek) `HTTP 200`.
+- Dizüstünden doğrudan el sıkışma: **IPv4'te TLS 1.3 `internal_error`, TLS 1.2 zaman aşımı;
+  IPv6'da TLS 1.3 ve 1.2 `HTTP 200`.** Windows'un çözücüsü bu ad için IPv6 adresi döndürmüyor,
+  bu yüzden harness hep IPv4'ü kullanıyordu.
+
+Sonuç: Serve, uzaktan gelen IPv4 bağlantısında ad/port eşleşmesini ara ara (gece) ve 08:01'den
+sonra sürekli kaybediyor; IPv6 etkilenmiyor. Kök neden Tailscale'in içinde, bulunmadı.
+
+Geçici çözüm (yalnız ölçüm koşucusu, kod değişmedi): ölçüm, geçidin adını çözümlerken
+masaüstünün Tailscale IPv6 adresini kullanan küçük bir sarmalayıcıyla başlatılıyor
+(`socket.getaddrinfo` yalnız bu ad için `AF_INET6`). Adres çalışma anında `tailscale ip -6`'dan
+ortam değişkeniyle gelir, hiçbir dosyaya yazılmaz; TLS aynı adla (SNI ve sertifika doğrulaması
+değişmeden) kurulur. Bu yolla aynı istek (`max_tokens` 200, sıcaklık 0) üç modelde de
+≈ 74 token/sn, düşünme metni yok:
+
+| Model | İlk istek (yükleme dahil) | İkinci istek |
+| --- | --- | --- |
+| hazır 9B | 14,0 sn | 2,1 sn |
+| `bist-base-9b` | 9,3 sn | 1,4 sn |
+| `bist-r16-e2` | 9,7 sn | 1,3 sn |
+
+Gece 40–55 sn süren üç kayıt bu yoldan 12–21 sn sürdü ve aynı sonuçları verdi. Yani gecenin
+yavaşlığı IPv4 yolundandı, modelden ya da dışa aktarmadan değil; sonuç etiketleri etkilenmedi
+(bağlantı kopan 6 kayıt hariç, onlar yeniden koşuldu). Gecikme sütunları bu yüzden Task 7 ile
+karşılaştırılamaz.
