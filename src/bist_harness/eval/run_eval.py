@@ -51,6 +51,7 @@ from bist_harness.config import REPO_ROOT, Settings
 from bist_harness.eval import metrics
 from bist_harness.eval import questions as question_set
 from bist_harness.harness import machine, session
+from bist_harness.harness import memory as harness_memory
 from bist_harness.harness.actions import eligible_actions
 from bist_harness.harness.evidence import build_evidence
 from bist_harness.harness.gate import PASS, GateResult, quality_gate
@@ -352,8 +353,9 @@ def make_record(
     concluded = analysis.outcome not in (*REFUSALS, machine.ANALYSIS_UNSAFE)
     if answer_by == "model" and concluded:
         eligible = eligible_actions(scored, evidence, quality_gate(scored, evidence))
+        # the memory section the harness appended after validation is not model text
         validation = validate_explanation(
-            analysis.answer,
+            harness_memory.strip_section(analysis.answer, analysis.trail, language),
             action=str(analysis.outcome),
             eligible=eligible,
             evidence=evidence,

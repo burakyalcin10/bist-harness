@@ -377,3 +377,35 @@ def test_records_say_what_the_model_was_shown_and_whether_a_real_gate_ran(result
     assert metrics.rule_violations(pick(records, "D", "AM-02"))["skipped_mandatory"] == 0
     # D's guarded question never reached a gate
     assert pick(records, "D", "TP-01")["real_gate"] is False
+
+
+# --- Sprint 5: the harness memory section is not validated as model text ---------------------
+def test_e_validates_the_model_text_without_the_harness_memory_section(tmp_path):
+    from bist_harness.harness import memory as mem
+
+    question = {q["id"]: q for q in qs.load_questions()}["AM-02"]
+    conn = db.connect(tmp_path / "m.sqlite")
+    records = []
+    try:
+        for today in ("2026-11-10", TODAY):  # the later default period recalls the earlier
+            client = RuleClient({question["question"]: INTENTS["AM-02"]})
+            records.append(
+                run_eval.run_one(
+                    "E",
+                    question,
+                    0,
+                    client,
+                    call_tool=GoldenTools(),
+                    today=today,
+                    memory=conn,
+                    replay_options={"verify": lambda snapshot_id: []},
+                )
+            )
+    finally:
+        conn.close()
+    later = records[1]
+    assert mem.episodes_in(later["trail"])  # the earlier analysis was recalled
+    stripped = mem.strip_section(later["answer"], later["trail"], later["language"])
+    assert stripped != later["answer"]  # and its section was appended to the shown answer
+    assert later["answer_by"] == "model"
+    assert later["validation"] == []

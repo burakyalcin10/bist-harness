@@ -607,3 +607,38 @@ def test_attempt_texts_are_never_stripped_of_a_memory_section():
     without = record(experiment="E", attempts=[{"action": "HOLD", "text": body}])
     # the date of the section is a number the model "wrote": nothing is cut from an attempt
     assert metrics.attempt_numbers(with_section)[0] > metrics.attempt_numbers(without)[0]
+
+
+# --- Sprint 5: records written before the run_eval fix --------------------------------------
+def _explained(rec: dict, eligible=("HOLD", "WATCH", "INVESTIGATE")) -> dict:
+    step = {
+        "state": "GENERATE_EXPLANATION",
+        "status": "RAN",
+        "detail": {"action": rec["outcome"], "eligible": list(eligible), "fallback": False},
+    }
+    rec["trail"].insert(len(rec["trail"]) - 1, step)
+    return rec
+
+
+STALE = [  # what run_eval stored when it validated the answer with the memory section
+    "sentence 3 cites no evidence item: 'Earlier analyses:'",
+    "number 1 is not in the committed evidence or the question",
+]
+
+
+def test_problems_of_the_harness_memory_section_do_not_make_a_conclusion_unsupported():
+    answer = f"{GOOD_ANSWER}\n\n{_section()}"
+    rec = _explained(
+        _with_episodes(record(experiment="E", answer=answer, validation=STALE), _episodes())
+    )
+    assert metrics.unsupported_conclusion(rec) is False
+
+
+def test_a_problem_in_the_model_text_before_the_memory_section_still_counts():
+    bad = "TOASO changed 99.99% in the period [E1].\n" + DISCLAIMER["en"]
+    rec = _explained(
+        _with_episodes(
+            record(experiment="E", answer=f"{bad}\n\n{_section()}", validation=STALE), _episodes()
+        )
+    )
+    assert metrics.unsupported_conclusion(rec) is True

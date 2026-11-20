@@ -602,7 +602,7 @@ dönüş)". "Hazır 9B" Task 7'nin `qwen3.5:9b-q4_K_M` koşusudur (18 Kasım).
 | Modelin yazdığı desteksiz sayı | **0 / 726** | **0 / 692** | 18 / 708 | 4 / 734 |
 | Uydurulan alan | **8** | 10 | 30 | 24 |
 | Hisse doğruluğu, ham / temellendirilmiş | **0,930 / 1,000** | 0,907 / 0,977 | 0,767 / 0,930 | 0,767 / 0,907 |
-| Kanıtsız sonuç | 20 / 96 (%20,8) | 22 / 94 (%23,4) | **14 / 90 (%15,6)** | 16 / 88 (%18,2) |
+| Kanıtsız sonuç (düzeltilmiş ölçüt, aşağıda) | **0 / 96** | 4 / 94 | **0 / 90** | **0 / 88** |
 | Harness müdahalesi | 48 | **42** | 50 | 48 |
 | Tekrarlanabilirlik | 60 / 60 | 60 / 60 | 60 / 60 | 60 / 60 |
 
@@ -614,9 +614,18 @@ Okuma:
 - **İnce ayar, kontrole göre:** açıklama kabulü %68,9 → %85,4; modelin desteksiz sayısı
   18 → 0; uydurulan alan 30 → 8; ham hisse doğruluğu 0,77 → 0,93; daha az çağrı önerip daha az
   ret alıyor. Bunlar eğitim verisinin öğrettiği turlar (niyet, araç çağrısı, açıklama).
-- **Gerileme adayı:** kanıtsız sonuç oranı iki ince ayarlı modelde de kontrolden yüksek
-  (%15,6 → %20,8 / %23,4). Açıklama daha sık modelden geliyor, ama sonuç cümlesi kanıtı daha
-  sık aşıyor. Task 9'da soru türüne göre bakılacak.
+- **Kanıtsız sonuç: ölçüm hatası bulundu ve düzeltildi.** İlk hesapta oran ince ayarlı
+  modellerde yüksek görünüyordu (r16 20 / 96, r32 22 / 94, kontrol 14 / 90, hazır 16 / 88).
+  Bu kayıtların hepsinde doğrulayıcının itirazları, E deneyinde harness'in model cevabının
+  sonuna doğrulamadan *sonra* eklediği bellek bölümüne ("Önceki analizler: M1 …") aitti:
+  bu satırlar kanıt etiketi taşımıyor, içindeki sıra numaraları ve tarihler kanıtta yok.
+  `run_eval` cevabı bu bölümle birlikte doğruluyordu (`eval/metrics.py` sayı sayarken bölümü
+  zaten çıkarıyordu). Model ne kadar sık kendi açıklamasını yazarsa o kadar çok sayılıyordu;
+  ince ayarlı model daha sık yazdığı için gerileme gibi görünüyordu. Düzeltme (test önce):
+  `run_eval` bölümü çıkarıp doğrular; eski kayıtlar için `metrics.shown_problems` aynı metni
+  kaydın kendi kanıtı ve uygun etiketleriyle yeniden doğrular. Düzeltilmiş ölçütle r16, kontrol
+  ve hazır model 0; r32'nin 4'ü bellekten değil (asgari kanıtı eksik etiket). Task 7 belgesi bu
+  ölçütü raporlamamıştı.
 - **Kontrol ile hazır model aynı değil:** aynı ağırlıklar, ama `bist-base-9b`'nin açıklama
   kabulü 13 puan düşük, desteksiz sayısı 18'e karşı 4 ve %60 fazla çağrı öneriyor. Farklar:
   hazır modelin Modelfile'ı `presence_penalty 1.5`, `top_k 20`, `top_p 0.95` taşıyor (sıcaklık

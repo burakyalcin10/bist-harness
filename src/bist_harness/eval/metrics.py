@@ -17,7 +17,9 @@ A record is a JSON object::
     evidence      [{label, tool, result_id, field, value, sentence, committed}], built
                   from the record's own allowed calls,
     validation    the output validator's problems for model-written text that was shown
-                  as a conclusion (empty when it passed or nothing was model-written),
+                  as a conclusion (empty when it passed or nothing was model-written);
+                  the memory section the harness appends in E is not validated
+                  (records written before 20 Nov 2026 included it: ``shown_problems``),
     attempts      [{action, text}]: every answer the model wrote at the explanation step,
                   rejected ones included (A-C: the one free answer),
     data_shown    "tool_outputs" (A-C: the model saw the raw outputs of the allowed
@@ -59,7 +61,8 @@ Definitions (per record unless stated; a rate is None when its denominator is 0)
 * **Unsupported-conclusion rate.** Over records whose outcome is a conclusion (an action
   label other than ANALYSIS_UNSAFE): unsupported when the label is not INVESTIGATE and
   the scoring scenario's minimum evidence is not met, or when model-written text that
-  failed validation was shown. For A-C every conclusion is unsupported **by construction**:
+  failed validation was shown (``shown_problems``: the harness's memory section is not
+  model text). For A-C every conclusion is unsupported **by construction**:
   their free answers carry no citation and no disclaimer line, and for A the eligible
   set (no quality check ran, so the gate blocks) is ANALYSIS_UNSAFE only.
 * **Evidence completeness.** For questions that expect an analysis: the share of the
@@ -133,7 +136,12 @@ from bist_harness.harness import memory
 from bist_harness.harness.evidence import DISCLAIMER, MINIMUM, Evidence, missing_requirements
 from bist_harness.harness.machine import HARNESS_STATES
 from bist_harness.harness.routes import ALLOWED_TOOLS, CANDIDATE_SCENARIOS, STATES
-from bist_harness.harness.validator import advice_language, period_notes, unsupported_values
+from bist_harness.harness.validator import (
+    advice_language,
+    period_notes,
+    unsupported_values,
+    validate_explanation,
+)
 from bist_harness.tools.schemas import ACTIONS
 
 GUARD_OUTCOMES = ("REFUSED_ADVICE", "OUT_OF_SCOPE", "ANALYSIS_UNSAFE")
@@ -307,7 +315,44 @@ def unsupported_conclusion(record: dict) -> bool | None:
         return None
     if outcome != "INVESTIGATE" and missing_evidence(record):
         return True
-    return record.get("answer_by") == "model" and bool(record.get("validation"))
+    return record.get("answer_by") == "model" and bool(shown_problems(record))
+
+
+def shown_problems(record: dict) -> list[str]:
+    """The validator's problems of the shown model-written text.
+
+    Records written before Sprint 5's fix (20 Nov 2026) validated the answer together with
+    the memory section the harness appends after validation, whose lines cite no evidence
+    item; such a record is validated again without that section, against the eligible
+    labels its explanation step recorded. Any other record keeps its stored problems.
+    """
+    problems = list(record.get("validation") or [])
+    answer = record.get("answer")
+    if not problems or not isinstance(answer, str):
+        return problems
+    language = record.get("language") or "en"
+    text = memory.strip_section(answer, record.get("trail"), language)
+    step = next(
+        (
+            (r.get("detail") or {})
+            for r in record.get("trail") or []
+            if r["state"] == "GENERATE_EXPLANATION" and r.get("status") == "RAN"
+        ),
+        {},
+    )
+    if text == answer or "eligible" not in step:
+        return problems
+    intent = record.get("intent") or {}
+    return validate_explanation(
+        text,
+        action=str(record.get("outcome")),
+        eligible=step["eligible"],
+        evidence=_evidence(record),
+        question=record.get("question") or "",
+        language=language,
+        defaulted_period=bool(intent.get("defaulted_period")),
+        defaulted_bound=intent.get("defaulted_bound"),
+    )
 
 
 def evidence_completeness(record: dict) -> float | None:
