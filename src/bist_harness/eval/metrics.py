@@ -324,7 +324,9 @@ def shown_problems(record: dict) -> list[str]:
     Records written before Sprint 5's fix (20 Nov 2026) validated the answer together with
     the memory section the harness appends after validation, whose lines cite no evidence
     item; such a record is validated again without that section, against the eligible
-    labels its explanation step recorded. Any other record keeps its stored problems.
+    labels its explanation step recorded, and keeps a stored label problem (run_eval
+    checked the label against its own eligible set). Any other record keeps its stored
+    problems.
     """
     problems = list(record.get("validation") or [])
     answer = record.get("answer")
@@ -343,7 +345,9 @@ def shown_problems(record: dict) -> list[str]:
     if text == answer or "eligible" not in step:
         return problems
     intent = record.get("intent") or {}
-    return validate_explanation(
+    # run_eval checked the label against an eligible set it computed itself: keep that verdict
+    label = [p for p in problems if "is not one of the eligible actions" in p]
+    again = validate_explanation(
         text,
         action=str(record.get("outcome")),
         eligible=step["eligible"],
@@ -353,6 +357,7 @@ def shown_problems(record: dict) -> list[str]:
         defaulted_period=bool(intent.get("defaulted_period")),
         defaulted_bound=intent.get("defaulted_bound"),
     )
+    return label + [p for p in again if p not in label]
 
 
 def evidence_completeness(record: dict) -> float | None:

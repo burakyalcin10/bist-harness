@@ -256,6 +256,16 @@ def test_dedupe_drops_the_later_of_two_families_teaching_one_text_two_targets(re
     assert qc.dedupe_report(group + other)[1]["conflicting_target_questions"] == 1
 
 
+def test_dedupe_drops_a_near_copy_whose_text_differs_by_one_character(records):
+    group = one_question(records)
+    near = [with_user_text(renamed(r, "zz-near"), "x", replace=False) for r in group]
+    texts = {qc.fold_text(qc._question_text(g[0])).strip() for g in (group, near)}
+    assert len(texts) == 2  # not the identical text: only the similarity rule can drop it
+    kept, report = qc.dedupe_report(group + near)
+    assert {r.question_id for r in kept} == {group[0].question_id}
+    assert report["near_duplicate_questions"] == 1
+
+
 def test_dedupe_keeps_a_question_with_a_different_text(records):
     group = one_question(records)
     far = [

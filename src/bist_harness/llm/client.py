@@ -174,9 +174,12 @@ class OllamaClient:
         if response.status_code >= 400:
             raise LLMUnavailableError(f"LLM endpoint returned HTTP {response.status_code}")
         try:
-            return response.json()
+            body = response.json()
         except ValueError:
             raise LLMUnavailableError("LLM endpoint returned a non-JSON response") from None
+        if not isinstance(body, dict):
+            raise LLMUnavailableError("LLM endpoint returned an unexpected response")
+        return body
 
     def list_models(self) -> list[str]:
         return [m["name"] for m in self._request("GET", "/api/tags").get("models", [])]
@@ -219,6 +222,8 @@ class OllamaClient:
 
         raw = self._request("POST", "/api/chat", json=payload)
         message = raw.get("message") or {}
+        if not isinstance(message, dict):
+            raise LLMUnavailableError("LLM endpoint returned an unexpected response")
         eval_count = int(raw.get("eval_count") or 0)
         eval_ns = int(raw.get("eval_duration") or 0)
         return ChatResult(
@@ -268,7 +273,13 @@ class OllamaClient:
         choices = raw.get("choices") or []
         if not choices:
             raise LLMUnavailableError("LLM endpoint returned no choices")
-        message = choices[0].get("message") or {}
+        message = (
+            choices[0].get("message")
+            if isinstance(choices, list) and isinstance(choices[0], dict)
+            else None
+        )
+        if not isinstance(message, dict):
+            raise LLMUnavailableError("LLM endpoint returned an unexpected response")
         usage = raw.get("usage") or {}
         return ChatResult(
             content=message.get("content") or "",

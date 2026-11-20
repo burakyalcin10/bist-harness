@@ -75,6 +75,7 @@ Denemede ya da koşularda hata çıkarsa şunları getir:
 3. **Hangi koşu kullanılacak:** r16-e2 mi r32-e3 mü? Doğrulama kaybına ve geliştirme sorularındaki kısa bir ölçüme göre seç. Ruling olarak deftere yaz.
 4. **Dışa aktarma** Burak'ta yapıldıysa ince ayarlı modelin Ollama'da göründüğünü geçitten `/api/tags` ile doğrula. Python urllib kullan; curl bir hook tarafından engelleniyor.
 5. **Task 9, karşılaştırma ve kapanış (EC-055):** plandaki Task 9 metni geçerli.
+   - **20 Kasım notu: bu madde K-086 ile değişti.** Asıl karşılaştırma ince ayarlı model ile aynı hattan çıkan `bist-base-9b` arasında (ikisi de `presence_penalty`'siz); `qwen3.5:9b-q4_K_M` ikincil referans.
    - Temel model `qwen3.5:9b-q4_K_M` ile ince ayarlı model, donmuş 120 soruda; deney D ve E, iki tekrar.
    - İki model de **aynı yoldan** (`BIST_LLM_API=openai`, geçit) ve aynı örnekleme ayarlarıyla koşmalı (Task 7 I3).
    - Dışa aktarılan modelin Modelfile'ı temel modelin `presence_penalty`, top_k/top_p ayarlarını taşımıyor (Task 8 notu). Karşılaştırmadan önce bunu eşitle ve belgeye yaz.

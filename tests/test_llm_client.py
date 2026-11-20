@@ -343,6 +343,24 @@ def test_compat_route_without_choices_is_unavailable():
         client.chat([])
 
 
+@pytest.mark.parametrize("body", [[], ["x"], {"choices": ["x"]}, {"choices": [{"message": "x"}]}])
+def test_compat_route_with_an_unexpected_body_shape_is_unavailable(body):
+    client = _compat_client(lambda request: httpx.Response(200, json=body))
+    with pytest.raises(LLMUnavailableError, match="unexpected"):
+        client.chat([])
+
+
+@pytest.mark.parametrize("body", [[], "text", {"message": "x"}])
+def test_native_route_with_an_unexpected_body_shape_is_unavailable(body):
+    client = OllamaClient(
+        "http://llm.test",
+        "m",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)),
+    )
+    with pytest.raises(LLMUnavailableError, match="unexpected"):
+        client.chat([])
+
+
 def test_unknown_api_is_refused():
     with pytest.raises(ValueError, match="api"):
         OllamaClient("http://llm.test", "m", api="grpc")

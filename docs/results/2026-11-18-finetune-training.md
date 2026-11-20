@@ -273,7 +273,8 @@ yönlüdür, kesin değildir):
   araç çağrısı biçimini bozmuyor; niyet ve açıklama turlarında bir sorunluk kayıp var.
 - **Temel → deneme:** 20 adım (80 kayıt) araç turlarında belirgin bir değişiklik yaptı:
   reddedilen çağrı 13 → 3, metin cevabı 3 → 0, geri dönüş 8 → 1. Bu iyileşme
-  `presence_penalty` farkından gelmiyor: (a′) temel modelde de 13 ret ve 8 geri dönüş var.
+  bu örneklemde `presence_penalty` farkıyla açıklanmıyor: (a′) temel modelde de 13 ret ve 8
+  geri dönüş var (nicemleme ve MTP taslak bloğu farkı yine de kalıyor).
   Yine de bu bir kalite iddiası değildir: örneklem küçük, eğitim 20 adım, sonuç
   eşleşmesi (11/12) dört modelde de aynı ve sonuç sınıfı kaba (`ANALYSIS` dört etiketi
   birlikte sayar). Kalite karşılaştırması 5070'teki tam koşuların ve Task 9'un işidir.
@@ -542,7 +543,7 @@ Makine 06:37'den sonra kapandı; koşuların ikisi de `run.json`'unu yazmıştı
   çevrildi: yalnız asistanın cevabı ve `<|im_end|>\n`; boş `<think>\n\n</think>\n\n` bloğu
   istemdedir. Etiketli belirteç ortalaması: niyet 56, araç çağrısı 114, açıklama 320.
 - **Sızıntı yok.** Train ve val soru düzeyinde ayrıktır (ortak soru 0; 560 ve 140 soru); 29
-  soru ailesi (şablon) iki tarafta da vardır. Val hedeflerinin 34 / 618'i train'de birebir
+  soru ailesi iki tarafta da vardır; ifade şablonları ayrıktır (ortak şablon 0). Val hedeflerinin 34 / 618'i train'de birebir
   geçer (niyet 32, araç 2: kısa, standart niyetler).
 - **Hedefler büyük ölçüde istemden kopyadır.** Öğretmen deterministik bir programdır
   (`finetune/teacher.py`): niyet sorudaki hisse ve tarihleri JSON'a yazar, araç turu aynı
@@ -559,7 +560,10 @@ geliştirme sorularında (10.5), karşılaştırma donmuş sorularda (Task 9) ya
   `llama-server --version` → `version: 0.6.0-dev (build 1, commit b42b7e6d3)`. Dönüştürücü
   `tools/llama.cpp` `b42b7e6d3059503dd4bed6ca5dcf342bb6379f67`'ye sabitlendi.
 - `template_check` 9B ve 0.40.4 ile: **40 / 40 bayt bayt aynı** (ham araç şemalarıyla 12 / 40;
-  `ollama_tools` gerekli). 0.40.4 `_debug_render_only`'yi destekliyor.
+  `ollama_tools` gerekli). 0.40.4 `_debug_render_only`'yi destekliyor. Denetim yalnız istem
+  tarafını kapsar; hedefteki araç çağrısı biçimini Ollama'nın `qwen3.5` ayrıştırıcısının
+  okuduğu ölçümle görülür (seçimde r16'nın 498 çağrısından 12'si reddedildi, hiçbiri
+  ayrıştırılamayan metin olarak değil).
 - Üç model aynı komutla dışa aktarıldı; hepsinde `"load_check": "passed"`,
   `runtime_commit` = `converter_commit` öneki `b42b7e6d3`:
 

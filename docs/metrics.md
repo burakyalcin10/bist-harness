@@ -14,7 +14,7 @@ Bu belge, `src/bist_harness/eval/metrics.py` içindeki metriklerin rapora aynen 
 
 Tanım gereği sabit kalan değerler, ilgili metriğin altında yazılıdır; bunlar bir bulgu değil, yapının sonucudur ve raporda öyle okunmalıdır.
 
-Kayıttaki "gösterilen cevap", kullanıcıya ulaşan metindir. Metni modelin yazdığı kayıtlarda (`answer_by = "model"`) sayımlar, sabit satırlar (yasal uyarı, dönem notu) ve D ile E'de harness'in eklediği bellek bölümü çıkarıldıktan sonra yapılır. "Girişim" (`attempts`), modelin açıklama adımında yazdığı her cevaptır; reddedilenler dahil.
+Kayıttaki "gösterilen cevap", kullanıcıya ulaşan metindir. Metni modelin yazdığı kayıtlarda (`answer_by = "model"`) sayımlar, sabit satırlar (yasal uyarı, dönem notu) ve E'de harness'in eklediği bellek bölümü çıkarıldıktan sonra yapılır. "Girişim" (`attempts`), modelin açıklama adımında yazdığı her cevaptır; reddedilenler dahil.
 
 ## Sayı ve tarih metrikleri
 
@@ -56,7 +56,7 @@ Ortak sayım (model metni için): **yazılan** = ayırt edilebilir sayılar (K-0
 
 ### `unsupported_conclusion_rate` (desteksiz sonuç oranı)
 
-**Tanım:** Sonuç üreten kayıtlardan (etiketi `ANALYSIS_UNSAFE` dışındaki bir eylem) desteksiz olanların payı. Desteksiz: etiket `INVESTIGATE` değilken puanlama senaryosunun asgari kanıtı karşılanmıyorsa ya da doğrulamayı geçemeyen model metni gösterilmişse.
+**Tanım:** Sonuç üreten kayıtlardan (etiketi `ANALYSIS_UNSAFE` dışındaki bir eylem) desteksiz olanların payı. Desteksiz: etiket `INVESTIGATE` değilken puanlama senaryosunun asgari kanıtı karşılanmıyorsa ya da doğrulamayı geçemeyen model metni gösterilmişse. E'de harness'in doğrulamadan sonra eklediği bellek bölümü doğrulanmaz; 20 Kasım 2026'dan önce yazılmış kayıtlar ölçülürken `shown_problems` ile bölümsüz olarak yeniden doğrulanır (K-089).
 **Payı:** desteksiz sonuçlar (`unsupported_conclusions`).
 **Paydası:** sonuç üreten kayıtlar (`conclusions`).
 **Deneylerde:** A–C'de her sonuç **tanım gereği desteksizdir** (serbest cevaplarında atıf ve yasal uyarı satırı yoktur; A'da kalite denetimi çalışmadığı için kapı yalnızca `ANALYSIS_UNSAFE`'e izin verir); oran 1'dir. D–E'de ölçülen bir orandır.

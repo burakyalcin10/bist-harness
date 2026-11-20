@@ -642,3 +642,16 @@ def test_a_problem_in_the_model_text_before_the_memory_section_still_counts():
         )
     )
     assert metrics.unsupported_conclusion(rec) is True
+
+
+def test_a_stored_label_problem_survives_the_revalidation():
+    # run_eval checks the label against its own eligible set; the trail's set may differ
+    stale = [*STALE, "action 'HOLD' is not one of the eligible actions: WATCH, INVESTIGATE"]
+    rec = _explained(
+        _with_episodes(
+            record(experiment="E", answer=f"{GOOD_ANSWER}\n\n{_section()}", validation=stale),
+            _episodes(),
+        )
+    )
+    assert metrics.unsupported_conclusion(rec) is True
+    assert any("eligible actions" in p for p in metrics.shown_problems(rec))

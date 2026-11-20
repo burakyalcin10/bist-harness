@@ -1,6 +1,6 @@
 """The grading metrics counted on a small hand-labelled sample (card EC-061).
 
-``fixtures/labelled_records.jsonl`` holds twelve synthetic records written by hand and
+``fixtures/labelled_records.jsonl`` holds thirteen synthetic records written by hand and
 ``fixtures/labelled_expected.json`` holds the value of every metric on them, written by hand
 with a one-line reason each. The tests assert the code reproduces every value exactly. The
 backtest accuracy is checked with a stub tool that returns a matching and a mismatching
@@ -41,8 +41,8 @@ def _jsonable(value):
     return list(value) if isinstance(value, tuple) else value
 
 
-def test_the_sample_is_twelve_records_with_a_reason_for_every_expected_value(labelled):
-    assert len(labelled) == 12
+def test_the_sample_is_thirteen_records_with_a_reason_for_every_expected_value(labelled):
+    assert len(labelled) == 13
     for entry in (*EXPECTED["records"], *EXPECTED["groups"], EXPECTED["backtest"]):
         assert entry["reason"].strip(), entry
     assert {e["id"] for e in EXPECTED["records"]} <= set(labelled)

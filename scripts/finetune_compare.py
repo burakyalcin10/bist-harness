@@ -3,10 +3,16 @@
 Reads ``runs/finetune-comparison/<model>/eval-*/records.jsonl`` (one directory per model,
 experiments D and E in each), recomputes the metrics with ``eval/metrics.py`` and prints
 Markdown tables: overall per experiment, per question category, candidate-label use when
-eligible, and the questions where the tuned model is worse than the control.
+eligible, the questions where the tuned model is worse (and better) than the control, and
+every record of the questions named with ``--show``.
 
     uv run python scripts/finetune_compare.py --tuned bist-r16-e2 --control bist-base-9b \
-        --reference qwen3.5-9b-q4_K_M
+        --reference qwen3.5-9b-q4_K_M --show AM-03
+
+Numbers come only from the records, recomputed with the current metrics; a run's own
+``summary.json`` may predate a metric fix (K-089). A re-run of some questions goes into a
+newer ``eval-*`` directory under the same model folder: its records replace the earlier ones
+with the same (experiment, question, repeat).
 """
 
 from __future__ import annotations
@@ -14,7 +20,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -67,11 +72,14 @@ def overall(models: dict[str, list[dict]], experiment: str) -> None:
     rows: dict[str, list[str]] = defaultdict(list)
     for recs in models.values():
         rs = [r for r in recs if r["experiment"] == experiment]
+        if not rs:
+            for name in rows or ["records / unavailable / errors"]:
+                rows[name].append("—")
+            continue
         s = summarize_experiment(rs)
-        lat = [r["latency_s"] for r in rs]
-        rows["records / unavailable"].append(
-            f"{len(rs)} / {sum(r['outcome'] == 'MODEL_UNAVAILABLE' for r in rs)}"
-        )
+        unavailable = sum(r.get("outcome") == "MODEL_UNAVAILABLE" for r in rs)
+        errors = sum(1 for r in rs if r.get("error"))
+        rows["records / unavailable / errors"].append(f"{len(rs)} / {unavailable} / {errors}")
         rows["explanation acceptance"].append(pct(*acceptance(rs)))
         rows["outcome match"].append(num(s["outcome_match_rate"]))
         rows["scenario accuracy"].append(num(s["scenario_accuracy"]))
@@ -101,7 +109,10 @@ def overall(models: dict[str, list[dict]], experiment: str) -> None:
             f"{s['reproducible_questions']} / {s['repeated_questions']}"
         )
         rows["latency median / mean / max (s)"].append(
-            f"{statistics.median(lat):.1f} / {statistics.mean(lat):.1f} / {max(lat):.1f}"
+            " / ".join(
+                "—" if s[k] is None else f"{s[k]:.1f}"
+                for k in ("latency_s_median", "latency_s_mean", "latency_s_max")
+            )
         )
     print(f"\n#### Experiment {experiment}\n")
     print("| Metric | " + " | ".join(f"`{m}`" for m in models) + " |")
@@ -152,30 +163,67 @@ def candidates(models: dict[str, list[dict]], experiment: str) -> None:
         print(f"| `{model}` | {eligible} | {chosen} |")
 
 
-def worse(models: dict[str, list[dict]], tuned: str, control: str, experiment: str) -> None:
+def _worse_ways(a: dict, b: dict) -> list[str]:
+    """How record ``a`` is worse than record ``b`` of the same question."""
+    hows = []
+    if outcome_matches(b) and not outcome_matches(a):
+        hows.append("outcome")
+    if unsupported_conclusion(a) and unsupported_conclusion(b) is False:
+        hows.append("conclusion without evidence")
+    if explanation_fallback(a) and b["answer_by"] == "model":
+        hows.append("explanation fell back")
+    return hows
+
+
+def compare(models: dict[str, list[dict]], tuned: str, control: str, experiment: str) -> None:
     def index(recs):
         return {(r["question_id"], r["repeat"]): r for r in recs if r["experiment"] == experiment}
 
     t, c = index(models[tuned]), index(models[control])
-    print(
-        f"\n#### Experiment {experiment}: questions where `{tuned}` is worse than "
-        f"`{control}` (repeat 0)\n"
+    for title, first, second in (("worse", t, c), ("better", c, t)):
+        print(
+            f"\n#### Experiment {experiment}: questions where `{tuned}` is {title} than "
+            f"`{control}` (repeat 0)\n"
+        )
+        print("| Question | How | Tuned | Control |")
+        print("| --- | --- | --- | --- |")
+        for key in sorted(t):
+            if key[1] != 0 or key not in c:
+                continue
+            hows = _worse_ways(first[key], second[key])
+            if hows:
+                row = [key[0], ", ".join(hows), str(t[key]["outcome"]), str(c[key]["outcome"])]
+                print("| " + " | ".join(row) + " |")
+
+
+def show(models: dict[str, list[dict]], ids: list[str]) -> None:
+    print("\n#### Named questions, every record\n")
+    print("| Question | Experiment | Repeat | " + " | ".join(f"`{m}`" for m in models) + " |")
+    print("| --- | --- | --- |" + " --- |" * len(models))
+    keys = sorted(
+        {
+            (r["question_id"], r["experiment"], r["repeat"])
+            for recs in models.values()
+            for r in recs
+            if r["question_id"] in ids
+        }
     )
-    print("| Question | How | Tuned | Control |")
-    print("| --- | --- | --- | --- |")
-    for key in sorted(t):
-        if key[1] != 0 or key not in c:
-            continue
-        a, b = t[key], c[key]
-        hows = []
-        if outcome_matches(b) and not outcome_matches(a):
-            hows.append("outcome")
-        if unsupported_conclusion(a) and unsupported_conclusion(b) is False:
-            hows.append("conclusion without evidence")
-        if explanation_fallback(a) and b["answer_by"] == "model":
-            hows.append("explanation fell back")
-        if hows:
-            print(f"| {key[0]} | {', '.join(hows)} | {a['outcome']} | {b['outcome']} |")
+    for qid, exp, rep in keys:
+        cells = []
+        for recs in models.values():
+            match = [
+                x
+                for x in recs
+                if (x["question_id"], x["experiment"], x["repeat"]) == (qid, exp, rep)
+            ]
+            if not match:
+                cells.append("—")
+                continue
+            r = match[0]
+            scenario = (r.get("intent") or {}).get("scenario")
+            mark = "ok" if outcome_matches(r) else "MISS"
+            cells.append(f"{r.get('outcome')} ({mark}; {scenario}; {r['answer_by']})")
+        print(f"| {qid} | {exp} | {rep} | " + " | ".join(cells) + " |")
 
 
 def main() -> None:
@@ -186,8 +234,12 @@ def main() -> None:
     p.add_argument("--questions", default="src/bist_harness/eval/questions.jsonl")
     p.add_argument("--root", type=Path, default=ROOT)
     p.add_argument("--experiments", default="D,E")
+    p.add_argument("--show", action="append", default=[], help="a question id to list in full")
     args = p.parse_args()
     names = [args.tuned, args.control, *args.reference]
+    for required in (args.tuned, args.control):
+        if not glob.glob(str(args.root / required / "eval-*")):
+            raise SystemExit(f"no records for {required} under {args.root}")
     models = {m: load(args.root, m) for m in names if glob.glob(str(args.root / m / "eval-*"))}
     categories = {
         q["id"]: q["category"] for q in map(json.loads, open(args.questions, encoding="utf-8"))
@@ -196,8 +248,9 @@ def main() -> None:
         overall(models, exp)
         by_category(models, categories, exp)
         candidates(models, exp)
-        if args.control in models:
-            worse(models, args.tuned, args.control, exp)
+        compare(models, args.tuned, args.control, exp)
+    if args.show:
+        show(models, args.show)
 
 
 if __name__ == "__main__":

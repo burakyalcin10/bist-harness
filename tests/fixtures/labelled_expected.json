@@ -60,7 +60,16 @@
     {"ids": ["L06", "L07"], "metric": "rule_violations", "expected": {"guarded_tool_calls": 1, "advice_shown": 1, "skipped_mandatory": 2, "total": 4}, "reason": "L06 contributes the guarded call, L07 the advice and the two skipped steps"},
     {"ids": ["L01", "L12"], "metric": "ticker_accuracy_grounded", "expected": 1.0, "reason": "both stored intents name TOASO, as the questions expect"},
     {"ids": ["L01", "L12"], "metric": "ticker_accuracy_raw", "expected": 0.5, "reason": "L12's model wrote TOASS before grounding: 1 of 2 right"},
-    {"ids": ["L01", "L12"], "metric": "invented_fields", "expected": 2, "reason": "L01 none, L12 two grounded keys"}
+    {"ids": ["L01", "L12"], "metric": "invented_fields", "expected": 2, "reason": "L01 none, L12 two grounded keys"},
+    {"ids": ["L01"], "metric": "scenario_accuracy", "expected": 1.0, "reason": "the model labelled PRICE_SUMMARY and the question expects PRICE_SUMMARY"},
+    {"ids": ["L13"], "metric": "scenario_accuracy", "expected": 0.0, "reason": "the model labelled CALENDAR_PATTERN; the question expects PRICE_SUMMARY only"},
+    {"ids": ["L01", "L13"], "metric": "scenario_accuracy", "expected": 0.5, "reason": "one right label of two"},
+    {"ids": ["L03"], "metric": "harness_interventions", "expected": 2, "reason": "two harness calls in LOAD_MARKET_DATA, a state where the model proposes the calls"},
+    {"ids": ["L01"], "metric": "harness_interventions", "expected": 0, "reason": "its only harness call is check_data_quality in CHECK_DATA_QUALITY, a harness state, not an intervention"},
+    {"ids": ["L04"], "metric": "harness_interventions", "expected": 0, "reason": "the explanation fallback is counted as explanation_fallbacks, not as an intervention"},
+    {"ids": ["L01", "L02", "L04", "L13"], "metric": "latency_s_median", "expected": 3.1, "reason": "times 2.0, 3.1, 5.2; L13 has no measured time and is left out"},
+    {"ids": ["L01", "L02", "L04", "L13"], "metric": "latency_s_mean", "expected": 3.4333333333333336, "reason": "(2.0 + 3.1 + 5.2) / 3; L13 left out"},
+    {"ids": ["L01", "L02", "L04", "L13"], "metric": "latency_s_max", "expected": 5.2, "reason": "the longest of 2.0, 3.1, 5.2"}
   ],
   "backtest": {
     "compared": 2,
