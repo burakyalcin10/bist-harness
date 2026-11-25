@@ -139,4 +139,4 @@ temizliğinde sorunun elenmesidir; paraphrase bölmesi yine de bütün havuzlard
 val/test'i ayırır.
 
 **Elle okuma:** `data/finetune/review-sample.md` (50 kayıt, senaryo ve tur türüne göre
-katmanlı) Burak'ın okuması içindir; okunmuş sayılmaz.
+katmanlı) Burak'ın okuması içindir. 25 Kasım 2026'da okundu, sorun bulunmadı (K-090).

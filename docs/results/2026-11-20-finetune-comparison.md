@@ -273,9 +273,9 @@ hiçbir farkı değiştirmez.
    kontrol arasındaki fark ölçer.
 7. **Tek tohum, iki özdeş tekrar.** Sıcaklık 0'da iki tekrar birebir aynı çıktı; sonuçlar
    örnekleme belirsizliğini göstermiyor. 120 soruda bir soru yaklaşık 0,8 puan.
-8. **Eğitim verisi elle okunmadı ve internetsiz deneme yapılmadı** (K-090). 50 kaydın okunması
-   (EC-052) ve Wi-Fi kapalı canlı deneme sprint etiketi öncesi Burak'ın işi; bu belge "internetsiz
-   çalışır" iddiası taşımaz.
+8. **İnternetsiz canlı deneme henüz yapılmadı** (K-090). Eğitim verisinden 50 kayıt (EC-052)
+   25 Kasım'da Burak tarafından okundu, sorun bulunmadı. Wi-Fi kapalı canlı deneme teslimden
+   önceye ertelendi; o yapılana kadar bu belge "internetsiz çalışır" iddiası taşımaz.
 9. **Ters tarih aralığı.** Model aralığı sessizce düzeltirse harness tuzağı görmüyor (TP-15).
    İnce ayar bunu düzeltmedi; kontrol de aynı davranıyor. Sprint 6: niyet tarihleri sorudaki
    sırayla karşılaştırılır.
